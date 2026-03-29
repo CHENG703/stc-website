@@ -52,7 +52,7 @@ app.use(session({
 }));
 
 // 数据库初始化 - 支持Vercel环境
-const dbPath = process.env.VERCEL ? '/tmp/database.json' : 'database.json';
+const dbPath = (process.env.VERCEL || process.env.RAILWAY) ? '/tmp/database.json' : 'database.json';
 const adapter = new JSONFile(dbPath);
 const defaultData = {
     users: [],
@@ -64,7 +64,7 @@ const defaultData = {
 const db = new Low(adapter, defaultData);
 
 // 初始化上传目录
-const uploadsDir = process.env.VERCEL ? '/tmp/uploads' : 'uploads';
+const uploadsDir = (process.env.VERCEL || process.env.RAILWAY) ? '/tmp/uploads' : 'uploads';
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -754,17 +754,14 @@ app.delete('/api/accounts/:id', requireLogin, requireSuperAdmin, async (req, res
     res.json({ message: '账号及其相关数据删除成功' });
 });
 
-// Vercel导出 - 在初始化完成后导出
-const serverPromise = (async () => {
+// 启动服务器
+(async () => {
     await initDatabase();
     
-    if (!process.env.VERCEL) {
+    // 本地环境启动服务器，云环境由平台自动处理
+    if (!process.env.VERCEL && !process.env.RAILWAY) {
         app.listen(PORT, () => {
             console.log(`服务器运行在 http://localhost:${PORT}`);
         });
     }
-    
-    return app;
 })();
-
-module.exports = serverPromise;
