@@ -87,57 +87,62 @@ const storage = multer.diskStorage({
 
 // 初始化数据库结构
 async function initDatabase() {
-    await db.read();
+    try {
+        await db.read();
 
-    // 如果数据库不存在，初始化默认数据
-    if (!db.data) {
-        db.data = {
-            users: [],
-            inviteCodes: [],
-            emailVerifications: [],
-            tasks: [],
-            messages: []
-        };
-    }
+        // 如果数据库不存在，初始化默认数据
+        if (!db.data) {
+            db.data = {
+                users: [],
+                inviteCodes: [],
+                emailVerifications: [],
+                tasks: [],
+                messages: []
+            };
+        }
 
-    // 初始化管理员账号
-    const adminUsername = 'CYJ2025';
-    const adminPassword = 'Admin@123456';
-    const adminEmail = 'admin@stc.com';
+        // 初始化管理员账号
+        const adminUsername = 'CYJ2025';
+        const adminPassword = 'Admin@123456';
+        const adminEmail = 'admin@stc.com';
 
-    const existingAdmin = db.data.users.find(u => u.username === adminUsername);
-    if (!existingAdmin) {
-        const hash = bcrypt.hashSync(adminPassword, 10);
-        db.data.users.push({
-            id: Date.now(),
-            username: adminUsername,
-            email: adminEmail,
-            password: hash,
-            is_admin: true,
-            is_banned: false,
-            created_at: new Date().toISOString()
-        });
-        console.log('管理员账号创建成功');
-    }
-
-    // 初始化邀请码
-    const initialCodes = ['STC2025', 'WELCOME2025', 'FIRSTUSER'];
-    initialCodes.forEach(code => {
-        const existingCode = db.data.inviteCodes.find(c => c.code === code);
-        if (!existingCode) {
-            db.data.inviteCodes.push({
-                id: Date.now() + Math.random(),
-                code: code,
-                is_used: false,
-                created_by: null,
+        const existingAdmin = db.data.users.find(u => u.username === adminUsername);
+        if (!existingAdmin) {
+            const hash = bcrypt.hashSync(adminPassword, 10);
+            db.data.users.push({
+                id: Date.now(),
+                username: adminUsername,
+                email: adminEmail,
+                password: hash,
+                is_admin: true,
+                is_banned: false,
                 created_at: new Date().toISOString()
             });
-            console.log(`邀请码 ${code} 创建成功`);
+            console.log('管理员账号创建成功');
         }
-    });
 
-    await db.write();
-    console.log('数据库初始化完成');
+        // 初始化邀请码
+        const initialCodes = ['STC2025', 'WELCOME2025', 'FIRSTUSER'];
+        initialCodes.forEach(code => {
+            const existingCode = db.data.inviteCodes.find(c => c.code === code);
+            if (!existingCode) {
+                db.data.inviteCodes.push({
+                    id: Date.now() + Math.random(),
+                    code: code,
+                    is_used: false,
+                    created_by: null,
+                    created_at: new Date().toISOString()
+                });
+                console.log(`邀请码 ${code} 创建成功`);
+            }
+        });
+
+        await db.write();
+        console.log('数据库初始化完成');
+    } catch (error) {
+        console.error('数据库初始化失败:', error);
+        // 即使初始化失败，也继续运行
+    }
 }
 
 // 邮件发送器配置
@@ -749,17 +754,17 @@ app.delete('/api/accounts/:id', requireLogin, requireSuperAdmin, async (req, res
     res.json({ message: '账号及其相关数据删除成功' });
 });
 
-// 启动服务器
-(async () => {
+// Vercel导出 - 在初始化完成后导出
+const serverPromise = (async () => {
     await initDatabase();
     
-    // Vercel环境不直接启动服务器，而是导出app
     if (!process.env.VERCEL) {
         app.listen(PORT, () => {
             console.log(`服务器运行在 http://localhost:${PORT}`);
         });
     }
+    
+    return app;
 })();
 
-// Vercel导出
-module.exports = app;
+module.exports = serverPromise;
