@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>任务详情 - STC网站</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <a href="/">STC网站</a>
+            </div>
+            <ul class="nav-menu" id="navMenu">
+                <li><a href="/">首页</a></li>
+                <li><a href="#tasks">任务</a></li>
+                <li><a href="#messages">留言</a></li>
+                <li><button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">🌙</button></li>
+                <li id="nav-user"><a href="/login">登录</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <div class="container">
+            <div class="task-detail-container">
+                <button onclick="goBack()" class="btn btn-secondary" style="margin-bottom: 1rem;">← 返回</button>
+                
+                <div id="task-detail" class="task-detail">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2025 STC网站. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script src="js/task.js"></script>
+</body>
+</html>

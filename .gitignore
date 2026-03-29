@@ -1,0 +1,9 @@
+node_modules/
+uploads/
+.env
+database.json
+*.log
+.DS_Store
+ngrok.exe
+ngrok.zip
+.env.example

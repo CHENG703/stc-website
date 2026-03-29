@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STC网站 - 欢迎访问</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <a href="/">STC网站</a>
+            </div>
+            <ul class="nav-menu" id="navMenu">
+                <li><a href="/" class="active">首页</a></li>
+                <li><a href="#tasks">任务</a></li>
+                <li><a href="#messages">留言</a></li>
+                <li><button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">🌙</button></li>
+                <li id="nav-user"><a href="/login">登录</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+                <h1>欢迎来到STC网站</h1>
+                <p>一个现代化的社区平台，分享你的想法</p>
+                <div class="hero-buttons" id="hero-buttons">
+                    <a href="/register" class="btn btn-primary">立即注册</a>
+                    <a href="/login" class="btn btn-secondary">登录</a>
+                </div>
+            </div>
+        </section>
+
+        <section id="tasks" class="tasks-section">
+            <div class="container">
+                <h2 class="section-title">最近任务</h2>
+                <div id="tasks-list" class="tasks-grid">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="messages" class="messages-section">
+            <div class="container">
+                <h2 class="section-title">留言板</h2>
+                
+                <div id="message-form-container" class="message-form-container hidden">
+                    <div class="message-form">
+                        <textarea id="message-content" placeholder="写下你的留言..." maxlength="500"></textarea>
+                        <button onclick="postMessage()" class="btn btn-primary">发布留言</button>
+                    </div>
+                </div>
+
+                <div id="messages-list" class="messages-list">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2025 STC网站. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
