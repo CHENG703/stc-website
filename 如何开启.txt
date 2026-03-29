@@ -1,0 +1,2 @@
+上方地址栏输入cmd然后输入npm start
+再来一次然后输入ngrok http 3000 

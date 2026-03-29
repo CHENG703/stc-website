@@ -12,17 +12,24 @@ function showMessage(message, type = 'success') {
 
 // 封装的fetch函数，处理403错误
 async function fetchWithAuth(url, options = {}) {
+    // 确保发送cookies以维持session
+    options.credentials = 'include';
+    
     const response = await fetch(url, options);
     
     if (response.status === 403) {
         const error = await response.json();
-        if (error.error && error.error.includes('被封禁')) {
-            showMessage(error.error, 'error');
+        const errorMsg = error.error || '';
+        if (errorMsg.includes('请先登录') || errorMsg.includes('未登录')) {
+            showMessage('登录已过期，请重新登录', 'error');
             localStorage.removeItem('user');
             setTimeout(() => {
                 window.location.href = '/login';
             }, 2000);
-            throw new Error('Banned');
+            throw new Error('AccessDenied');
+        } else {
+            showMessage(errorMsg || '权限不足', 'error');
+            throw new Error('PermissionDenied');
         }
     }
     
@@ -44,7 +51,7 @@ async function logout() {
             showMessage('登出失败', 'error');
         }
     } catch (error) {
-        if (error.message !== 'Banned') {
+        if (error.message !== 'AccessDenied') {
             showMessage('登出失败', 'error');
         }
     }
@@ -60,6 +67,35 @@ async function loadUserInfo() {
             document.getElementById('user-email').textContent = user.email;
             document.getElementById('user-created').textContent = formatDate(user.createdAt);
             document.getElementById('user-role').textContent = user.isAdmin ? '管理员' : '普通用户';
+            
+            // 显示GitHub绑定状态
+            const githubStatus = document.getElementById('user-github');
+            const githubBtn = document.getElementById('bind-github-btn');
+            if (user.githubId) {
+                githubStatus.textContent = '已绑定';
+                githubStatus.style.color = '#10b981';
+                githubBtn.style.display = 'none';
+            } else {
+                githubStatus.textContent = '未绑定';
+                githubStatus.style.color = '#9ca3af';
+                githubBtn.style.display = 'inline-block';
+            }
+            
+            // 显示Microsoft绑定状态
+            const microsoftStatus = document.getElementById('user-microsoft');
+            const microsoftBtn = document.getElementById('bind-microsoft-btn');
+            if (user.microsoftId) {
+                microsoftStatus.textContent = '已绑定';
+                microsoftStatus.style.color = '#10b981';
+                microsoftBtn.style.display = 'none';
+            } else {
+                microsoftStatus.textContent = '未绑定';
+                microsoftStatus.style.color = '#9ca3af';
+                microsoftBtn.style.display = 'inline-block';
+            }
+
+            // 加载头像
+                       loadAvatar();
 
             // 如果不是管理员，隐藏管理员功能
             if (!user.isAdmin) {
@@ -79,7 +115,7 @@ async function loadUserInfo() {
             }, 2000);
         }
     } catch (error) {
-        if (error.message !== 'Banned') {
+        if (error.message !== 'AccessDenied') {
             showMessage('获取用户信息失败', 'error');
             setTimeout(() => {
                 window.location.href = '/login';
@@ -139,7 +175,7 @@ async function handleChangePassword(event) {
             showMessage(error.error || '修改失败', 'error');
         }
     } catch (error) {
-        if (error.message !== 'Banned') {
+        if (error.message !== 'AccessDenied') {
             showMessage('修改失败，请重试', 'error');
         }
     }
@@ -163,7 +199,7 @@ async function generateInviteCode() {
             showMessage(error.error || '生成失败', 'error');
         }
     } catch (error) {
-        if (error.message !== 'Banned') {
+        if (error.message !== 'AccessDenied') {
             showMessage('生成失败，请重试', 'error');
         }
     }
@@ -218,7 +254,7 @@ async function handlePublishTask(event) {
             showMessage(error.error || '发布失败', 'error');
         }
     } catch (error) {
-        if (error.message !== 'Banned') {
+        if (error.message !== 'AccessDenied') {
             showMessage('发布失败，请重试', 'error');
         }
     }
@@ -234,6 +270,184 @@ function formatDate(dateString) {
 }
 
 // 页面加载完成后执行
-document.addEventListener('DOMContentLoaded', () => {
-    loadUserInfo();
-});
+async function loadAvatar() {
+    try {
+        const response = await fetch('/api/user');
+        if (response.ok) {
+            const user = await response.json();
+            const avatarPreview = document.getElementById('avatar-preview');
+            const avatarPlaceholder = document.getElementById('avatar-placeholder');
+            const avatarStatusText = document.getElementById('avatar-status-text');
+            
+            if (user.avatar) {
+                avatarPreview.innerHTML = '<img src="/avatars/' + user.avatar + '" alt="用户头像">';
+                avatarStatusText.textContent = '当前头像：已设置';
+            } else {
+                avatarPreview.innerHTML = '<span id="avatar-placeholder">👤</span>';
+                avatarStatusText.textContent = '当前头像：无';
+            }
+            
+            
+        }
+    } catch (error) {
+        console.error('加载头像失败:', error);
+    }
+}
+
+async function handleAvatarUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    if (!file.type.startsWith('image/')) {
+        showMessage('请选择图片文件', 'error');
+        return;
+    }
+    
+    if (file.size > 5 * 1024 * 1024) {
+        showMessage('图片大小不能超过5MB', 'error');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('avatar', file);
+    
+    try {
+        const response = await fetchWithAuth('/api/avatar/upload', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            showMessage(result.message, 'success');
+            loadAvatar();
+        } else {
+            const error = await response.json();
+            showMessage(error.error || '上传失败', 'error');
+        }
+    } catch (error) {
+        if (error.message !== 'AccessDenied') {
+            showMessage('上传失败，请重试', 'error');
+        }
+    }
+    
+    event.target.value = '';
+}
+
+// 绑定GitHub账号
+function bindGitHub() {
+    window.location.href = '/auth/github?mode=bind';
+}
+
+// 绑定Microsoft账号
+function bindMicrosoft() {
+    // 保存当前页面URL，用于回调后跳转回来
+    sessionStorage.setItem('bindRedirect', '/user');
+    window.location.href = '/auth/microsoft';
+}
+
+// 注销账号
+async function handleDeleteAccount(event) {
+    event.preventDefault();
+
+    const password = document.getElementById('delete-password').value;
+
+    if (!password) {
+        showMessage('请输入密码', 'warning');
+        return;
+    }
+
+    if (!confirm('确定要永久注销账号吗？此操作将删除您的所有数据且无法恢复！')) {
+        return;
+    }
+
+    if (!confirm('再次确认：您确定要永久注销账号吗？')) {
+        return;
+    }
+
+    try {
+        const response = await fetchWithAuth('/api/user/delete', {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ password })
+        });
+
+        if (response.ok) {
+            showMessage('账号已成功注销');
+            setTimeout(() => {
+                window.location.href = '/login';
+            }, 2000);
+        } else {
+            const error = await response.json();
+            showMessage(error.error || '注销失败', 'error');
+        }
+    } catch (error) {
+        if (error.message !== 'AccessDenied') {
+            showMessage('注销失败，请重试', 'error');
+        }
+    }
+}
+
+// 检查绑定结果
+  function checkBindResult() {
+      const urlParams = new URLSearchParams(window.location.search);
+      
+      // 检查session中的绑定结果
+      fetch('/api/bind-result')
+          .then(response => response.json())
+          .then(data => {
+              if (data.githubBindSuccess) {
+                  showMessage(data.githubBindSuccess);
+              }
+              if (data.githubBindError) {
+                  showMessage(data.githubBindError, 'error');
+              }
+              if (data.microsoftBindSuccess) {
+                  showMessage(data.microsoftBindSuccess);
+              }
+              if (data.microsoftBindError) {
+                  showMessage(data.microsoftBindError, 'error');
+              }
+          })
+          .catch(error => {
+              console.error('检查绑定结果失败:', error);
+          });
+  }
+  
+  // 检查OAuth配置是否有效
+  async function checkOAuthConfig() {
+      try {
+          const response = await fetch('/api/oauth-config');
+          const config = await response.json();
+          
+          // 如果GitHub配置无效，禁用绑定按钮
+          if (!config.githubConfigured) {
+              const githubBtn = document.getElementById('bind-github-btn');
+              if (githubBtn) {
+                  githubBtn.disabled = true;
+                  githubBtn.textContent = '未配置';
+                  githubBtn.title = '管理员未配置GitHub OAuth';
+              }
+          }
+          
+          // 如果Microsoft配置无效，禁用绑定按钮
+          if (!config.microsoftConfigured) {
+              const microsoftBtn = document.getElementById('bind-microsoft-btn');
+              if (microsoftBtn) {
+                  microsoftBtn.disabled = true;
+                  microsoftBtn.textContent = '未配置';
+                  microsoftBtn.title = '管理员未配置Microsoft OAuth';
+              }
+          }
+      } catch (error) {
+          console.error('检查OAuth配置失败:', error);
+      }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+      loadUserInfo();
+      checkBindResult();
+      checkOAuthConfig();
+  });

@@ -1,3 +1,20 @@
+// 任务状态映射
+const STATUS_MAP = {
+    'pending': '备货中',
+    'planning': '建设中',
+    'in_progress': '进行中',
+    'completed': '已完成',
+    'idle': '一笔未动'
+};
+
+const STATUS_COLORS = {
+    'pending': '#f59e0b',
+    'planning': '#3b82f6',
+    'in_progress': '#8b5cf6',
+    'completed': '#10b981',
+    'idle': '#6b7280'
+};
+
 // 全局消息提示函数
 function showMessage(message, type = 'success') {
     const toast = document.createElement('div');
@@ -12,22 +29,33 @@ function showMessage(message, type = 'success') {
 
 // 封装的fetch函数，处理403错误
 async function fetchWithAuth(url, options = {}) {
+    // 确保发送cookies以维持session
+    options.credentials = 'include';
+    
     const response = await fetch(url, options);
     
     if (response.status === 403) {
         const error = await response.json();
-        if (error.error && error.error.includes('被封禁')) {
-            showMessage(error.error, 'error');
+        const errorMsg = error.error || '';
+        if (errorMsg.includes('请先登录') || errorMsg.includes('未登录')) {
+            showMessage('登录已过期，请重新登录', 'error');
             localStorage.removeItem('user');
             setTimeout(() => {
                 window.location.href = '/login';
             }, 2000);
-            throw new Error('Banned');
+            throw new Error('AccessDenied');
+        } else {
+            showMessage(errorMsg || '权限不足', 'error');
+            throw new Error('PermissionDenied');
         }
     }
     
     return response;
 }
+
+// 全局用户变量
+let currentUser = null;
+let csrfToken = null;
 
 // 检查登录状态并更新导航栏
 async function checkLoginStatus() {
@@ -35,19 +63,31 @@ async function checkLoginStatus() {
         const response = await fetchWithAuth('/api/user');
         if (response.ok) {
             const user = await response.json();
+            currentUser = user;
             const navUser = document.getElementById('nav-user');
             if (navUser) {
                 let navHtml = `<a href="/user">${user.username}</a>`;
-                if (user.isAdmin) {
+                if (user.is_admin || user.is_super_admin) {
                     navHtml += ` | <a href="/admin">管理面板</a>`;
                 }
                 navHtml += ` | <a href="#" onclick="logout()">登出</a>`;
                 navUser.innerHTML = navHtml;
             }
+            
+            // 获取CSRF token
+            try {
+                const tkResp = await fetch('/api/csrf-token', { credentials: 'include' });
+                if (tkResp.ok) {
+                    const tkData = await tkResp.json();
+                    csrfToken = tkData.csrfToken;
+                    localStorage.setItem('csrfToken', csrfToken);
+                }
+            } catch (e) {}
+            
             return user;
         }
     } catch (error) {
-        if (error.message !== 'Banned') {
+        if (error.message !== 'AccessDenied') {
             console.error('检查登录状态失败:', error);
         }
     }
@@ -69,7 +109,7 @@ async function logout() {
             showMessage('登出失败', 'error');
         }
     } catch (error) {
-        if (error.message !== 'Banned') {
+        if (error.message !== 'AccessDenied') {
             showMessage('登出失败', 'error');
         }
     }
@@ -146,10 +186,11 @@ async function loadTaskDetail() {
             return;
         }
 
-        const task = await response.json();
+        const result = await response.json();
+        const task = result.data || result;
         displayTaskDetail(task);
     } catch (error) {
-        if (error.message !== 'Banned') {
+        if (error.message !== 'AccessDenied') {
             console.error('加载任务详情失败:', error);
             showMessage('加载任务详情失败', 'error');
             setTimeout(() => {
@@ -166,10 +207,53 @@ function displayTaskDetail(task) {
     const pinnedBadge = task.is_pinned ? '<span class="pinned-badge">📌 置顶</span>' : '';
     const content = escapeHtml(task.content).replace(/\n/g, '<br>');
     
+    const displayStatus = task.status ? STATUS_MAP[task.status] || task.status : '一笔未动';
+    const statusColor = STATUS_COLORS[task.status] || '#6b7280';
+    
+    let attachmentHtml = '';
+    if (task.file_name) {
+        const ext = task.file_name.split('.').pop().toLowerCase();
+        const icon = getFileIcon(ext);
+        attachmentHtml = `
+            <div class="task-detail-attachment">
+                <h3>附件</h3>
+                <div style="display:flex;align-items:center;gap:12px;padding:14px;background:#161b22;border:1px solid #30363d;border-radius:8px;margin-top:10px;">
+                    <div style="font-size:28px;">${icon}</div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="color:#f0f6fc;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(task.file_name)}">${escapeHtml(task.file_name)}</div>
+                        <div style="color:#8b949e;font-size:12px;margin-top:2px;">点击右侧按钮下载</div>
+                    </div>
+                    <a href="/api/tasks/${task.id}/download" download="${escapeHtml(task.file_name)}" style="padding:8px 16px;background:#238636;color:white;border-radius:6px;text-decoration:none;font-weight:500;font-size:13px;">
+                        ⬇ 下载
+                    </a>
+                </div>
+            </div>
+        `;
+    }
+    
+    let statusUpdateHtml = '';
+    if (currentUser && (currentUser.id === task.author_id || currentUser.is_admin || currentUser.is_super_admin)) {
+        statusUpdateHtml = `
+            <div style="margin-top:15px;padding:15px;background:#161b22;border:1px solid #30363d;border-radius:8px;">
+                <div style="color:#8b949e;font-size:12px;margin-bottom:8px;">修改任务进度</div>
+                <div style="display:flex;gap:10px;align-items:center;">
+                    <select id="task-status-select" onchange="updateTaskStatus(${task.id}, this.value)" style="flex:1;padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#f0f6fc;">
+                        <option value="idle" ${task.status === 'idle' ? 'selected' : ''}>一笔未动</option>
+                        <option value="pending" ${task.status === 'pending' ? 'selected' : ''}>备货中</option>
+                        <option value="planning" ${task.status === 'planning' ? 'selected' : ''}>建设中</option>
+                        <option value="in_progress" ${task.status === 'in_progress' ? 'selected' : ''}>进行中</option>
+                        <option value="completed" ${task.status === 'completed' ? 'selected' : ''}>已完成</option>
+                    </select>
+                </div>
+            </div>
+        `;
+    }
+    
     taskDetail.innerHTML = `
         <div class="task-detail-header">
             <h1 class="task-detail-title">${escapeHtml(task.title)}</h1>
             ${pinnedBadge}
+            <span style="background:${statusColor}20;color:${statusColor};border:1px solid ${statusColor}40;padding:4px 12px;border-radius:12px;font-size:13px;margin-top:10px;display:inline-block;">${displayStatus}</span>
         </div>
         
         <div class="task-detail-meta">
@@ -181,7 +265,54 @@ function displayTaskDetail(task) {
             <h3>任务内容</h3>
             <div class="task-detail-text">${content}</div>
         </div>
+        
+        ${attachmentHtml}
+        ${statusUpdateHtml}
     `;
+}
+
+// 更新任务状态
+async function updateTaskStatus(taskId, newStatus) {
+    try {
+        const token = localStorage.getItem('csrfToken');
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['X-CSRF-Token'] = token;
+        
+        const response = await fetch(`/api/tasks/${taskId}/status`, {
+            method: 'PUT',
+            credentials: 'include',
+            headers: headers,
+            body: JSON.stringify({ status: newStatus })
+        });
+        
+        if (response.ok) {
+            showMessage('状态更新成功');
+            loadTaskDetail();
+        } else {
+            const error = await response.json();
+            showMessage(error.message || '状态更新失败', 'error');
+        }
+    } catch (error) {
+        showMessage('状态更新失败', 'error');
+    }
+}
+
+function getFileIcon(ext) {
+    const icons = {
+        'pdf': '📕',
+        'doc': '📘', 'docx': '📘',
+        'xls': '📗', 'xlsx': '📗', 'csv': '📗',
+        'ppt': '📙', 'pptx': '📙',
+        'zip': '📦', 'rar': '📦', '7z': '📦', 'tar': '📦', 'gz': '📦',
+        'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️', 'bmp': '🖼️', 'webp': '🖼️',
+        'mp3': '🎵', 'wav': '🎵', 'flac': '🎵', 'm4a': '🎵',
+        'mp4': '🎬', 'avi': '🎬', 'mkv': '🎬', 'mov': '🎬', 'webm': '🎬',
+        'txt': '📝', 'md': '📝', 'log': '📝',
+        'py': '🐍', 'js': '📜', 'html': '📜', 'css': '📜', 'json': '📜',
+        'exe': '⚙️', 'msi': '⚙️', 'dmg': '⚙️',
+        'apk': '📱', 'ipa': '📱'
+    };
+    return icons[ext] || '📎';
 }
 
 // 格式化日期时间

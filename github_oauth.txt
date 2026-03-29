@@ -1,0 +1,104 @@
+﻿
+> // GitHub OAuth策略配置
+  if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
+      passport.use(new GitHubStrategy({
+          clientID: process.env.GITHUB_CLIENT_ID,
+          clientSecret: process.env.GITHUB_CLIENT_SECRET,
+          callbackURL: '/auth/github/callback'
+      },
+      async function(accessToken, refreshToken, profile, done) {
+          try {
+              // 查找或创建用户
+              let user = db.data.users.find(u => u.github_id === profile.id);
+              
+              if (!user) {
+                  // 创建新用户
+                  user = {
+                      id: Date.now(),
+                      username: profile.username,
+                      email: profile.emails && profile.emails[0] ? profile.emails[0].value : `${profile.username}@github.local`,
+                      password: '', // OAuth用户不需要密码
+                      github_id: profile.id,
+                      avatar: profile.avatar_url,
+                      is_admin: false,
+                      is_super_admin: false,
+                      is_banned: false,
+                      login_attempts: 0,
+                      created_at: new Date().toISOString()
+                  };
+                  db.data.users.push(user);
+                  await db.write();
+              } else {
+                  // 更新用户信息
+                  user.avatar = profile.avatar_url;
+                  user.last_login = new Date().toISOString();
+                  await db.write();
+              }
+              
+              return done(null, user);
+          } catch (error) {
+              return done(error);
+          }
+      }));
+  }
+  
+  // Microsoft Azure AD OAuth策略配置（暂时禁用，内网不支持HTTPS）
+  // if (process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET && process.env.MICROSOFT_TENANT_ID) {
+  //     passport.use(new AzureADStrategy({
+  //         identityMetadata: `https://login.microsoftonline.com/${process.env.MICROSOFT_TENANT_ID}/.well-known/openid-configuration`,
+  //         clientID: process.env.MICROSOFT_CLIENT_ID,
+  //         clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
+  //         responseType: 'code',
+  //         responseMode: 'query',
+  //         scope: ['profile', 'email', 'openid'],
+  //         allowHttpForRedirectURL: true,
+  //         redirectUrl: '/auth/microsoft/callback'
+  //     }, async function(iss, sub, profile, accessToken, refreshToken, done) {
+  //         try {
+  //             // 查找或创建用户
+  //             let user = db.data.users.find(u => u.microsoft_id === profile.oid);
+  //             
+  //             if (!user) {
+  //                 // 创建新用户
+  //                 user = {
+  //                     id: Date.now(),
+  //                     username: profile.displayName || profile.preferred_username || profile.name,
+  //                     email: profile.emails && profile.emails[0] ? profile.emails[0] : `${profile.oid}@microsoft.local`,
+  //                     password: '', // OAuth用户不需要密码
+  //                     microsoft_id: profile.oid,
+  //                     avatar: '', // Microsoft可能不提供头像
+  //                     is_admin: false,
+  //                     is_super_admin: false,
+  //                     is_banned: false,
+  //                     login_attempts: 0,
+  //                     created_at: new Date().toISOString()
+  //                 };
+  //                 db.data.users.push(user);
+  //                 await db.write();
+  //             } else {
+  //                 // 更新用户信息
+  //                 user.last_login = new Date().toISOString();
+  //                 await db.write();
+  //             }
+  //             
+  //             return done(null, user);
+  //         } catch (error) {
+  //             return done(error);
+  //         }
+  //     }));
+  // }
+  // Passport序列化
+  passport.serializeUser(function(user, done) {
+      done(null, user.id);
+  });
+  
+  passport.deserializeUser(async function(id, done) {
+      try {
+          const user = db.data.users.find(u => u.id === id);
+          done(null, user);
+      } catch (error) {
+          done(error);
+      }
+  });
+
+

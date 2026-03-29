@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理面板测试 - STC网站</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; }
+        h2 { color: #666; margin-top: 0; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #0056b3; }
+        .error { color: red; }
+        .success { color: green; }
+        pre {
+            background: #f8f8f8;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>管理面板测试页面</h1>
+    
+    <div class="section">
+        <h2>步骤1：登录</h2>
+        <button onclick="testLogin()">测试登录</button>
+        <div id="login-result"></div>
+    </div>
+
+    <div class="section">
+        <h2>步骤2：获取用户信息</h2>
+        <button onclick="testUser()">测试获取用户信息</button>
+        <div id="user-result"></div>
+    </div>
+
+    <div class="section">
+        <h2>步骤3：获取邀请码</h2>
+        <button onclick="testInviteCodes()">测试获取邀请码</button>
+        <div id="invite-codes-result"></div>
+    </div>
+
+    <div class="section">
+        <h2>步骤4：获取成员列表</h2>
+        <button onclick="testMembers()">测试获取成员列表</button>
+        <div id="members-result"></div>
+    </div>
+
+    <div class="section">
+        <h2>步骤5：获取任务列表</h2>
+        <button onclick="testTasks()">测试获取任务列表</button>
+        <div id="tasks-result"></div>
+    </div>
+
+    <div class="section">
+        <h2>步骤6：获取留言列表</h2>
+        <button onclick="testMessages()">测试获取留言列表</button>
+        <div id="messages-result"></div>
+    </div>
+
+    <script>
+        async function testLogin() {
+            const resultDiv = document.getElementById('login-result');
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        username: 'REDACTED_USER',
+                        password: 'REDACTED'
+                    })
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<pre class="${response.ok ? 'success' : 'error'}">${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<pre class="error">错误: ${error.message}</pre>`;
+            }
+        }
+
+        async function testUser() {
+            const resultDiv = document.getElementById('user-result');
+            try {
+                const response = await fetch('/api/user', {
+                    credentials: 'include'
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<pre class="${response.ok ? 'success' : 'error'}">${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<pre class="error">错误: ${error.message}</pre>`;
+            }
+        }
+
+        async function testInviteCodes() {
+            const resultDiv = document.getElementById('invite-codes-result');
+            try {
+                const response = await fetch('/api/invite-codes', {
+                    credentials: 'include'
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<pre class="${response.ok ? 'success' : 'error'}">${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<pre class="error">错误: ${error.message}</pre>`;
+            }
+        }
+
+        async function testMembers() {
+            const resultDiv = document.getElementById('members-result');
+            try {
+                const response = await fetch('/api/members', {
+                    credentials: 'include'
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<pre class="${response.ok ? 'success' : 'error'}">${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<pre class="error">错误: ${error.message}</pre>`;
+            }
+        }
+
+        async function testTasks() {
+            const resultDiv = document.getElementById('tasks-result');
+            try {
+                const response = await fetch('/api/tasks', {
+                    credentials: 'include'
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<pre class="${response.ok ? 'success' : 'error'}">${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<pre class="error">错误: ${error.message}</pre>`;
+            }
+        }
+
+        async function testMessages() {
+            const resultDiv = document.getElementById('messages-result');
+            try {
+                const response = await fetch('/api/messages', {
+                    credentials: 'include'
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<pre class="${response.ok ? 'success' : 'error'}">${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<pre class="error">错误: ${error.message}</pre>`;
+            }
+        }
+    </script>
+</body>
+</html>

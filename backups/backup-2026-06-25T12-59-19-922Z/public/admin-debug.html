@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>管理面板调试版 - STC网站</title>
+    <link rel='stylesheet' href='css/style.css'>
+    <style>
+        .debug-panel {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 400px;
+            height: 100vh;
+            background: #282c34;
+            color: #abb2bf;
+            padding: 20px;
+            overflow-y: auto;
+            z-index: 10000;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.3);
+        }
+        .debug-panel h3 {
+            margin-top: 0;
+            color: #61afef;
+        }
+        .debug-log {
+            font-family: monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .debug-log .time {
+            color: #98c379;
+        }
+        .debug-log .success {
+            color: #98c379;
+        }
+        .debug-log .error {
+            color: #e06c75;
+        }
+        .debug-log .info {
+            color: #61afef;
+        }
+        .debug-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #e06c75;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .main-content {
+            margin-right: 400px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 调试面板 -->
+    <div class='debug-panel' id='debugPanel'>
+        <button class='debug-close' onclick='closeDebug()'>×</button>
+        <h3>管理面板调试信息</h3>
+        <div class='debug-log' id='debugLog'></div>
+    </div>
+
+    <!-- 原始内容 -->
+    <div class='main-content'>
+    <nav class='navbar'>
+        <div class='container'>
+            <div class='nav-brand'>
+                <a href='/'>STC工会任务平台</a>
+            </div>
+            <ul class='nav-menu'>
+                <li><a href='/'>首页</a></li>
+                <li><a href='/about'>关于我们</a></li>
+                <li><a href='/user'>用户中心</a></li>
+                <li><a href='/admin' class='active'>管理面板</a></li>
+                <li><a href='#' onclick='logout()'>登出</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <div class='container'>
+            <div class='admin-panel'>
+                <h2>管理面板</h2>
+                
+                <div class='admin-section'>
+                    <h3>邀请码管理</h3>
+                    <button onclick='generateInviteCode()' class='btn btn-primary'>生成新邀请码</button>
+                    <button onclick='loadInviteCodes()' class='btn btn-secondary'>刷新列表</button>
+                    
+                    <div id='invite-codes-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
+                <div class='admin-section' id='members-section'>
+                    <h3>成员管理</h3>
+                    <button onclick='loadMembers()' class='btn btn-secondary'>刷新成员列表</button>
+                    
+                    <div id='members-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
+                <div class='admin-section' id='tasks-section'>
+                    <h3>任务管理</h3>
+                    <button onclick='loadTasks()' class='btn btn-secondary'>刷新任务列表</button>
+
+                    <div id='tasks-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
+                <div class='admin-section' id='messages-section'>
+                    <h3>留言管理</h3>
+                    <button onclick='loadMessages()' class='btn btn-secondary'>刷新留言列表</button>
+
+                    <div id='messages-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
+                <div class='admin-section' id='accounts-section'>
+                    <h3>账号管理</h3>
+                    <div id='accounts-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
+                <div class='admin-section' id='avatar-review-section'>
+                    <h3>头像审核</h3>
+                    <button onclick='loadPendingAvatars()' class='btn btn-secondary'>刷新待审核头像</button>
+                    
+                    <div id='pending-avatars-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    </div>
+
+    <script src='js/admin.js'></script>
+    <script>
+        // 调试日志系统
+        const debugLog = [];
+        
+        function debug(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            debugLog.push({ time, message, type });
+            updateDebugDisplay();
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+        
+        function updateDebugDisplay() {
+            const logDiv = document.getElementById('debugLog');
+            logDiv.innerHTML = debugLog.map(log => 
+                `<div class='${log.type}'><span class='time'>[${log.time}]</span> ${log.message}</div>`
+            ).join('');
+        }
+        
+        function closeDebug() {
+            document.getElementById('debugPanel').style.display = 'none';
+            document.querySelector('.main-content').style.marginRight = '0';
+        }
+        
+        // 页面加载时的调试
+        debug('页面开始加载', 'info');
+        debug('当前URL: ' + window.location.href, 'info');
+        debug('当前路径: ' + window.location.pathname, 'info');
+        
+        // 检查cookies
+        debug('document.cookie: "' + document.cookie + '"', 'info');
+        debug('Cookie支持: ' + navigator.cookieEnabled, 'info');
+        
+        // 监听DOMContentLoaded事件
+        document.addEventListener('DOMContentLoaded', function() {
+            debug('DOMContentLoaded事件触发', 'success');
+            
+            // 立即检查登录状态
+            fetch('/api/user', {
+                credentials: 'include'
+            })
+            .then(response => {
+                debug('/api/user响应状态: ' + response.status, 'info');
+                
+                if (response.ok) {
+                    return response.json();
+                } else {
+                    throw new Error('Not logged in');
+                }
+            })
+            .then(user => {
+                debug('用户信息获取成功', 'success');
+                debug('用户名: ' + user.username, 'info');
+                debug('是否管理员: ' + user.isAdmin, 'info');
+                debug('是否超级管理员: ' + user.isSuperAdmin, 'info');
+                
+                if (!user.isAdmin) {
+                    debug('权限不足，不是管理员', 'error');
+                } else {
+                    debug('权限检查通过，是管理员', 'success');
+                    
+                    if (user.username === 'REDACTED_USER') {
+                        debug('是超级管理员REDACTED_USER，显示所有功能', 'success');
+                    } else {
+                        debug('是普通管理员，隐藏部分功能', 'info');
+                    }
+                }
+            })
+            .catch(error => {
+                debug('错误: ' + error.message, 'error');
+                debug('可能原因: session丢失或未登录', 'error');
+            });
+        });
+        
+        // 监听所有fetch请求
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const url = args[0];
+            const options = args[1] || {};
+            
+            debug('Fetch请求: ' + url, 'info');
+            debug('Credentials: ' + (options.credentials || '未设置'), 'info');
+            
+            return originalFetch.apply(this, args)
+                .then(response => {
+                    debug('Fetch响应: ' + response.status, 'success');
+                    return response;
+                })
+                .catch(error => {
+                    debug('Fetch错误: ' + error.message, 'error');
+                    throw error;
+                });
+        };
+    </script>
+</body>
+</html>

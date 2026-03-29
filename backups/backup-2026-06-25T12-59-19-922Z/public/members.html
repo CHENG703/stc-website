@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STC工会 - 成员列表</title>
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+    <link rel="stylesheet" href="css/style.css">
+    <script src="js/lang.js"></script>
+    <style>
+        body.members-page {
+            background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 50%, #ffffff 100%);
+            min-height: 100vh;
+        }
+        body.members-page .navbar {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(15px);
+            border-bottom: 1px solid rgba(14, 165, 233, 0.15);
+        }
+        body.members-page .navbar a {
+            color: #0c4a6e;
+        }
+        body.members-page .navbar a.active {
+            color: #0284c7;
+        }
+        body.members-page .nav-brand a {
+            color: #0284c7;
+            font-weight: 700;
+        }
+        body.members-page .section-title {
+            color: #0c4a6e;
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .members-header {
+            text-align: center;
+            padding: 3rem 0;
+        }
+        .members-header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 50%, #38bdf8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.75rem;
+        }
+        .members-header p {
+            color: #475569;
+            font-size: 1.1rem;
+        }
+        .members-stats {
+            display: flex;
+            justify-content: center;
+            gap: 3rem;
+            margin-bottom: 2.5rem;
+        }
+        .members-stat {
+            text-align: center;
+        }
+        .members-stat-number {
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .members-stat-label {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        .members-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 1.5rem;
+            padding: 2rem 0;
+        }
+        .member-card {
+            background: rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+            border-radius: 16px;
+            padding: 1.5rem;
+            text-align: center;
+            transition: all 0.4s;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+        .member-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 20px 40px rgba(14, 165, 233, 0.15);
+            border-color: rgba(14, 165, 233, 0.4);
+        }
+        .member-card::before {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #0284c7 0%, #0ea5e9 50%, #38bdf8 100%);
+            transform: scaleX(0);
+            transition: transform 0.4s;
+        }
+        .member-card:hover::before {
+            transform: scaleX(1);
+        }
+        .member-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            margin: 0 auto 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, rgba(14, 165, 233, 0.1) 0%, rgba(56, 189, 248, 0.1) 100%);
+            border: 2px solid rgba(14, 165, 233, 0.3);
+        }
+        .member-avatar img {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+        .member-card h3 {
+            color: #0c4a6e;
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+        .member-role {
+            display: inline-block;
+            padding: 3px 10px;
+            background: rgba(14, 165, 233, 0.1);
+            color: #0284c7;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-bottom: 0.75rem;
+        }
+        .member-desc {
+            color: #64748b;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+        .member-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 1rem;
+        }
+        @media (max-width: 768px) {
+            .members-header h1 {
+                font-size: 1.8rem;
+            }
+            .members-stats {
+                gap: 1.5rem;
+            }
+            .members-stat-number {
+                font-size: 1.8rem;
+            }
+            .members-grid {
+                grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+                gap: 1rem;
+            }
+        }
+    </style>
+</head>
+<body class="members-page">
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <a href="/home">STC</a>
+            </div>
+            <ul class="nav-menu" id="navMenu">
+                <li><a href="/home" data-lang="nav.home">首页</a></li>
+                <li><a href="/about" data-lang="nav.about">关于我们</a></li>
+                <li><a href="/home#tasks" data-lang="nav.tasks">任务</a></li>
+                <li><a href="/home#messages" data-lang="nav.messages">留言</a></li>
+                <li><button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">🌙</button></li>
+                <li id="nav-user"><a href="/login" data-lang="nav.login">登录</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <section class="members-header">
+            <div class="container">
+                <h1>STC工会成员</h1>
+                <p>我们是一个充满激情的Minecraft团队，每位成员都为工会贡献着自己的力量</p>
+                <div class="members-stats">
+                    <div class="members-stat">
+                        <div class="members-stat-number">6</div>
+                        <div class="members-stat-label">核心成员</div>
+                    </div>
+                    <div class="members-stat">
+                        <div class="members-stat-number">20+</div>
+                        <div class="members-stat-label">总成员数</div>
+                    </div>
+                    <div class="members-stat">
+                        <div class="members-stat-number">24/7</div>
+                        <div class="members-stat-label">活跃时间</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="members-section">
+            <div class="container">
+                <h2 class="section-title">核心团队</h2>
+                <div class="members-grid">
+                    <div class="member-card">
+                        <span class="member-badge">👑</span>
+                        <div class="member-avatar">
+                            <img src="/b_4a30411ebda3031d259ea08b03d4c9b7.jpg" alt="世纪城awa" onerror="this.style.display='none'; this.parentElement.innerHTML='👑'">
+                        </div>
+                        <h3>世纪城awa</h3>
+                        <span class="member-role">创始人/超级管理员</span>
+                        <p class="member-desc">工会的创立者，负责整体规划与管理</p>
+                    </div>
+
+                    <div class="member-card">
+                        <span class="member-badge">⭐</span>
+                        <div class="member-avatar">
+                            <img src="/b_41905953ae4fc633db59f8a258be1c9f.jpg" alt="却续Amc" onerror="this.style.display='none'; this.parentElement.innerHTML='⭐'">
+                        </div>
+                        <h3>却续Amc</h3>
+                        <span class="member-role">会长</span>
+                        <p class="member-desc">负责工会日常运营与决策</p>
+                    </div>
+
+                    <div class="member-card">
+                        <span class="member-badge">✨</span>
+                        <div class="member-avatar">
+                            <img src="/b_ad4a395192fb9eec76b2abeef4d15e2e.jpg" alt="陈某入" onerror="this.style.display='none'; this.parentElement.innerHTML='✨'">
+                        </div>
+                        <h3>陈某入</h3>
+                        <span class="member-role">副会长</span>
+                        <p class="member-desc">协助会长处理工会事务</p>
+                    </div>
+
+                    <div class="member-card">
+                        <div class="member-avatar">
+                            <img src="/b_e446ee7b115a5fc20455e8fb8bc26337.jpg" alt="mozhilou" onerror="this.style.display='none'; this.parentElement.innerHTML='🏗️'">
+                        </div>
+                        <h3>mozhilou</h3>
+                        <span class="member-role">建筑师/红石工程师</span>
+                        <p class="member-desc">负责建筑设计与红石技术</p>
+                    </div>
+
+                    <div class="member-card">
+                        <div class="member-avatar">
+                            <img src="/b_e6b04810dabef494ffa882668cdd0848.png" alt="mc_Alice" onerror="this.style.display='none'; this.parentElement.innerHTML='🔧'">
+                        </div>
+                        <h3>mc_Alice</h3>
+                        <span class="member-role">红石工程师/建筑师</span>
+                        <p class="member-desc">负责红石系统与建筑创作</p>
+                    </div>
+
+                    <div class="member-card">
+                        <div class="member-avatar">
+                            <img src="/b_bf35c9bb43c490a2c0528bc19582b14b.jpg" alt="ohmlni007" onerror="this.style.display='none'; this.parentElement.innerHTML='🐠'">
+                        </div>
+                        <h3>ohmlni007</h3>
+                        <span class="member-role">成员</span>
+                        <p class="member-desc">潜水</p>
+                    </div>
+                </div>
+
+                <h2 class="section-title" style="margin-top: 3rem;">其他成员</h2>
+                <div class="members-grid">
+                    <div class="member-card">
+                        <div class="member-avatar">🎮</div>
+                        <h3>铂</h3>
+                        <span class="member-role">成员</span>
+                        <p class="member-desc">成员</p>
+                    </div>
+                    <div class="member-card">
+                        <div class="member-avatar">🎮</div>
+                        <h3>CMD</h3>
+                        <span class="member-role">成员</span>
+                        <p class="member-desc">成员</p>
+                    </div>
+                    <div class="member-card">
+                        <div class="member-avatar">🎮</div>
+                        <h3>GuoGuo</h3>
+                        <span class="member-role">成员</span>
+                        <p class="member-desc">机↑械↓动↑力↓</p>
+                    </div>
+                    <div class="member-card">
+                        <div class="member-avatar">🎮</div>
+                        <h3>bayi_1</h3>
+                        <span class="member-role">成员</span>
+                        <p class="member-desc">成员</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>
+                &copy; 2025-2026 STC工会. All rights reserved. | 
+                <a href="#" onclick="showTerms('service')">使用条款</a> | 
+                <a href="#" onclick="showTerms('privacy')">隐私协议</a>
+            </p>
+            <p class="footer-note">一切解释权归STC团队</p>
+        </div>
+    </footer>
+
+    <script>
+        function toggleTheme() {
+            const body = document.body;
+            body.classList.toggle('light-theme');
+            localStorage.setItem('theme', body.classList.contains('light-theme') ? 'light' : 'dark');
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'light') {
+                document.body.classList.add('light-theme');
+            }
+        });
+    </script>
+</body>
+</html>

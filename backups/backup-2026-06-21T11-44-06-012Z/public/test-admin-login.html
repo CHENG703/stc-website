@@ -1,0 +1,100 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <title>管理面板登录测试</title>
+</head>
+<body>
+    <h2>管理面板登录诊断测试</h2>
+    
+    <div id='test-results'></div>
+    
+    <h3>步骤1: 测试登录</h3>
+    <button onclick='testLogin()'>点击测试登录</button>
+    
+    <h3>步骤2: 测试用户检查</h3>
+    <button onclick='testUserCheck()'>点击测试用户检查</button>
+    
+    <h3>步骤3: 测试管理面板访问</h3>
+    <button onclick='testAdminAccess()'>点击测试管理面板访问</button>
+    
+    <h3>步骤4: 显示所有cookies</h3>
+    <button onclick='showCookies()'>点击显示cookies</button>
+    
+    <script>
+    function addResult(step, status, message) {
+        const results = document.getElementById('test-results');
+        const result = document.createElement('div');
+        result.style.margin = '10px 0';
+        result.style.padding = '10px';
+        result.style.border = '1px solid #ccc';
+        result.style.borderRadius = '5px';
+        result.style.backgroundColor = status === 'success' ? '#d4edda' : status === 'error' ? '#f8d7da' : '#fff3cd';
+        result.innerHTML = '<strong>' + step + ':</strong> ' + message;
+        results.appendChild(result);
+    }
+    
+    async function testLogin() {
+        try {
+            const response = await fetch('/api/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include',
+                body: JSON.stringify({
+                    username: 'REDACTED_USER',
+                    password: 'REDACTED'
+                })
+            });
+            
+            const result = await response.json();
+            addResult('步骤1: 测试登录', response.ok ? 'success' : 'error', 
+                '状态码: ' + response.status + ', ' + JSON.stringify(result));
+        } catch (error) {
+            addResult('步骤1: 测试登录', 'error', '错误: ' + error.message);
+        }
+    }
+    
+    async function testUserCheck() {
+        try {
+            const response = await fetch('/api/user', {
+                credentials: 'include'
+            });
+            
+            if (response.ok) {
+                const user = await response.json();
+                addResult('步骤2: 测试用户检查', 'success', 
+                    '用户: ' + user.username + ', 管理员: ' + user.isAdmin);
+            } else {
+                addResult('步骤2: 测试用户检查', 'error', 
+                    '状态码: ' + response.status);
+            }
+        } catch (error) {
+            addResult('步骤2: 测试用户检查', 'error', '错误: ' + error.message);
+        }
+    }
+    
+    async function testAdminAccess() {
+        try {
+            const response = await fetch('/admin', {
+                credentials: 'include'
+            });
+            
+            addResult('步骤3: 测试管理面板访问', response.ok ? 'success' : 'error', 
+                '状态码: ' + response.status);
+        } catch (error) {
+            addResult('步骤3: 测试管理面板访问', 'error', '错误: ' + error.message);
+        }
+    }
+    
+    function showCookies() {
+        const cookies = document.cookie;
+        if (cookies) {
+            addResult('步骤4: 显示所有cookies', 'info', cookies);
+        } else {
+            addResult('步骤4: 显示所有cookies', 'warning', '没有cookies');
+        }
+    }
+    </script>
+</body>
+</html>

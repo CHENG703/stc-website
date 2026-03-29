@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>页面跳转测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #007bff;
+            font-size: 18px;
+        }
+        pre {
+            background-color: #282c34;
+            color: #abb2bf;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.success {
+            background-color: #28a745;
+        }
+        .warning {
+            background-color: #fff3cd;
+            color: #856404;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>页面跳转问题诊断</h1>
+        
+        <div class="warning">
+            <strong>测试说明：</strong><br>
+            这个页面会测试几种不同的跳转方式，看看哪种能保持登录状态。<br>
+            请在浏览器中按F12打开开发者工具，然后点击"Console"标签查看详细信息。
+        </div>
+
+        <div class="section">
+            <h2>跳转方式测试</h2>
+            <button onclick="testLocationHref()" class="success">1. window.location.href跳转</button>
+            <button onclick="testLocationReplace()">2. window.location.replace跳转</button>
+            <button onclick="testDirectLink()">3. 直接链接跳转</button>
+            <button onclick="testOpenInNewTab()">4. 在新标签页打开</button>
+        </div>
+
+        <div class="section">
+            <h2>诊断信息</h2>
+            <pre id="diagnostic-info">点击上方按钮开始测试...</pre>
+        </div>
+
+        <div class="section">
+            <h2>当前页面状态</h2>
+            <pre id="current-page-info">正在检查...</pre>
+        </div>
+
+        <div class="section">
+            <h2>手动操作</h2>
+            <button onclick="checkLoginStatus()">检查当前登录状态</button>
+            <button onclick="showCookies()">显示Cookies(仅调试)</button>
+        </div>
+    </div>
+
+    <script>
+        let diagnosticLogs = [];
+        
+        function log(message, type = 'info') {
+            diagnosticLogs.push({
+                time: new Date().toLocaleTimeString(),
+                message: message,
+                type: type
+            });
+            updateDiagnosticDisplay();
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+        
+        function updateDiagnosticDisplay() {
+            document.getElementById('diagnostic-info').textContent = JSON.stringify(diagnosticLogs, null, 2);
+        }
+        
+        async function checkLoginStatus() {
+            try {
+                const response = await fetch('/api/user', {
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const user = await response.json();
+                    log(`当前登录用户: ${user.username}, 管理员: ${user.isAdmin}`, 'success');
+                    return true;
+                } else {
+                    log('未登录', 'error');
+                    return false;
+                }
+            } catch (error) {
+                log(`检查登录状态错误: ${error.message}`, 'error');
+                return false;
+            }
+        }
+        
+        function showCookies() {
+            log(`当前document.cookie: "${document.cookie}"`, 'info');
+            log('注意: httpOnly的cookies不会显示在document.cookie中', 'warning');
+        }
+        
+        function testLocationHref() {
+            log('开始测试1: window.location.href跳转', 'info');
+            log('跳转前检查登录状态...', 'info');
+            
+            checkLoginStatus().then(isLoggedIn => {
+                if (isLoggedIn) {
+                    log('跳转前已登录，准备跳转到admin.html', 'success');
+                    log('请观察跳转后是否保持登录状态', 'warning');
+                    
+                    setTimeout(() => {
+                        log('执行跳转...', 'info');
+                        window.location.href = '/admin.html';
+                    }, 1000);
+                } else {
+                    log('跳转前未登录，请先登录', 'error');
+                }
+            });
+        }
+        
+        function testLocationReplace() {
+            log('开始测试2: window.location.replace跳转', 'info');
+            log('跳转前检查登录状态...', 'info');
+            
+            checkLoginStatus().then(isLoggedIn => {
+                if (isLoggedIn) {
+                    log('跳转前已登录，准备跳转到admin.html', 'success');
+                    log('请观察跳转后是否保持登录状态', 'warning');
+                    
+                    setTimeout(() => {
+                        log('执行跳转...', 'info');
+                        window.location.replace('/admin.html');
+                    }, 1000);
+                } else {
+                    log('跳转前未登录，请先登录', 'error');
+                }
+            });
+        }
+        
+        function testDirectLink() {
+            log('开始测试3: 直接链接跳转', 'info');
+            log('跳转前检查登录状态...', 'info');
+            
+            checkLoginStatus().then(isLoggedIn => {
+                if (isLoggedIn) {
+                    log('跳转前已登录，准备跳转到admin.html', 'success');
+                    log('请观察跳转后是否保持登录状态', 'warning');
+                    
+                    setTimeout(() => {
+                        log('执行跳转...', 'info');
+                        window.location = '/admin.html';
+                    }, 1000);
+                } else {
+                    log('跳转前未登录，请先登录', 'error');
+                }
+            });
+        }
+        
+        function testOpenInNewTab() {
+            log('开始测试4: 在新标签页打开admin.html', 'info');
+            log('这会测试session在不同标签页间的共享', 'info');
+            log('请在新标签页中观察是否保持登录状态', 'warning');
+            
+            setTimeout(() => {
+                log('打开新标签页...', 'info');
+                window.open('/admin.html', '_blank');
+            }, 1000);
+        }
+        
+        function updateCurrentPageInfo() {
+            const info = {
+                当前URL: window.location.href,
+                当前路径: window.location.pathname,
+                当前协议: window.location.protocol,
+                当前主机: window.location.host,
+                用户代理: navigator.userAgent.substring(0, 50) + '...',
+                Cookie支持: navigator.cookieEnabled,
+                本地存储: typeof localStorage !== 'undefined',
+                会话存储: typeof sessionStorage !== 'undefined'
+            };
+            
+            document.getElementById('current-page-info').textContent = JSON.stringify(info, null, 2);
+        }
+        
+        // 页面加载时更新信息
+        window.onload = function() {
+            updateCurrentPageInfo();
+            checkLoginStatus();
+        };
+    </script>
+</body>
+</html>

@@ -1,31 +1,279 @@
-const express = require('express');
-const session = require('express-session');
-const { Low } = require('lowdb');
-const { JSONFile } = require('lowdb/node');
-const bcrypt = require('bcryptjs');
-const nodemailer = require('nodemailer');
-const { v4: uuidv4 } = require('uuid');
-const path = require('path');
-const fs = require('fs');
-const multer = require('multer');
+/**
+ * ============================================================================
+ * STC网站 - 版权所有
+ * ============================================================================
+ * 
+ * 本软件及其所有源代码、文档和相关文件均受版权保护。
+ * 
+ * 版权声明：
+ * - 本项目所有代码、设计、文档均为原创开发
+ * - 未经授权，禁止复制、修改、分发、出售或用于商业目的
+ * - 禁止将本代码用于任何未经授权的项目或产品
+ * - 任何违反版权的行为将承担法律责任
+ * 
+ * 技术支持：请联系原作者获取授权和技术支持
+ * 
+ * Copyright © 2025-2026 STC. All Rights Reserved.
+ * ============================================================================
+ */
 
 require('dotenv').config();
+const express = require('express');
+const session = require('express-session');
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { spawn } = require('child_process');
+const nodemailer = require('nodemailer');
+
+const { Low } = require('lowdb');
+const { JSONFile } = require('lowdb/node');
+const FileStore = require('session-file-store')(session);
+
+// 数据库锁定状态
+let dbLocked = false;
+let dbLockReason = '';
+
+// 邮件发送配置
+const emailTransporter = nodemailer.createTransport({
+    host: 'smtp.qq.com',
+    port: 465,
+    secure: true,
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
+let dbLockTime = null;
+let lastBackupTime = null;
+let lastBackupInfo = null;
+
+// 自动备份状态
+let autoBackupEnabled = false;
+let autoBackupTime = '00:00';
+let autoBackupTimer = null;
+
+// 网站锁定状态
+let siteLocked = false;
+let siteLockReason = '';
+let siteLockBy = '';
+let siteLockTime = null;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isProduction = process.env.NODE_ENV === 'production';
 
-// 配置文件上传
+const db = new Low(new JSONFile('database.json'), {
+    users: [],
+    tasks: [],
+    invite_codes: [],
+    invite_requests: [],
+    banned_ips: [],
+    emails: [],
+    verification_codes: []
+});
+
+let bannedIPs = new Set();
+
+const rateLimit = new Map();
+const RATE_LIMIT_WINDOW = 60000;
+const RATE_LIMIT_MAX = 100;
+
+function checkRateLimit(ip) {
+    const now = Date.now();
+    const record = rateLimit.get(ip);
+    
+    if (!record) {
+        rateLimit.set(ip, { count: 1, timestamp: now });
+        return true;
+    }
+    
+    if (now - record.timestamp > RATE_LIMIT_WINDOW) {
+        rateLimit.set(ip, { count: 1, timestamp: now });
+        return true;
+    }
+    
+    if (record.count >= RATE_LIMIT_MAX) {
+        return false;
+    }
+    
+    record.count++;
+    return true;
+}
+
+const csrfTokens = new Map();
+const CSRF_TOKEN_TTL = 3600000;
+
+const dataCache = new Map();
+const CACHE_TTL = 5000;
+
+function getCachedData(key, fetchFn) {
+    const cached = dataCache.get(key);
+    if (cached && Date.now() < cached.expires) {
+        return Promise.resolve(cached.data);
+    }
+    return fetchFn().then(data => {
+        dataCache.set(key, { data, expires: Date.now() + CACHE_TTL });
+        return data;
+    });
+}
+
+function invalidateCache(key) {
+    dataCache.delete(key);
+}
+
+function generateCSRFToken(sessionId) {
+    const token = crypto.randomBytes(32).toString('hex');
+    csrfTokens.set(sessionId, {
+        token,
+        expires: Date.now() + CSRF_TOKEN_TTL
+    });
+    return token;
+}
+
+function validateCSRFToken(sessionId, token) {
+    const record = csrfTokens.get(sessionId);
+    if (!record) return false;
+    if (Date.now() > record.expires) {
+        csrfTokens.delete(sessionId);
+        return false;
+    }
+    if (record.token !== token) return false;
+    return true;
+}
+
+function requireCSRF(req, res, next) {
+    const token = req.headers['x-csrf-token'] || req.body._csrf;
+    
+    if (!token) {
+        return res.status(403).json({ success: false, message: '缺少CSRF token' });
+    }
+    
+    if (!validateCSRFToken(req.sessionID, token)) {
+        return res.status(403).json({ success: false, message: 'CSRF token无效或已过期' });
+    }
+    
+    next();
+}
+
+function validateEmail(email) {
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(email);
+}
+
+function validateUsername(username) {
+    return /^[a-zA-Z0-9_]{3,20}$/.test(username);
+}
+
+function validatePassword(password) {
+    return password.length >= 6;
+}
+
+function getClientIP(req) {
+    return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
+           req.headers['x-real-ip'] || 
+           req.connection?.remoteAddress || 
+           req.socket?.remoteAddress ||
+           '127.0.0.1';
+}
+
+function addServerLog(message, type) {
+    type = type || 'info';
+    var entry = {
+        time: new Date().toISOString(),
+        message: String(message),
+        type: type
+    };
+    serverLogs.push(entry);
+    if (serverLogs.length > MAX_LOG_COUNT) {
+        serverLogs.shift();
+    }
+    sseClients.forEach(function(client) {
+        try { client.write('data: ' + JSON.stringify(entry) + '\n\n'); } catch(e) {}
+    });
+}
+
+var originalConsoleLog = console.log;
+console.log = function() {
+    var args = Array.prototype.slice.call(arguments);
+    originalConsoleLog.apply(console, args);
+    addServerLog(args.map(function(a) { return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '));
+};
+
+var originalConsoleError = console.error;
+console.error = function() {
+    var args = Array.prototype.slice.call(arguments);
+    originalConsoleError.apply(console, args);
+    addServerLog(args.map(function(a) { return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '), 'error');
+};
+
+const uploadsDir = (process.env.VERCEL || process.env.RAILWAY) ? '/tmp/uploads' : 'uploads';
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const dangerousExtensions = ['.exe', '.bat', '.cmd', '.sh', '.ps1', '.vbs', '.js', '.jar', '.msi', '.dll', '.scr', '.pif', '.com'];
+
+// 修复文件名编码（latin1 → utf8）
+function fixFilenameEncoding(filename) {
+    if (!filename) return filename;
+    try {
+        // 检查是否已经是正确的 UTF-8 字符
+        // 如果包含 latin1 编码的特征字符，则转换
+        const decoded = Buffer.from(filename, 'latin1').toString('utf8');
+        // 验证是否是有效的 UTF-8
+        if (Buffer.from(decoded, 'utf8').toString('utf8') === decoded && 
+            !decoded.includes('\uFFFD') && 
+            !/[\u0000-\u001F\u007F-\u009F]/.test(decoded)) {
+            return decoded;
+        }
+        return filename;
+    } catch (e) {
+        return filename;
+    }
+}
+
+function sanitizeFilename(filename) {
+    const sanitized = filename
+        .replace(/[\/\\]/g, '_')
+        .replace(/[<>:"|?*]/g, '_')
+        .replace(/\.\./g, '_');
+    
+    const ext = path.extname(sanitized).toLowerCase();
+    if (dangerousExtensions.includes(ext)) {
+        return sanitized.replace(ext, '_dangerous_' + ext);
+    }
+    
+    return sanitized;
+}
+
+const fileFilter = function (req, file, cb) {
+    const ext = path.extname(file.originalname).toLowerCase();
+    
+    if (dangerousExtensions.includes(ext)) {
+        return cb(new Error('不允许上传可执行文件'), false);
+    }
+    
+    cb(null, true);
+};
+
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, 'uploads/');
+        cb(null, uploadsDir);
     },
     filename: function (req, file, cb) {
-        // 处理文件名编码问题
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const extname = path.extname(file.originalname);
-        // 使用Buffer正确处理文件名
-        const originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
-        const basename = path.basename(originalname, extname);
+        // 处理中文文件名编码（latin1 → utf8）
+        let originalname = file.originalname;
+        try {
+            originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        } catch (e) {
+            // 保持原名
+        }
+        const extname = path.extname(originalname);
+        const basename = sanitizeFilename(path.basename(originalname, extname));
         cb(null, uniqueSuffix + '-' + basename + extname);
     }
 });
@@ -33,419 +281,1056 @@ const storage = multer.diskStorage({
 const upload = multer({
     storage: storage,
     limits: {
-        fileSize: 1.5 * 1024 * 1024 * 1024 // 1.5GB
-    }
+        fileSize: 2 * 1024 * 1024 * 1024
+    },
+    fileFilter: fileFilter
 });
 
-// 中间件
+app.set('trust proxy', 1);
+
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';");
+    next();
+});
+
+app.use((req, res, next) => {
+    const ip = getClientIP(req);
+    
+    if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/) || 
+        req.path.startsWith('/api/logs')) {
+        return next();
+    }
+    
+    if (!checkRateLimit(ip)) {
+        return res.status(429).json({
+            success: false,
+            message: '请求过于频繁，请稍后再试'
+        });
+    }
+    next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
+
+var serverLogs = [];
+const MAX_LOG_COUNT = 1000;
+
+var sseClients = [];
+var siteEventsClients = []; // 公开事件客户端（用于网站锁定通知）
+
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'stc-secret-key-change-in-production',
+    secret: 'STC_SECRET_KEY_2025',
     resave: false,
-    saveUninitialized: false,
-    cookie: { 
+    saveUninitialized: true,
+    store: new FileStore({
+        path: path.join(__dirname, 'sessions'),
+        secret: 'STC_SECRET_KEY_2025',
+        ttl: 86400 * 7, // 7天
+        retries: 2
+    }),
+    cookie: {
         secure: false,
-        maxAge: 24 * 60 * 60 * 1000 // 24小时
+        maxAge: 24 * 60 * 60 * 1000,
+        httpOnly: false,
+        sameSite: 'lax',
+        path: '/'
     }
 }));
 
-// 数据库初始化 - 支持Vercel环境
-const dbPath = process.env.VERCEL ? '/tmp/database.json' : 'database.json';
-const adapter = new JSONFile(dbPath);
-const defaultData = {
-    users: [],
-    inviteCodes: [],
-    emailVerifications: [],
-    tasks: [],
-    messages: []
-};
-const db = new Low(adapter, defaultData);
+app.use(express.static(path.join(__dirname, 'public')));
 
-// 初始化上传目录
-const uploadsDir = process.env.VERCEL ? '/tmp/uploads' : 'uploads';
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-// 修改multer配置使用正确的上传目录
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, uploadsDir);
-    },
-    filename: function (req, file, cb) {
-        // 处理文件名编码问题
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const extname = path.extname(file.originalname);
-        // 使用Buffer正确处理文件名
-        const originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
-        const basename = path.basename(originalname, extname);
-        cb(null, uniqueSuffix + '-' + basename + extname);
-    }
-});
-
-// 初始化数据库结构
 async function initDatabase() {
-    try {
-        await db.read();
-
-        // 如果数据库不存在，初始化默认数据
-        if (!db.data) {
-            db.data = {
-                users: [],
-                inviteCodes: [],
-                emailVerifications: [],
-                tasks: [],
-                messages: []
-            };
-        }
-
-        // 初始化管理员账号
-        const adminUsername = 'REDACTED_USER';
-        const adminPassword = 'Admin@123456';
-        const adminEmail = 'admin@stc.com';
-
-        const existingAdmin = db.data.users.find(u => u.username === adminUsername);
-        if (!existingAdmin) {
-            const hash = bcrypt.hashSync(adminPassword, 10);
-            db.data.users.push({
-                id: Date.now(),
-                username: adminUsername,
-                email: adminEmail,
-                password: hash,
-                is_admin: true,
-                is_banned: false,
-                created_at: new Date().toISOString()
-            });
-            console.log('管理员账号创建成功');
-        }
-
-        // 初始化邀请码
-        const initialCodes = ['STC2025', 'WELCOME2025', 'FIRSTUSER'];
-        initialCodes.forEach(code => {
-            const existingCode = db.data.inviteCodes.find(c => c.code === code);
-            if (!existingCode) {
-                db.data.inviteCodes.push({
-                    id: Date.now() + Math.random(),
-                    code: code,
-                    is_used: false,
-                    created_by: null,
-                    created_at: new Date().toISOString()
-                });
-                console.log(`邀请码 ${code} 创建成功`);
-            }
-        });
-
+    await db.read();
+    
+    if (!db.data) {
+        db.data = {
+            users: [],
+            tasks: [],
+            invite_codes: [],
+            invite_requests: [],
+            banned_ips: [],
+            emails: [],
+            verification_codes: []
+        };
         await db.write();
-        console.log('数据库初始化完成');
-    } catch (error) {
-        console.error('数据库初始化失败:', error);
-        // 即使初始化失败，也继续运行
+    }
+    
+    if (!db.data.users.find(u => u.username === 'REDACTED_USER')) {
+        const hash = bcrypt.hashSync('REDACTED_USER', 10);
+        db.data.users.push({
+            id: Date.now(),
+            username: 'REDACTED_USER',
+            email: '3422187328@qq.com',
+            password: hash,
+            is_admin: true,
+            is_super_admin: true,
+            is_banned: false,
+            login_attempts: 0,
+            created_at: new Date().toISOString()
+        });
+        await db.write();
+    }
+    
+    if (!db.data.verification_codes) {
+        db.data.verification_codes = [];
+        await db.write();
     }
 }
 
-// 邮件发送器配置
-const transporter = nodemailer.createTransport({
-    service: 'qq',
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+async function loadBannedIPs() {
+    await db.read();
+    if (db.data.banned_ips) {
+        bannedIPs = new Set(db.data.banned_ips);
     }
+}
+
+function isSafePath(filePath, allowedDir) {
+    const resolvedPath = path.resolve(filePath);
+    const resolvedAllowedDir = path.resolve(allowedDir);
+    return resolvedPath.startsWith(resolvedAllowedDir);
+}
+
+const requireLogin = (req, res, next) => {
+    if (!req.session.userId) {
+        return res.status(403).json({ error: '请先登录' });
+    }
+    next();
+};
+
+const requireAdmin = (req, res, next) => {
+    if (!req.session.userId) {
+        return res.status(403).json({ error: '请先登录' });
+    }
+    const user = db.data.users.find(u => u.id === req.session.userId);
+    if (!user || !user.is_admin) {
+        return res.status(403).json({ error: '权限不足' });
+    }
+    next();
+};
+
+const requireSuperAdmin = (req, res, next) => {
+    if (!req.session.userId) {
+        return res.status(403).json({ error: '请先登录' });
+    }
+    const user = db.data.users.find(u => u.id === req.session.userId);
+    if (!user || !user.is_super_admin) {
+        return res.status(403).json({ error: '权限不足' });
+    }
+    next();
+};
+
+app.get('/', (req, res) => {
+    res.redirect('/home');
 });
 
-// 发送验证邮件
-async function sendVerificationEmail(email, code) {
-    try {
-        const mailOptions = {
-            from: process.env.EMAIL_USER,
-            to: email,
-            subject: 'STC网站邮箱验证',
-            html: `
-                <h2>邮箱验证</h2>
-                <p>您的验证码是：<strong>${code}</strong></p>
-                <p>验证码10分钟内有效，请勿泄露给他人。</p>
-                <p>如果这不是您本人的操作，请忽略此邮件。</p>
-            `
-        };
-
-        await transporter.sendMail(mailOptions);
-        return true;
-    } catch (error) {
-        console.error('发送邮件失败:', error);
-        return false;
-    }
-}
-
-// 验证QQ邮箱格式
-function isValidQQEmail(email) {
-    const regex = /^.+@qq\.com$/i;
-    return regex.test(email);
-}
-
-// 中间件：检查是否登录
-function requireLogin(req, res, next) {
-    if (req.session.userId) {
-        // 检查用户是否被封禁
-        const user = db.data.users.find(u => u.id === req.session.userId);
-        if (user && user.is_banned) {
-            req.session.destroy();
-            return res.status(403).json({ error: '您的账号已被封禁，请联系管理员' });
-        }
-        next();
-    } else {
-        res.status(401).json({ error: '请先登录' });
-    }
-}
-
-// 中间件：检查是否是管理员
-function requireAdmin(req, res, next) {
-    if (req.session.isAdmin) {
-        next();
-    } else {
-        res.status(403).json({ error: '需要管理员权限' });
-    }
-}
-
-// 中间件：检查是否是超级管理员（REDACTED_USER）
-function requireSuperAdmin(req, res, next) {
-    if (req.session.username === 'REDACTED_USER') {
-        next();
-    } else {
-        res.status(403).json({ error: '需要超级管理员权限（仅REDACTED_USER）' });
-    }
-}
-
-// ============ API路由 ============
-
-// 主页
-app.get('/', (req, res) => {
+app.get('/home', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 登录页面
+app.get('/about', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'about.html'));
+});
+
+app.get('/members', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'members.html'));
+});
+
 app.get('/login', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-// 注册页面
 app.get('/register', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'register.html'));
 });
 
-// 用户中心
-app.get('/user', requireLogin, (req, res) => {
+app.get('/user', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'user.html'));
 });
 
-// 管理面板
-app.get('/admin', requireLogin, requireAdmin, (req, res) => {
+app.get('/admin', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// 任务详情页面
-app.get('/task.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'task.html'));
+app.get('/emails', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'emails.html'));
 });
 
-// API: 发送验证码
-app.post('/api/send-verification', async (req, res) => {
-    const { email } = req.body;
+app.get('/reaction', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'reaction.html'));
+});
 
-    if (!email) {
-        return res.status(400).json({ error: '邮箱不能为空' });
+app.get('/terms', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'terms.html'));
+});
+
+app.get('/privacy', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'privacy.html'));
+});
+
+// 数据库锁定检查中间件（必须在所有API路由之前）
+app.use((req, res, next) => {
+    // 检查所有API请求（包括读取和写入）
+    const apiPaths = ['/api/'];
+    
+    if (apiPaths.some(p => req.path.startsWith(p))) {
+        // 排除解锁和状态查询API
+        const excludedPaths = ['/api/admin/db-unlock', '/api/admin/db-status', '/api/admin/db-lock', '/api/admin/backup', '/api/admin/backup-info', '/api/admin/site-lock', '/api/admin/site-unlock', '/api/admin/site-status', '/api/login', '/api/logout', '/api/user', '/api/csrf-token'];
+        if (!excludedPaths.includes(req.path) && dbLocked) {
+            return res.status(503).json({
+                success: false,
+                message: '数据库已锁定: ' + dbLockReason,
+                locked: true
+            });
+        }
     }
+    
+    next();
+});
 
-    if (!isValidQQEmail(email)) {
-        return res.status(400).json({ error: '请使用QQ邮箱' });
+app.post('/api/login', async (req, res) => {
+    const { username, password, code, loginType } = req.body;
+    
+    if (!username && loginType !== 'code') {
+        return res.status(400).json({ success: false, message: '请填写用户名' });
     }
-
-    // 检查邮箱是否已注册
-    const existingUser = db.data.users.find(u => u.email === email);
-    if (existingUser) {
-        return res.status(400).json({ error: '该邮箱已被注册' });
+    
+    if (loginType === 'password' && !password) {
+        return res.status(400).json({ success: false, message: '请填写密码' });
     }
-
-    // 生成验证码
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-
-    // 保存验证码
-    db.data.emailVerifications.push({
-        id: Date.now(),
-        email: email,
-        code: code,
-        expires_at: expiresAt,
-        used: false
-    });
-    await db.write();
-
-    // 发送邮件
-    const success = await sendVerificationEmail(email, code);
-    if (success) {
-        res.json({ message: '验证码已发送到您的邮箱' });
+    
+    if (loginType === 'code' && !code) {
+        return res.status(400).json({ success: false, message: '请填写验证码' });
+    }
+    
+    // 验证码登录不需要用户名
+    let user;
+    if (loginType === 'code') {
+        // 从验证码记录中获取邮箱对应的用户
+        const emailCode = db.data.verification_codes.find(c => c.code === code);
+        if (emailCode) {
+            user = db.data.users.find(u => u.email === emailCode.email);
+        }
+        if (!user) {
+            return res.status(400).json({ success: false, message: '验证码错误' });
+        }
+        
+        if (Date.now() > emailCode.expires) {
+            return res.status(400).json({ success: false, message: '验证码已过期' });
+        }
+        
+        db.data.verification_codes = db.data.verification_codes.filter(c => c.email !== user.email);
     } else {
-        res.status(500).json({ error: '发送验证码失败' });
+        user = db.data.users.find(u => u.username === username || u.email === username);
     }
+    
+    if (!user) {
+        return res.status(400).json({ success: false, message: '用户名或密码错误' });
+    }
+    
+    if (user.is_banned) {
+        return res.status(400).json({ success: false, message: '账号已被封禁' });
+    }
+    
+    if (loginType === 'password') {
+        if (!bcrypt.compareSync(password, user.password)) {
+            user.login_attempts = (user.login_attempts || 0) + 1;
+            if (user.login_attempts >= 5) {
+                user.is_banned = true;
+            }
+            await db.write();
+            return res.status(400).json({ success: false, message: '用户名或密码错误' });
+        }
+        
+        user.login_attempts = 0;
+        await db.write();
+    }
+    // 验证码登录在前面已验证通过
+    
+    // 检查网站是否被锁定
+    if (siteLocked && !user.is_admin && !user.is_super_admin) {
+        return res.status(503).json({ 
+            success: false, 
+            message: '网站已锁定，暂时无法登录',
+            locked: true,
+            lockBy: siteLockBy,
+            lockReason: siteLockReason
+        });
+    }
+    
+    req.session.userId = user.id;
+    req.session.loginIP = getClientIP(req);
+    res.json({ success: true, message: '登录成功', user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin } });
 });
 
-// API: 注册
+// IP检查中间件 - 检测异地登录
+app.use('/api/', (req, res, next) => {
+    // 跳过不需要登录的API
+    const publicPaths = ['/api/login', '/api/register', '/api/send-code', '/api/csrf-token', '/api/verification'];
+    if (publicPaths.includes(req.path) || req.path.startsWith('/api/logs')) {
+        return next();
+    }
+    
+    // 如果没有登录，跳过
+    if (!req.session.userId) {
+        return next();
+    }
+    
+    const currentIP = getClientIP(req);
+    const loginIP = req.session.loginIP;
+    
+    // 如果有记录的登录IP且不匹配，说明异地登录了
+    if (loginIP && currentIP !== loginIP) {
+        // 清除session
+        req.session.destroy((err) => {
+            return res.status(401).json({ 
+                error: '账号已在其他设备登录，请重新登录',
+                relogin: true 
+            });
+        });
+        return;
+    }
+    
+    next();
+});
+
+// 网站锁定检查中间件
+app.use('/api/', (req, res, next) => {
+    // 跳过公开API和管理员API
+    const publicPaths = ['/api/login', '/api/register', '/api/send-code', '/api/csrf-token', '/api/verification', '/api/admin/site-lock', '/api/admin/site-unlock', '/api/admin/site-status'];
+    if (publicPaths.includes(req.path) || req.path.startsWith('/api/logs') || req.path.startsWith('/api/admin/')) {
+        return next();
+    }
+    
+    // 如果网站被锁定
+    if (siteLocked) {
+        // 检查用户是否是管理员
+        if (req.session.userId) {
+            const user = db.data.users.find(u => u.id === req.session.userId);
+            if (user && (user.is_admin || user.is_super_admin)) {
+                // 管理员可以继续操作
+                return next();
+            }
+        }
+        
+        // 非管理员被拒绝
+        return res.status(503).json({ 
+            error: '网站已锁定',
+            locked: true,
+            lockBy: siteLockBy,
+            lockReason: siteLockReason
+        });
+    }
+    
+    next();
+});
+
 app.post('/api/register', async (req, res) => {
-    const { username, email, password, inviteCode } = req.body;
-
-    // 验证输入
-    if (!username || !email || !password || !inviteCode) {
-        return res.status(400).json({ error: '请填写所有字段' });
+    const { username, email, password, invite_code, verify_code } = req.body;
+    
+    if (!username || !email || !password || !verify_code) {
+        return res.status(400).json({ success: false, message: '请填写所有字段' });
     }
-
-    if (!isValidQQEmail(email)) {
-        return res.status(400).json({ error: '请使用QQ邮箱' });
+    
+    if (!validateUsername(username)) {
+        return res.status(400).json({ success: false, message: '用户名格式不正确' });
     }
-
-    if (password.length < 6) {
-        return res.status(400).json({ error: '密码长度至少6位' });
+    
+    if (!validateEmail(email)) {
+        return res.status(400).json({ success: false, message: '邮箱格式不正确' });
     }
-
-    // 验证邀请码
-    const invite = db.data.inviteCodes.find(c => c.code === inviteCode && !c.is_used);
-    if (!invite) {
-        return res.status(400).json({ error: '邀请码无效或已使用' });
+    
+    if (!validatePassword(password)) {
+        return res.status(400).json({ success: false, message: '密码长度至少6位' });
     }
-
-    // 检查用户名是否已存在
+    
+    const emailCode = db.data.verification_codes.find(c => c.email === email && c.code === verify_code);
+    
+    if (!emailCode) {
+        return res.status(400).json({ success: false, message: '验证码错误' });
+    }
+    
+    if (Date.now() > emailCode.expires) {
+        return res.status(400).json({ success: false, message: '验证码已过期' });
+    }
+    
     if (db.data.users.find(u => u.username === username)) {
-        return res.status(400).json({ error: '用户名已存在' });
+        return res.status(400).json({ success: false, message: '用户名已存在' });
     }
-
-    // 检查邮箱是否已注册
+    
     if (db.data.users.find(u => u.email === email)) {
-        return res.status(400).json({ error: '该邮箱已被注册' });
+        return res.status(400).json({ success: false, message: '该邮箱已被注册' });
     }
-
-    // 加密密码
+    
+    if (invite_code) {
+        const invite = db.data.invite_codes.find(c => c.code === invite_code && !c.used);
+        if (!invite) {
+            return res.status(400).json({ success: false, message: '邀请码无效或已使用' });
+        }
+        invite.used = true;
+        invite.used_by = email;
+        invite.used_at = new Date().toISOString();
+    }
+    
     const hash = bcrypt.hashSync(password, 10);
-
-    // 创建用户
-    const newUser = {
+    db.data.users.push({
         id: Date.now(),
         username: username,
         email: email,
         password: hash,
         is_admin: false,
+        is_super_admin: false,
         is_banned: false,
+        login_attempts: 0,
         created_at: new Date().toISOString()
-    };
-    db.data.users.push(newUser);
-
-    // 标记邀请码为已使用
-    invite.is_used = true;
-
-    await db.write();
-    res.json({ message: '注册成功' });
-});
-
-// API: 登录
-app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
-
-    if (!username || !password) {
-        return res.status(400).json({ error: '用户名和密码不能为空' });
-    }
-
-    const user = db.data.users.find(u => u.username === username);
-
-    if (!user) {
-        return res.status(401).json({ error: '用户名或密码错误' });
-    }
-
-    // 检查是否被封禁
-    if (user.is_banned) {
-        return res.status(403).json({ error: '您的账号已被封禁，无法登录' });
-    }
-
-    const result = bcrypt.compareSync(password, user.password);
-
-    if (!result) {
-        return res.status(401).json({ error: '用户名或密码错误' });
-    }
-
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    req.session.isAdmin = user.is_admin;
-
-    res.json({
-        message: '登录成功',
-        user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            isAdmin: user.is_admin
-        }
     });
+    
+    db.data.verification_codes = db.data.verification_codes.filter(c => c.email !== email);
+    await db.write();
+    
+    res.json({ success: true, message: '注册成功' });
 });
 
-// API: 登出
 app.post('/api/logout', (req, res) => {
     req.session.destroy();
-    res.json({ message: '登出成功' });
+    res.json({ success: true, message: '登出成功' });
 });
 
-// API: 获取当前用户信息
+app.get('/api/csrf-token', (req, res) => {
+    const token = generateCSRFToken(req.sessionID);
+    res.json({ success: true, csrfToken: token });
+});
+
 app.get('/api/user', (req, res) => {
     if (!req.session.userId) {
         return res.status(401).json({ error: '未登录' });
     }
-
     const user = db.data.users.find(u => u.id === req.session.userId);
-
     if (!user) {
         return res.status(404).json({ error: '用户不存在' });
     }
+    res.json({ id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin });
+});
 
-    res.json({
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.is_admin,
-        createdAt: user.created_at
+app.post('/api/send-code', async (req, res) => {
+    const { email, type } = req.body;
+    
+    if (!validateEmail(email)) {
+        return res.status(400).json({ success: false, message: '邮箱格式不正确' });
+    }
+    
+    if (type === 'register') {
+        if (db.data.users.find(u => u.email === email)) {
+            return res.status(400).json({ success: false, message: '该邮箱已被注册' });
+        }
+    } else if (type === 'login') {
+        if (!db.data.users.find(u => u.email === email)) {
+            return res.status(400).json({ success: false, message: '该邮箱未注册' });
+        }
+    }
+    
+    const existingCode = db.data.verification_codes.find(c => c.email === email);
+    if (existingCode && Date.now() - existingCode.created_at < 60000) {
+        return res.status(400).json({ success: false, message: '请等待60秒后再发送' });
+    }
+    
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    
+    if (existingCode) {
+        existingCode.code = code;
+        existingCode.created_at = Date.now();
+        existingCode.expires = Date.now() + 300000;
+    } else {
+        db.data.verification_codes.push({
+            email: email,
+            code: code,
+            type: type,
+            created_at: Date.now(),
+            expires: Date.now() + 300000
+        });
+    }
+    
+    await db.write();
+    
+    // 发送邮件
+    try {
+        await emailTransporter.sendMail({
+            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: '【STC】您的验证码',
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #0ea5e9, #38bdf8); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">STC 验证码</h1>
+                    </div>
+                    <div style="background: #f0f9ff; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #bae6fd;">
+                        <p style="color: #475569; font-size: 16px; margin: 0 0 20px;">您好！</p>
+                        <p style="color: #475569; font-size: 16px; margin: 0 0 20px;">您正在${type === 'login' ? '登录' : '注册'}STC任务网站，您的验证码是：</p>
+                        <div style="background: white; padding: 20px; border-radius: 12px; text-align: center; margin: 20px 0; border: 2px dashed #0ea5e9;">
+                            <span style="font-size: 32px; font-weight: bold; color: #0284c7; letter-spacing: 8px;">${code}</span>
+                        </div>
+                        <p style="color: #64748b; font-size: 14px; margin: 20px 0 0;">验证码有效期为5分钟，请勿泄露给他人。</p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        });
+        console.log(`邮箱验证码已发送: ${email} -> ${code}`);
+    } catch (error) {
+        console.error('邮件发送失败:', error);
+        return res.status(500).json({ success: false, message: '邮件发送失败，请稍后重试' });
+    }
+    
+    res.json({ success: true, message: '验证码已发送' });
+});
+
+app.get('/api/tasks', async (req, res) => {
+    const { page = 1, pageSize = 10, status } = req.query;
+    let tasks = [...db.data.tasks];
+    
+    if (status) {
+        tasks = tasks.filter(t => t.status === status);
+    }
+    
+    // 置顶任务优先
+    tasks.sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return new Date(b.created_at) - new Date(a.created_at);
+    });
+    
+    const total = tasks.length;
+    const start = (page - 1) * pageSize;
+    const paginatedTasks = tasks.slice(start, start + parseInt(pageSize));
+    
+    paginatedTasks.forEach(task => {
+        const user = db.data.users.find(u => u.id === task.author_id);
+        task.user = user ? { id: user.id, username: user.username } : null;
+        // 修复文件名编码
+        if (task.file_name) {
+            task.file_name = fixFilenameEncoding(task.file_name);
+        }
+    });
+    
+    res.json({ success: true, data: paginatedTasks, total, page: parseInt(page), pageSize: parseInt(pageSize) });
+});
+
+app.get('/api/tasks/daily-limit', requireLogin, async (req, res) => {
+    const user = db.data.users.find(u => u.id === req.session.userId);
+    if (!user) {
+        return res.status(404).json({ success: false, message: '用户不存在' });
+    }
+    
+    const isAdmin = user.is_admin || user.is_super_admin;
+    const DAILY_LIMIT = 5;
+    
+    if (isAdmin) {
+        return res.json({ 
+            success: true, 
+            data: { 
+                is_admin: true, 
+                used: 0, 
+                limit: -1,
+                remaining: -1
+            } 
+        });
+    }
+    
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+    const todayTasks = (db.data.tasks || []).filter(t => {
+        return t.author_id === req.session.userId && t.created_at >= todayStart;
+    });
+    
+    res.json({ 
+        success: true, 
+        data: { 
+            is_admin: false, 
+            used: todayTasks.length, 
+            limit: DAILY_LIMIT,
+            remaining: Math.max(0, DAILY_LIMIT - todayTasks.length)
+        } 
     });
 });
 
-// API: 修改密码
-app.put('/api/user/password', requireLogin, async (req, res) => {
-    const { oldPassword, newPassword } = req.body;
-
-    if (!oldPassword || !newPassword) {
-        return res.status(400).json({ error: '请填写旧密码和新密码' });
+app.get('/api/tasks/:id', async (req, res) => {
+    const taskId = parseInt(req.params.id);
+    if (isNaN(taskId)) {
+        return res.status(400).json({ success: false, message: '无效的任务ID' });
     }
-
-    if (newPassword.length < 6) {
-        return res.status(400).json({ error: '新密码长度至少6位' });
+    const task = db.data.tasks.find(t => t.id === taskId);
+    
+    if (!task) {
+        return res.status(404).json({ success: false, message: '任务不存在' });
     }
-
-    const userIndex = db.data.users.findIndex(u => u.id === req.session.userId);
-    if (userIndex === -1) {
-        return res.status(404).json({ error: '用户不存在' });
-    }
-
-    const user = db.data.users[userIndex];
-    const result = bcrypt.compareSync(oldPassword, user.password);
-
-    if (!result) {
-        return res.status(400).json({ error: '旧密码错误' });
-    }
-
-    const hash = bcrypt.hashSync(newPassword, 10);
-    db.data.users[userIndex].password = hash;
-    await db.write();
-
-    res.json({ message: '密码修改成功' });
+    
+    const user = db.data.users.find(u => u.id === task.author_id);
+    
+    // 修复文件名编码
+    const fixedFileName = task.file_name ? fixFilenameEncoding(task.file_name) : null;
+    
+    res.json({
+        success: true,
+        data: {
+            ...task,
+            file_name: fixedFileName,
+            user: user ? { id: user.id, username: user.username } : null,
+            author_name: user ? user.username : '匿名',
+            author_id: task.author_id
+        }
+    });
 });
 
-// API: 生成邀请码（管理员）
-app.post('/api/invite-codes', requireLogin, requireAdmin, async (req, res) => {
-    const code = uuidv4().substring(0, 8).toUpperCase();
+// 公开的留言列表API（普通用户可查看）
+app.get('/api/public/messages', async (req, res) => {
+    const messages = db.data.messages || [];
+    // 按时间倒序排列
+    messages.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    // 添加用户信息
+    const publicMessages = messages.map(m => {
+        const user = db.data.users.find(u => u.id === m.user_id);
+        return {
+            id: m.id,
+            content: m.content,
+            created_at: m.created_at,
+            user: user ? { id: user.id, username: user.username } : null
+        };
+    });
+    
+    res.json({ success: true, data: publicMessages });
+});
 
+// 发布留言（需要登录）
+app.post('/api/messages', requireLogin, async (req, res) => {
+    const { content } = req.body;
+    
+    if (!content || content.trim().length === 0) {
+        return res.status(400).json({ success: false, message: '留言内容不能为空' });
+    }
+    
+    const message = {
+        id: Date.now(),
+        content: content.trim(),
+        user_id: req.session.userId,
+        created_at: new Date().toISOString()
+    };
+    
+    if (!db.data.messages) db.data.messages = [];
+    db.data.messages.push(message);
+    await db.write();
+    
+    const user = db.data.users.find(u => u.id === req.session.userId);
+    res.json({ 
+        success: true, 
+        data: {
+            ...message,
+            user: user ? { id: user.id, username: user.username } : null
+        }
+    });
+});
+
+app.post('/api/tasks', requireLogin, upload.single('file'), async (req, res) => {
+    const { title, description, reward, deadline, status } = req.body;
+    
+    if (!title || !description) {
+        return res.status(400).json({ success: false, message: '请填写标题和描述' });
+    }
+    
+    if (!req.session.userId) {
+        return res.status(403).json({ error: '请先登录' });
+    }
+    
+    const user = db.data.users.find(u => u.id === req.session.userId);
+    if (!user) {
+        return res.status(400).json({ success: false, message: '用户不存在' });
+    }
+    
+    const isAdmin = user.is_admin || user.is_super_admin;
+    const DAILY_LIMIT = 5;
+    
+    if (!isAdmin) {
+        const today = new Date();
+        const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+        const todayTasks = (db.data.tasks || []).filter(t => {
+            return t.author_id === req.session.userId && t.created_at >= todayStart;
+        });
+        
+        if (todayTasks.length >= DAILY_LIMIT) {
+            return res.status(403).json({ 
+                success: false, 
+                message: `普通用户每天最多发布 ${DAILY_LIMIT} 个任务，您今日已发布 ${todayTasks.length} 个` 
+            });
+        }
+    }
+    
+    const validStatuses = ['pending', 'in_progress', 'completed', 'planning', 'idle'];
+    const taskStatus = (status && validStatuses.includes(status)) ? status : 'idle';
+    
+    const task = {
+        id: Date.now(),
+        title: title,
+        content: description,
+        reward: parseFloat(reward) || 0,
+        deadline: deadline || null,
+        status: taskStatus,
+        status_text: {
+            'pending': '备货中',
+            'planning': '建设中',
+            'in_progress': '进行中',
+            'completed': '已完成',
+            'idle': '一笔未动'
+        }[taskStatus],
+        author_id: req.session.userId,
+        is_pinned: false,
+        // 处理中文文件名
+        file_name: req.file ? (() => {
+            try { return Buffer.from(req.file.originalname, 'latin1').toString('utf8'); }
+            catch (e) { return req.file.originalname; }
+        })() : null,
+        file_path: req.file ? req.file.path : null,
+        created_at: new Date().toISOString()
+    };
+    
+    db.data.tasks.push(task);
+    await db.write();
+    
+    res.json({ success: true, message: '任务发布成功', data: task });
+});
+
+app.put('/api/tasks/:id', requireLogin, async (req, res) => {
+    const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
+    
+    if (!task) {
+        return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    
+    if (task.author_id !== req.session.userId) {
+        return res.status(403).json({ success: false, message: '无权修改此任务' });
+    }
+    
+    const { title, description, reward, deadline, status } = req.body;
+    if (title) task.title = title;
+    if (description) task.content = description;
+    if (reward) task.reward = parseFloat(reward);
+    if (deadline) task.deadline = deadline;
+    if (status) task.status = status;
+    
+    await db.write();
+    
+    res.json({ success: true, message: '任务更新成功', data: task });
+});
+
+// 更新任务状态接口
+app.put('/api/tasks/:id/status', requireLogin, async (req, res) => {
+    const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
+    
+    if (!task) {
+        return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    
+    const user = db.data.users.find(u => u.id === req.session.userId);
+    const isAdmin = user && (user.is_admin || user.is_super_admin);
+    
+    // 只有任务作者或管理员可以修改状态
+    if (task.author_id !== req.session.userId && !isAdmin) {
+        return res.status(403).json({ success: false, message: '无权修改此任务状态' });
+    }
+    
+    const { status } = req.body;
+    const validStatuses = ['pending', 'in_progress', 'completed', 'planning', 'idle'];
+    const statusMap = {
+        'pending': '备货中',
+        'planning': '建设中',
+        'in_progress': '进行中',
+        'completed': '已完成',
+        'idle': '一笔未动'
+    };
+    
+    if (!status || !validStatuses.includes(status)) {
+        return res.status(400).json({ success: false, message: '无效的状态值' });
+    }
+    
+    task.status = status;
+    task.status_text = statusMap[status];
+    
+    await db.write();
+    
+    res.json({ success: true, message: '状态更新成功', data: task });
+});
+
+app.delete('/api/tasks/:id', requireLogin, async (req, res) => {
+    const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
+    
+    if (!task) {
+        return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    
+    const user = db.data.users.find(u => u.id === req.session.userId);
+    const isAdmin = user && (user.is_admin || user.is_super_admin);
+    
+    if (task.author_id !== req.session.userId && !isAdmin) {
+        return res.status(403).json({ success: false, message: '无权删除此任务' });
+    }
+    
+    db.data.tasks = db.data.tasks.filter(t => t.id !== parseInt(req.params.id));
+    await db.write();
+    
+    res.json({ success: true, message: '任务已删除' });
+});
+
+app.get('/api/tasks/:id/download', async (req, res) => {
+    const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
+    if (!task) {
+        return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    
+    if (!task.file_path || !fs.existsSync(task.file_path)) {
+        return res.status(404).json({ success: false, message: '文件不存在' });
+    }
+    
+    if (!isSafePath(task.file_path, uploadsDir)) {
+        return res.status(403).json({ success: false, message: '非法文件路径' });
+    }
+    
+    res.download(task.file_path, task.file_name || 'download');
+});
+
+app.post('/api/invite/request', async (req, res) => {
+    const { email } = req.body;
+    
+    if (!validateEmail(email)) {
+        return res.status(400).json({ success: false, message: '邮箱格式不正确' });
+    }
+    
+    if (db.data.users.find(u => u.email === email)) {
+        return res.status(400).json({ success: false, message: '该邮箱已注册' });
+    }
+    
+    const existingRequest = db.data.invite_requests.find(r => r.email === email && r.status === 'pending');
+    if (existingRequest) {
+        return res.status(400).json({ success: false, message: '已有待处理的申请，请等待审批' });
+    }
+    
+    db.data.invite_requests.push({
+        id: Date.now(),
+        email: email,
+        status: 'pending',
+        created_at: new Date().toISOString()
+    });
+    
+    await db.write();
+    
+    res.json({ success: true, message: '申请已提交，请等待管理员审批' });
+});
+
+app.get('/api/invite/requests', requireAdmin, async (req, res) => {
+    res.json({ success: true, data: db.data.invite_requests || [] });
+});
+
+app.post('/api/invite/requests/:id/approve', requireAdmin, async (req, res) => {
+    const request = db.data.invite_requests.find(r => r.id === parseInt(req.params.id));
+    
+    if (!request) {
+        return res.status(404).json({ success: false, message: '申请不存在' });
+    }
+    
+    request.status = 'approved';
+    request.approved_at = new Date().toISOString();
+    
+    const inviteCode = crypto.randomBytes(16).toString('hex');
+    db.data.invite_codes.push({
+        id: Date.now(),
+        code: inviteCode,
+        used: false,
+        created_at: new Date().toISOString()
+    });
+    
+    await db.write();
+    
+    res.json({ success: true, message: '邀请码已生成并发送', invite_code: inviteCode });
+});
+
+app.post('/api/invite/requests/:id/reject', requireAdmin, async (req, res) => {
+    const request = db.data.invite_requests.find(r => r.id === parseInt(req.params.id));
+    
+    if (!request) {
+        return res.status(404).json({ success: false, message: '申请不存在' });
+    }
+    
+    request.status = 'rejected';
+    request.rejected_at = new Date().toISOString();
+    await db.write();
+    
+    res.json({ success: true, message: '申请已驳回' });
+});
+
+function canModifyUser(currentUser, targetUser, action) {
+    if (targetUser.username === 'REDACTED_USER') {
+        return { allowed: false, reason: '不能操作超级管理员' };
+    }
+    
+    if (targetUser.id === currentUser.id) {
+        return { allowed: false, reason: '不能操作自己' };
+    }
+    
+    switch (action) {
+        case 'ban':
+            if (!currentUser.is_super_admin && targetUser.is_admin) {
+                return { allowed: false, reason: '普通管理员不能封禁其他管理员' };
+            }
+            break;
+        case 'set_admin':
+            if (!currentUser.is_super_admin) {
+                return { allowed: false, reason: '只有超级管理员可以设置管理员' };
+            }
+            break;
+        case 'set_superadmin':
+            if (!currentUser.is_super_admin) {
+                return { allowed: false, reason: '只有超级管理员可以设置超级管理员' };
+            }
+            break;
+        case 'reset_password':
+            if (!currentUser.is_super_admin && targetUser.is_super_admin) {
+                return { allowed: false, reason: '普通管理员不能重置超级管理员密码' };
+            }
+            break;
+        case 'delete':
+            if (!currentUser.is_super_admin && targetUser.is_super_admin) {
+                return { allowed: false, reason: '普通管理员不能删除超级管理员' };
+            }
+            break;
+    }
+    
+    return { allowed: true };
+}
+
+app.get('/api/members', requireAdmin, async (req, res) => {
+    const members = db.data.users.map(u => ({
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        is_admin: u.is_admin,
+        is_super_admin: u.is_super_admin,
+        is_banned: u.is_banned,
+        created_at: u.created_at
+    }));
+    res.json({ success: true, data: members });
+});
+
+app.post('/api/members/:id/ban', requireAdmin, async (req, res) => {
+    const currentUser = db.data.users.find(u => u.id === req.session.userId);
+    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    
+    if (!user) {
+        return res.status(404).json({ success: false, message: '用户不存在' });
+    }
+    
+    const result = canModifyUser(currentUser, user, 'ban');
+    if (!result.allowed) {
+        return res.status(403).json({ success: false, message: result.reason });
+    }
+    
+    user.is_banned = true;
+    await db.write();
+    
+    res.json({ success: true, message: '用户已封禁' });
+});
+
+app.post('/api/members/:id/unban', requireAdmin, async (req, res) => {
+    const currentUser = db.data.users.find(u => u.id === req.session.userId);
+    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    
+    if (!user) {
+        return res.status(404).json({ success: false, message: '用户不存在' });
+    }
+    
+    const result = canModifyUser(currentUser, user, 'ban');
+    if (!result.allowed) {
+        return res.status(403).json({ success: false, message: result.reason });
+    }
+    
+    user.is_banned = false;
+    await db.write();
+    
+    res.json({ success: true, message: '用户已解封' });
+});
+
+app.post('/api/members/:id/set_admin', requireAdmin, async (req, res) => {
+    const currentUser = db.data.users.find(u => u.id === req.session.userId);
+    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    
+    if (!user) {
+        return res.status(404).json({ success: false, message: '用户不存在' });
+    }
+    
+    const result = canModifyUser(currentUser, user, 'set_admin');
+    if (!result.allowed) {
+        return res.status(403).json({ success: false, message: result.reason });
+    }
+    
+    user.is_admin = true;
+    await db.write();
+    
+    res.json({ success: true, message: '用户已设为管理员' });
+});
+
+app.post('/api/members/:id/unset_admin', requireAdmin, async (req, res) => {
+    const currentUser = db.data.users.find(u => u.id === req.session.userId);
+    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    
+    if (!user) {
+        return res.status(404).json({ success: false, message: '用户不存在' });
+    }
+    
+    const result = canModifyUser(currentUser, user, 'set_admin');
+    if (!result.allowed) {
+        return res.status(403).json({ success: false, message: result.reason });
+    }
+    
+    user.is_admin = false;
+    await db.write();
+    
+    res.json({ success: true, message: '用户管理员权限已移除' });
+});
+
+app.delete('/api/members/:id', requireAdmin, async (req, res) => {
+    const currentUser = db.data.users.find(u => u.id === req.session.userId);
+    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    
+    if (!user) {
+        return res.status(404).json({ success: false, message: '用户不存在' });
+    }
+    
+    const result = canModifyUser(currentUser, user, 'delete');
+    if (!result.allowed) {
+        return res.status(403).json({ success: false, message: result.reason });
+    }
+    
+    db.data.users = db.data.users.filter(u => u.id !== parseInt(req.params.id));
+    await db.write();
+    
+    res.json({ success: true, message: '用户已删除' });
+});
+
+// 留言管理API
+app.get('/api/messages', requireAdmin, async (req, res) => {
+    const messages = db.data.messages || [];
+    res.json({ success: true, data: messages });
+});
+
+// 邀请码管理API
+app.get('/api/invite-codes', requireAdmin, async (req, res) => {
+    const codes = db.data.inviteCodes || [];
+    res.json({ success: true, data: codes });
+});
+
+app.post('/api/invite-codes', requireAdmin, async (req, res) => {
+    const code = 'STC' + Math.random().toString(36).substring(2, 8).toUpperCase();
     const newCode = {
         id: Date.now(),
         code: code,
@@ -453,318 +1338,994 @@ app.post('/api/invite-codes', requireLogin, requireAdmin, async (req, res) => {
         created_by: req.session.userId,
         created_at: new Date().toISOString()
     };
+    if (!db.data.inviteCodes) db.data.inviteCodes = [];
     db.data.inviteCodes.push(newCode);
     await db.write();
-
-    res.json({ message: '邀请码生成成功', code: code });
+    res.json({ success: true, data: newCode, code: code });
 });
 
-// API: 获取邀请码列表（管理员）
-app.get('/api/invite-codes', requireLogin, requireAdmin, (req, res) => {
-    const codes = [...db.data.inviteCodes].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    res.json(codes);
-});
-
-// API: 删除邀请码（管理员）
-app.delete('/api/invite-codes/:id', requireLogin, requireAdmin, async (req, res) => {
-    const codeId = parseInt(req.params.id);
-    const codeIndex = db.data.inviteCodes.findIndex(c => c.id === codeId);
-    
-    if (codeIndex === -1) {
-        return res.status(404).json({ error: '邀请码不存在' });
-    }
-
-    db.data.inviteCodes.splice(codeIndex, 1);
+app.delete('/api/invite-codes/:id', requireAdmin, async (req, res) => {
+    const id = parseInt(req.params.id) || parseFloat(req.params.id);
+    if (!db.data.inviteCodes) db.data.inviteCodes = [];
+    db.data.inviteCodes = db.data.inviteCodes.filter(c => c.id !== id);
     await db.write();
-
-    res.json({ message: '邀请码删除成功' });
+    res.json({ success: true, message: '邀请码已删除' });
 });
 
-// API: 发布任务（管理员）
-app.post('/api/tasks', requireLogin, requireAdmin, upload.single('file'), async (req, res) => {
-    const { title, content, isPinned, status } = req.body;
-
-    if (!title || !content) {
-        return res.status(400).json({ error: '标题和内容不能为空' });
+app.post('/api/console/create_user', requireAdmin, async (req, res) => {
+    const { username, email, password, isAdmin } = req.body;
+    
+    if (!username || !email || !password) {
+        return res.status(400).json({ success: false, message: '请填写所有字段' });
     }
-
-    // 验证状态
-    const validStatuses = ['备货', '正在建', '已完成'];
-    const taskStatus = status || '备货';
-    if (!validStatuses.includes(taskStatus)) {
-        return res.status(400).json({ error: '无效的任务状态' });
+    
+    if (db.data.users.find(u => u.username === username)) {
+        return res.status(400).json({ success: false, message: '用户名已存在' });
     }
-
-    const newTask = {
+    
+    if (db.data.users.find(u => u.email === email)) {
+        return res.status(400).json({ success: false, message: '该邮箱已被注册' });
+    }
+    
+    const hash = bcrypt.hashSync(password, 10);
+    const newUser = {
         id: Date.now(),
-        title: title,
-        content: content,
-        author_id: req.session.userId,
-        is_pinned: isPinned || false,
-        status: taskStatus,
-        file_path: req.file ? req.file.path : null,
-        file_name: req.file ? req.file.originalname : null,
-        file_size: req.file ? req.file.size : null,
+        username: username,
+        email: email,
+        password: hash,
+        is_admin: !!isAdmin,
+        is_super_admin: false,
+        is_banned: false,
+        login_attempts: 0,
         created_at: new Date().toISOString()
     };
-    db.data.tasks.push(newTask);
-    await db.write();
-
-    res.json({ message: '任务发布成功', id: newTask.id });
-});
-
-// API: 获取任务列表
-app.get('/api/tasks', (req, res) => {
-    const tasksWithAuthors = db.data.tasks.map(task => {
-        const author = db.data.users.find(u => u.id === task.author_id);
-        return {
-            ...task,
-            author_name: author ? author.username : '未知用户'
-        };
-    }).sort((a, b) => {
-        // 置顶任务排在前面
-        if (a.is_pinned && !b.is_pinned) return -1;
-        if (!a.is_pinned && b.is_pinned) return 1;
-        // 都置顶或都不置顶，按时间倒序
-        return new Date(b.created_at) - new Date(a.created_at);
-    });
     
-    res.json(tasksWithAuthors);
+    db.data.users.push(newUser);
+    await db.write();
+    
+    res.json({ success: true, message: `用户 ${username} 创建成功`, user: { id: newUser.id, username, email } });
 });
 
-// API: 获取单个任务
-app.get('/api/tasks/:id', (req, res) => {
-    const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
-    if (!task) {
-        return res.status(404).json({ error: '任务不存在' });
-    }
+const isLocalDev = !process.env.VERCEL && !process.env.RAILWAY;
+if (isLocalDev) {
+    app.post('/api/console/stop', requireLogin, requireAdmin, (req, res) => {
+        console.log('服务器被管理员停止');
+        res.json({ success: true, message: '服务器已停止' });
+        setTimeout(() => process.exit(0), 1000);
+    });
 
-    const author = db.data.users.find(u => u.id === task.author_id);
+    app.post('/api/console/restart', requireLogin, requireAdmin, (req, res) => {
+        console.log('服务器被管理员重启');
+        res.json({ success: true, message: '服务器正在重启...' });
+        
+        setTimeout(() => {
+            const restartScript = 'node';
+            const args = ['server.js'];
+            const options = {
+                detached: true,
+                stdio: ['ignore', 'ignore', 'ignore'],
+                cwd: __dirname
+            };
+            
+            if (!isSafePath(__dirname, process.cwd())) {
+                console.error('非法工作目录');
+                return;
+            }
+            
+            const child = spawn(restartScript, args, options);
+            child.unref();
+            process.exit(0);
+        }, 1000);
+    });
+}
+
+// 网站备份API（仅超级管理员）
+async function createBackup() {
+    try {
+        const backupDir = path.join(__dirname, 'backups');
+        if (!fs.existsSync(backupDir)) {
+            fs.mkdirSync(backupDir, { recursive: true });
+        }
+        
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupName = `backup-${timestamp}`;
+        const backupPath = path.join(backupDir, backupName);
+        
+        fs.mkdirSync(backupPath, { recursive: true });
+        
+        const dbPath = path.join(__dirname, 'database.json');
+        if (fs.existsSync(dbPath)) {
+            fs.copyFileSync(dbPath, path.join(backupPath, 'database.json'));
+        }
+        
+        const importantFiles = ['server.js', 'package.json'];
+        importantFiles.forEach(file => {
+            const filePath = path.join(__dirname, file);
+            if (fs.existsSync(filePath)) {
+                fs.copyFileSync(filePath, path.join(backupPath, file));
+            }
+        });
+        
+        const publicDir = path.join(__dirname, 'public');
+        if (fs.existsSync(publicDir)) {
+            const publicBackup = path.join(backupPath, 'public');
+            fs.mkdirSync(publicBackup, { recursive: true });
+            
+            const copyDir = (src, dest) => {
+                const entries = fs.readdirSync(src, { withFileTypes: true });
+                entries.forEach(entry => {
+                    const srcPath = path.join(src, entry.name);
+                    const destPath = path.join(dest, entry.name);
+                    if (entry.isDirectory()) {
+                        fs.mkdirSync(destPath, { recursive: true });
+                        copyDir(srcPath, destPath);
+                    } else {
+                        fs.copyFileSync(srcPath, destPath);
+                    }
+                });
+            };
+            copyDir(publicDir, publicBackup);
+        }
+        
+        lastBackupTime = new Date();
+        lastBackupInfo = {
+            name: backupName,
+            path: backupPath,
+            time: lastBackupTime.toISOString(),
+            files: ['database.json', 'server.js', 'package.json', 'public/']
+        };
+        
+        return lastBackupInfo;
+    } catch (error) {
+        throw error;
+    }
+}
+
+function startAutoBackup(timeStr) {
+    if (autoBackupTimer) {
+        clearInterval(autoBackupTimer);
+        clearTimeout(autoBackupTimer);
+        autoBackupTimer = null;
+    }
+    
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        throw new Error('无效的时间格式，请使用 HH:MM 格式');
+    }
+    
+    autoBackupEnabled = true;
+    autoBackupTime = timeStr;
+    
+    const scheduleBackup = () => {
+        const now = new Date();
+        const target = new Date();
+        target.setHours(hours, minutes, 0, 0);
+        
+        if (target <= now) {
+            target.setDate(target.getDate() + 1);
+        }
+        
+        const delay = target.getTime() - now.getTime();
+        
+        addServerLog(`自动备份已计划: ${timeStr} (北京时间)，延迟 ${Math.floor(delay / 1000)} 秒`, 'info');
+        
+        autoBackupTimer = setTimeout(() => {
+            createBackup().then(info => {
+                addServerLog(`自动备份完成: ${info.name}`, 'info');
+            }).catch(err => {
+                addServerLog(`自动备份失败: ${err.message}`, 'error');
+            });
+            
+            autoBackupTimer = setInterval(() => {
+                createBackup().then(info => {
+                    addServerLog(`自动备份完成: ${info.name}`, 'info');
+                }).catch(err => {
+                    addServerLog(`自动备份失败: ${err.message}`, 'error');
+                });
+            }, 24 * 60 * 60 * 1000);
+        }, delay);
+    };
+    
+    scheduleBackup();
+}
+
+function stopAutoBackup() {
+    if (autoBackupTimer) {
+        clearInterval(autoBackupTimer);
+        clearTimeout(autoBackupTimer);
+        autoBackupTimer = null;
+    }
+    autoBackupEnabled = false;
+}
+
+app.post('/api/admin/backup', requireSuperAdmin, async (req, res) => {
+    try {
+        const backup = await createBackup();
+        res.json({ 
+            success: true, 
+            message: '备份完成',
+            backup: backup
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: '备份失败: ' + error.message });
+    }
+});
+
+// 查看备份信息API
+app.get('/api/admin/backup-info', requireSuperAdmin, (req, res) => {
     res.json({
-        ...task,
-        author_name: author ? author.username : '未知用户'
+        success: true,
+        lastBackup: lastBackupTime ? {
+            time: lastBackupTime.toISOString(),
+            info: lastBackupInfo
+        } : null,
+        autoBackup: {
+            enabled: autoBackupEnabled,
+            time: autoBackupTime
+        }
     });
 });
 
-// API: 更新任务状态（管理员）
-app.put('/api/tasks/:id/status', requireLogin, requireAdmin, async (req, res) => {
-    const { status } = req.body;
-    const validStatuses = ['备货', '正在建', '已完成'];
-
-    if (!validStatuses.includes(status)) {
-        return res.status(400).json({ error: '无效的任务状态' });
+// 设置自动备份API
+app.post('/api/admin/auto-backup', requireSuperAdmin, (req, res) => {
+    const { time } = req.body;
+    
+    if (!time) {
+        return res.json({ success: false, message: '请指定备份时间' });
     }
-
-    const taskIndex = db.data.tasks.findIndex(t => t.id === parseInt(req.params.id));
-    if (taskIndex === -1) {
-        return res.status(404).json({ error: '任务不存在' });
+    
+    try {
+        startAutoBackup(time);
+        res.json({ 
+            success: true, 
+            message: `自动备份已设置为每天 ${time} (北京时间)`,
+            autoBackup: {
+                enabled: autoBackupEnabled,
+                time: autoBackupTime
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
     }
-
-    db.data.tasks[taskIndex].status = status;
-    await db.write();
-
-    res.json({ message: '任务状态更新成功' });
 });
 
-// API: 下载任务文件
-app.get('/api/tasks/:id/download', async (req, res) => {
-    const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
-    if (!task) {
-        return res.status(404).json({ error: '任务不存在' });
-    }
-
-    if (!task.file_path || !fs.existsSync(task.file_path)) {
-        return res.status(404).json({ error: '文件不存在' });
-    }
-
-    res.download(task.file_path, task.file_name);
+// 关闭自动备份API
+app.post('/api/admin/auto-backup/stop', requireSuperAdmin, (req, res) => {
+    stopAutoBackup();
+    res.json({ 
+        success: true, 
+        message: '自动备份已关闭',
+        autoBackup: {
+            enabled: autoBackupEnabled,
+            time: autoBackupTime
+        }
+    });
 });
 
-// API: 删除任务（管理员）
-app.delete('/api/tasks/:id', requireLogin, requireAdmin, async (req, res) => {
-    const taskIndex = db.data.tasks.findIndex(t => t.id === parseInt(req.params.id));
-    if (taskIndex === -1) {
-        return res.status(404).json({ error: '任务不存在' });
+// 获取所有备份列表API
+app.get('/api/admin/backups', requireSuperAdmin, (req, res) => {
+    try {
+        const backupDir = path.join(__dirname, 'backups');
+        if (!fs.existsSync(backupDir)) {
+            return res.json({ success: true, backups: [] });
+        }
+        
+        const backups = fs.readdirSync(backupDir, { withFileTypes: true })
+            .filter(entry => entry.isDirectory())
+            .map(entry => {
+                const backupPath = path.join(backupDir, entry.name);
+                const stats = fs.statSync(backupPath);
+                return {
+                    name: entry.name,
+                    path: backupPath,
+                    created: stats.birthtime.toISOString(),
+                    size: getDirSize(backupPath)
+                };
+            })
+            .sort((a, b) => new Date(b.created) - new Date(a.created));
+        
+        res.json({ success: true, backups });
+    } catch (error) {
+        res.status(500).json({ success: false, message: '获取备份列表失败: ' + error.message });
     }
-
-    // 删除关联的文件
-    const task = db.data.tasks[taskIndex];
-    if (task.file_path && fs.existsSync(task.file_path)) {
-        fs.unlinkSync(task.file_path);
-    }
-
-    db.data.tasks.splice(taskIndex, 1);
-    await db.write();
-
-    res.json({ message: '任务删除成功' });
 });
 
-// API: 发布留言
-app.post('/api/messages', requireLogin, async (req, res) => {
-    const { content } = req.body;
+// 获取目录大小
+function getDirSize(dirPath) {
+    let size = 0;
+    try {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(dirPath, entry.name);
+            if (entry.isDirectory()) {
+                size += getDirSize(fullPath);
+            } else {
+                size += fs.statSync(fullPath).size;
+            }
+        }
+    } catch (e) {}
+    return size;
+}
 
-    if (!content) {
-        return res.status(400).json({ error: '留言内容不能为空' });
+// 回滚到指定备份API
+app.post('/api/admin/rollback', requireSuperAdmin, async (req, res) => {
+    const { backupName } = req.body;
+    
+    if (!backupName) {
+        return res.status(400).json({ success: false, message: '请指定备份名称' });
     }
-
-    if (content.length > 500) {
-        return res.status(400).json({ error: '留言内容不能超过500字' });
+    
+    try {
+        const backupDir = path.join(__dirname, 'backups');
+        const backupPath = path.join(backupDir, backupName);
+        
+        if (!fs.existsSync(backupPath)) {
+            return res.status(404).json({ success: false, message: '备份不存在' });
+        }
+        
+        // 备份当前数据库（作为回滚前的备份）
+        const dbPath = path.join(__dirname, 'database.json');
+        let preBackup = null;
+        if (fs.existsSync(dbPath)) {
+            preBackup = path.join(backupDir, `pre-rollback-${Date.now()}`);
+            fs.mkdirSync(preBackup, { recursive: true });
+            fs.copyFileSync(dbPath, path.join(preBackup, 'database.json'));
+        }
+        
+        // 恢复数据库
+        const backupDb = path.join(backupPath, 'database.json');
+        if (!fs.existsSync(backupDb)) {
+            return res.status(404).json({ success: false, message: '备份中没有数据库文件' });
+        }
+        
+        fs.copyFileSync(backupDb, dbPath);
+        
+        // 重新加载数据库
+        await db.read();
+        
+        res.json({ 
+            success: true, 
+            message: '已回滚到备份: ' + backupName,
+            preBackup: preBackup ? path.basename(preBackup) : null
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: '回滚失败: ' + error.message });
     }
+});
 
-    const newMessage = {
+// 删除指定备份API
+app.delete('/api/admin/backup/:name', requireSuperAdmin, async (req, res) => {
+    const { name } = req.params;
+    
+    if (!name) {
+        return res.status(400).json({ success: false, message: '请指定备份名称' });
+    }
+    
+    try {
+        const backupDir = path.join(__dirname, 'backups');
+        const backupPath = path.join(backupDir, name);
+        
+        if (!fs.existsSync(backupPath)) {
+            return res.status(404).json({ success: false, message: '备份不存在' });
+        }
+        
+        // 递归删除目录
+        fs.rmSync(backupPath, { recursive: true, force: true });
+        
+        res.json({ success: true, message: '已删除备份: ' + name });
+    } catch (error) {
+        res.status(500).json({ success: false, message: '删除备份失败: ' + error.message });
+    }
+});
+
+// 锁定数据库API
+app.post('/api/admin/db-lock', requireSuperAdmin, async (req, res) => {
+    const { reason } = req.body;
+    
+    if (dbLocked) {
+        return res.json({ success: false, message: '数据库已被锁定' });
+    }
+    
+    dbLocked = true;
+    dbLockReason = reason || '管理员锁定';
+    dbLockTime = new Date();
+    
+    res.json({
+        success: true,
+        message: '数据库已锁定',
+        lockInfo: {
+            reason: dbLockReason,
+            time: dbLockTime.toISOString()
+        }
+    });
+});
+
+// 查看数据库状态API
+app.get('/api/admin/db-status', requireSuperAdmin, (req, res) => {
+    res.json({
+        success: true,
+        status: {
+            locked: dbLocked,
+            lockReason: dbLockReason,
+            lockTime: dbLockTime ? dbLockTime.toISOString() : null,
+            dataSize: JSON.stringify(db.data).length,
+            usersCount: db.data.users.length,
+            tasksCount: db.data.tasks.length,
+            emailsCount: db.data.emails.length
+        }
+    });
+});
+
+// 解锁数据库API
+app.post('/api/admin/db-unlock', requireSuperAdmin, async (req, res) => {
+    if (!dbLocked) {
+        return res.json({ success: false, message: '数据库未被锁定' });
+    }
+    
+    dbLocked = false;
+    dbLockReason = '';
+    dbLockTime = null;
+    
+    res.json({ success: true, message: '数据库已解锁' });
+});
+
+// 网站锁定API - 管理员可用
+app.post('/api/admin/site-lock', requireAdmin, async (req, res) => {
+    const { reason } = req.body;
+    const user = db.data.users.find(u => u.id === req.session.userId);
+    
+    siteLocked = true;
+    siteLockReason = reason || '维护中';
+    siteLockBy = user ? user.username : '未知';
+    siteLockTime = new Date().toISOString();
+    
+    // 广播锁定事件给所有连接的客户端（先通知，再清除session）
+    const lockEvent = JSON.stringify({
+        type: 'site-locked',
+        lockBy: siteLockBy,
+        lockReason: siteLockReason
+    });
+    siteEventsClients.forEach(client => {
+        try {
+            client.write('data: ' + lockEvent + '\n\n');
+        } catch (e) {
+            // 忽略发送失败的客户端
+        }
+    });
+    
+    // 清除所有非管理员用户的session
+    const sessionsDir = './sessions';
+    if (fs.existsSync(sessionsDir)) {
+        const sessionFiles = fs.readdirSync(sessionsDir);
+        for (const file of sessionFiles) {
+            try {
+                const sessionPath = path.join(sessionsDir, file);
+                const sessionData = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
+                
+                // 检查session中的用户是否是管理员
+                if (sessionData.userId) {
+                    const sessionUser = db.data.users.find(u => u.id === sessionData.userId);
+                    if (sessionUser && !sessionUser.is_admin && !sessionUser.is_super_admin) {
+                        // 删除非管理员用户的session文件
+                        fs.unlinkSync(sessionPath);
+                    }
+                }
+            } catch (e) {
+                // 忽略解析错误的文件
+            }
+        }
+    }
+    
+    // 广播锁定消息给所有连接的客户端
+    addServerLog(`网站已被 ${siteLockBy} 锁定: ${siteLockReason}`, 'warn');
+    addServerLog('所有非管理员用户已被强制退出登录', 'warn');
+    
+    res.json({ 
+        success: true, 
+        message: '网站已锁定',
+        lockBy: siteLockBy,
+        lockReason: siteLockReason
+    });
+});
+
+// 网站解锁API - 仅超级管理员
+app.post('/api/admin/site-unlock', requireAdmin, async (req, res) => {
+    if (!siteLocked) {
+        return res.json({ success: false, message: '网站未被锁定' });
+    }
+    
+    const user = db.data.users.find(u => u.id === req.session.userId);
+    const unlockedBy = user ? user.username : '未知';
+    
+    siteLocked = false;
+    siteLockReason = '';
+    siteLockBy = '';
+    siteLockTime = null;
+    
+    addServerLog(`网站已被 ${unlockedBy} 解锁`, 'system');
+    
+    res.json({ success: true, message: '网站已解锁' });
+});
+
+// 网站状态API - 仅超级管理员
+app.get('/api/admin/site-status', requireAdmin, async (req, res) => {
+    res.json({
+        success: true,
+        locked: siteLocked,
+        lockReason: siteLockReason,
+        lockBy: siteLockBy,
+        lockTime: siteLockTime
+    });
+});
+
+const MAX_STORAGE = 5 * 1024 * 1024 * 1024;
+
+function getUserStorageUsage(userId) {
+    let totalSize = 0;
+    db.data.emails.forEach(email => {
+        if (email.to_user_id === userId || email.from_user_id === userId) {
+            if (email.attachments) {
+                email.attachments.forEach(att => {
+                    if (att.size) totalSize += att.size;
+                });
+            }
+        }
+    });
+    return totalSize;
+}
+
+function enrichEmailWithUserInfo(email) {
+    const fromUser = db.data.users.find(u => u.id === email.from_user_id);
+    const toUser = db.data.users.find(u => u.id === email.to_user_id);
+    
+    email.from_user = fromUser ? { 
+        id: fromUser.id, 
+        username: fromUser.username, 
+        email: fromUser.email 
+    } : null;
+    
+    if (toUser) {
+        email.to_user = { 
+            id: toUser.id, 
+            username: toUser.username, 
+            email: toUser.email 
+        };
+    } else if (email.to_email) {
+        email.to_user = { 
+            id: null, 
+            username: email.to_username || email.to_email, 
+            email: email.to_email 
+        };
+    } else {
+        email.to_user = null;
+    }
+}
+
+app.get('/api/emails', requireLogin, async (req, res) => {
+    const { folder = 'inbox', page = 1, pageSize = 20, search = '' } = req.query;
+    const userId = req.session.userId;
+    
+    let emails = [];
+    switch (folder) {
+        case 'inbox':
+            emails = db.data.emails.filter(e => e.to_user_id === userId && !e.deleted && e.folder !== 'deleted');
+            break;
+        case 'sent':
+            emails = db.data.emails.filter(e => e.from_user_id === userId && !e.deleted);
+            break;
+        case 'drafts':
+            emails = db.data.emails.filter(e => e.to_user_id === userId && e.is_draft && !e.deleted);
+            break;
+        case 'deleted':
+            emails = db.data.emails.filter(e => e.to_user_id === userId && e.folder === 'deleted');
+            break;
+        default:
+            emails = db.data.emails.filter(e => e.to_user_id === userId && !e.deleted);
+    }
+    
+    if (search) {
+        const searchLower = search.toLowerCase();
+        emails = emails.filter(e => 
+            e.subject.toLowerCase().includes(searchLower) ||
+            e.content.toLowerCase().includes(searchLower) ||
+            (e.from_user && e.from_user.username.toLowerCase().includes(searchLower))
+        );
+    }
+    
+    emails.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    const total = emails.length;
+    const start = (page - 1) * pageSize;
+    const paginatedEmails = emails.slice(start, start + parseInt(pageSize));
+    
+    paginatedEmails.forEach(enrichEmailWithUserInfo);
+    
+    res.json({ success: true, data: paginatedEmails, total, page: parseInt(page), pageSize: parseInt(pageSize) });
+});
+
+app.get('/api/emails/:id', requireLogin, async (req, res) => {
+    const emailId = parseInt(req.params.id);
+    const userId = req.session.userId;
+    
+    const email = db.data.emails.find(e => e.id === emailId);
+    
+    if (!email) {
+        return res.status(404).json({ success: false, message: '邮件不存在' });
+    }
+    
+    if (email.to_user_id !== userId && email.from_user_id !== userId) {
+        return res.status(403).json({ success: false, message: '无权访问此邮件' });
+    }
+    
+    if (!email.is_read && email.to_user_id === userId) {
+        email.is_read = true;
+        await db.write();
+    }
+    
+    enrichEmailWithUserInfo(email);
+    
+    res.json({ success: true, data: email });
+});
+
+app.post('/api/emails/send', requireLogin, upload.array('attachments', 10), async (req, res) => {
+    const { to, subject, content, is_draft } = req.body;
+    const userId = req.session.userId;
+    
+    if (!to && !is_draft) {
+        return res.status(400).json({ success: false, message: '请填写收件人' });
+    }
+    
+    if (!subject && !is_draft) {
+        return res.status(400).json({ success: false, message: '请填写主题' });
+    }
+    
+    if (!content && !is_draft) {
+        return res.status(400).json({ success: false, message: '请填写内容' });
+    }
+    
+    let toUserId = null;
+    let toEmail = to;
+    let toUsername = null;
+    if (to) {
+        const toUser = db.data.users.find(u => u.email === to || u.username === to);
+        if (toUser) {
+            toUserId = toUser.id;
+            toEmail = toUser.email;
+            toUsername = toUser.username;
+        }
+    }
+    
+    const attachments = [];
+    let totalAttachmentSize = 0;
+    
+    if (req.files && req.files.length > 0) {
+        req.files.forEach(file => {
+            const attachment = {
+                id: Date.now() + Math.random(),
+                filename: file.originalname,
+                path: file.path,
+                size: file.size,
+                content_type: file.mimetype
+            };
+            attachments.push(attachment);
+            totalAttachmentSize += file.size;
+        });
+    }
+    
+    const currentUsage = getUserStorageUsage(userId);
+    if (currentUsage + totalAttachmentSize > MAX_STORAGE) {
+        return res.status(400).json({ success: false, message: '存储空间不足（5GB限制）' });
+    }
+    
+    const email = {
         id: Date.now(),
-        content: content,
-        user_id: req.session.userId,
+        from_user_id: userId,
+        to_user_id: toUserId,
+        to_email: toEmail,
+        to_username: toUsername,
+        subject: subject || '',
+        content: content || '',
+        is_read: false,
+        is_draft: !!is_draft,
+        folder: 'inbox',
+        deleted: false,
+        attachments: attachments,
         created_at: new Date().toISOString()
     };
-    db.data.messages.push(newMessage);
+    
+    db.data.emails.push(email);
     await db.write();
-
-    res.json({ message: '留言发布成功', id: newMessage.id });
-});
-
-// API: 获取留言列表
-app.get('/api/messages', (req, res) => {
-    const messagesWithAuthors = db.data.messages.map(message => {
-        const author = db.data.users.find(u => u.id === message.user_id);
-        return {
-            ...message,
-            author_name: author ? author.username : '未知用户'
-        };
-    }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-     .slice(0, 50);
     
-    res.json(messagesWithAuthors);
+    res.json({ success: true, message: is_draft ? '草稿已保存' : '邮件发送成功', data: email });
 });
 
-// API: 删除留言（管理员）
-app.delete('/api/messages/:id', requireLogin, requireAdmin, async (req, res) => {
-    const messageIndex = db.data.messages.findIndex(m => m.id === parseInt(req.params.id));
-    if (messageIndex === -1) {
-        return res.status(404).json({ error: '留言不存在' });
-    }
+app.get('/api/users/list', requireLogin, async (req, res) => {
+    const users = db.data.users.map(u => ({
+        id: u.id,
+        username: u.username,
+        email: u.email
+    }));
+    res.json({ success: true, data: users });
+});
 
-    db.data.messages.splice(messageIndex, 1);
+app.delete('/api/emails/:id', requireLogin, async (req, res) => {
+    const emailId = parseInt(req.params.id);
+    const userId = req.session.userId;
+    
+    const email = db.data.emails.find(e => e.id === emailId);
+    
+    if (!email) {
+        return res.status(404).json({ success: false, message: '邮件不存在' });
+    }
+    
+    if (email.to_user_id !== userId && email.from_user_id !== userId) {
+        return res.status(403).json({ success: false, message: '无权删除此邮件' });
+    }
+    
+    if (email.folder === 'deleted') {
+        const emailIndex = db.data.emails.indexOf(email);
+        if (emailIndex > -1) {
+            db.data.emails.splice(emailIndex, 1);
+        }
+        await db.write();
+        return res.json({ success: true, message: '邮件已永久删除' });
+    }
+    
+    email.folder = 'deleted';
     await db.write();
-
-    res.json({ message: '留言删除成功' });
+    
+    res.json({ success: true, message: '邮件已移至回收站' });
 });
 
-// API: 获取成员列表（管理员）
-app.get('/api/members', requireLogin, requireAdmin, (req, res) => {
-    const members = db.data.users.map(user => ({
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        password: user.password,
-        is_admin: user.is_admin,
-        is_banned: user.is_banned,
-        created_at: user.created_at
-    })).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+app.post('/api/emails/:id/restore', requireLogin, async (req, res) => {
+    const emailId = parseInt(req.params.id);
+    const userId = req.session.userId;
     
-    res.json(members);
-});
-
-// API: 封禁/解封用户（仅超级管理员）
-app.put('/api/members/:id/ban', requireLogin, requireSuperAdmin, async (req, res) => {
-    const { isBanned } = req.body;
-    const userId = parseInt(req.params.id);
-
-    const userIndex = db.data.users.findIndex(u => u.id === userId);
-    if (userIndex === -1) {
-        return res.status(404).json({ error: '用户不存在' });
-    }
-
-    const user = db.data.users[userIndex];
+    const email = db.data.emails.find(e => e.id === emailId);
     
-    // 不能封禁超级管理员自己
-    if (user.username === 'REDACTED_USER') {
-        return res.status(403).json({ error: '不能封禁超级管理员' });
+    if (!email) {
+        return res.status(404).json({ success: false, message: '邮件不存在' });
     }
-
-    db.data.users[userIndex].is_banned = isBanned;
+    
+    if (email.to_user_id !== userId) {
+        return res.status(403).json({ success: false, message: '无权恢复此邮件' });
+    }
+    
+    email.folder = 'inbox';
     await db.write();
-
-    const response = { message: isBanned ? '用户已封禁' : '用户已解封' };
     
-    // 如果封禁的是当前登录的用户（非超级管理员），标记需要登出
-    if (isBanned && userId === req.session.userId) {
-        response.logoutRequired = true;
-        req.session.destroy();
-    }
-    
-    res.json(response);
+    res.json({ success: true, message: '邮件已恢复' });
 });
 
-// API: 设置/取消管理员（仅超级管理员）
-app.put('/api/members/:id/admin', requireLogin, requireSuperAdmin, async (req, res) => {
-    const { isAdmin } = req.body;
-    const userId = parseInt(req.params.id);
-
-    const userIndex = db.data.users.findIndex(u => u.id === userId);
-    if (userIndex === -1) {
-        return res.status(404).json({ error: '用户不存在' });
-    }
-
-    const user = db.data.users[userIndex];
+app.put('/api/emails/:id/read', requireLogin, async (req, res) => {
+    const emailId = parseInt(req.params.id);
+    const userId = req.session.userId;
+    const { is_read } = req.body;
     
-    // 不能修改超级管理员自己的权限
-    if (user.username === 'REDACTED_USER') {
-        return res.status(403).json({ error: '不能修改超级管理员权限' });
+    const email = db.data.emails.find(e => e.id === emailId);
+    
+    if (!email) {
+        return res.status(404).json({ success: false, message: '邮件不存在' });
     }
-
-    db.data.users[userIndex].is_admin = isAdmin;
+    
+    if (email.to_user_id !== userId) {
+        return res.status(403).json({ success: false, message: '无权修改此邮件状态' });
+    }
+    
+    email.is_read = !!is_read;
     await db.write();
-
-    res.json({ message: isAdmin ? '已设置为管理员' : '已取消管理员权限' });
+    
+    res.json({ success: true, message: '邮件状态已更新' });
 });
 
-// API: 删除账号（仅超级管理员）
-app.delete('/api/accounts/:id', requireLogin, requireSuperAdmin, async (req, res) => {
-    const userId = parseInt(req.params.id);
-
-    const userIndex = db.data.users.findIndex(u => u.id === userId);
-    if (userIndex === -1) {
-        return res.status(404).json({ error: '用户不存在' });
-    }
-
-    const user = db.data.users[userIndex];
+app.get('/api/emails/stats', requireLogin, async (req, res) => {
+    const userId = req.session.userId;
     
-    // 不能删除超级管理员自己
-    if (user.username === 'REDACTED_USER') {
-        return res.status(403).json({ error: '不能删除超级管理员' });
-    }
-
-    // 不能删除自己
-    if (user.id === req.session.userId) {
-        return res.status(403).json({ error: '不能删除自己的账号' });
-    }
-
-    // 删除用户发布的相关数据
-    // 删除任务
-    db.data.tasks = db.data.tasks.filter(task => task.author_id !== userId);
+    const inboxCount = db.data.emails.filter(e => e.to_user_id === userId && !e.deleted && e.folder !== 'deleted' && !e.is_read).length;
+    const sentCount = db.data.emails.filter(e => e.from_user_id === userId && !e.deleted).length;
+    const draftCount = db.data.emails.filter(e => e.to_user_id === userId && e.is_draft && !e.deleted).length;
+    const deletedCount = db.data.emails.filter(e => e.to_user_id === userId && e.folder === 'deleted').length;
+    const storageUsed = getUserStorageUsage(userId);
     
-    // 删除留言
-    db.data.messages = db.data.messages.filter(message => message.user_id !== userId);
+    res.json({
+        success: true,
+        data: {
+            inbox: inboxCount,
+            sent: sentCount,
+            drafts: draftCount,
+            deleted: deletedCount,
+            storageUsed,
+            storageLimit: MAX_STORAGE
+        }
+    });
+});
+
+app.get('/api/emails/attachments/:id/download', requireLogin, async (req, res) => {
+    const attachmentId = parseFloat(req.params.id);
+    const userId = req.session.userId;
     
-    // 删除用户
-    db.data.users.splice(userIndex, 1);
+    let foundAttachment = null;
+    let foundEmail = null;
+    
+    for (const email of db.data.emails) {
+        if (email.to_user_id !== userId && email.from_user_id !== userId) continue;
+        
+        if (email.attachments) {
+            const att = email.attachments.find(a => a.id === attachmentId);
+            if (att) {
+                foundAttachment = att;
+                foundEmail = email;
+                break;
+            }
+        }
+    }
+    
+    if (!foundAttachment || !foundEmail) {
+        return res.status(404).json({ success: false, message: '附件不存在' });
+    }
+    
+    const filePath = path.resolve(foundAttachment.path);
+    
+    if (!isSafePath(filePath, uploadsDir)) {
+        return res.status(403).json({ success: false, message: '非法文件路径' });
+    }
+    
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ success: false, message: '附件文件不存在' });
+    }
+    
+    res.download(filePath, foundAttachment.filename || 'download');
+});
+
+app.post('/api/ban-ip', requireSuperAdmin, async (req, res) => {
+    const { ip, reason } = req.body;
+    
+    if (!ip) {
+        return res.status(400).json({ success: false, message: '请输入IP地址' });
+    }
+    
+    bannedIPs.add(ip);
+    
+    if (!db.data.banned_ips) {
+        db.data.banned_ips = [];
+    }
+    
+    if (!db.data.banned_ips.includes(ip)) {
+        db.data.banned_ips.push(ip);
+        db.data.banned_ip_info = db.data.banned_ip_info || [];
+        db.data.banned_ip_info.push({
+            ip: ip,
+            reason: reason || '违规操作',
+            banned_by: req.session.userId,
+            banned_at: new Date().toISOString()
+        });
+        await db.write();
+    }
+    
+    res.json({ success: true, message: 'IP已封禁' });
+});
+
+app.get('/api/ban-ips', requireSuperAdmin, async (req, res) => {
+    res.json({ success: true, data: db.data.banned_ip_info || [] });
+});
+
+app.post('/api/unban-ip', requireSuperAdmin, async (req, res) => {
+    const { ip } = req.body;
+    
+    if (!ip) {
+        return res.status(400).json({ success: false, message: '请输入IP地址' });
+    }
+    
+    bannedIPs.delete(ip);
+    
+    if (db.data.banned_ips) {
+        db.data.banned_ips = db.data.banned_ips.filter(i => i !== ip);
+    }
+    
+    if (db.data.banned_ip_info) {
+        db.data.banned_ip_info = db.data.banned_ip_info.filter(i => i.ip !== ip);
+    }
     
     await db.write();
-    res.json({ message: '账号及其相关数据删除成功' });
+    
+    res.json({ success: true, message: 'IP已解封' });
 });
 
-// Vercel导出 - 在初始化完成后导出
-const serverPromise = (async () => {
+app.use((req, res, next) => {
+    const ip = getClientIP(req);
+    
+    if (bannedIPs.has(ip)) {
+        return res.status(403).json({ success: false, message: '您的IP已被封禁' });
+    }
+    
+    next();
+});
+
+app.get('/api/logs', requireAdmin, (req, res) => {
+    res.json({ success: true, data: serverLogs });
+});
+
+app.get('/api/logs/sse', requireAdmin, (req, res) => {
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no'
+    });
+    
+    // 发送初始连接成功消息
+    res.write('data: ' + JSON.stringify({message: '日志连接已建立', type: 'system'}) + '\n\n');
+    
+    sseClients.push(res);
+    
+    // 心跳机制 - 每15秒发送心跳保持连接
+    const heartbeat = setInterval(() => {
+        try {
+            res.write(': heartbeat\n\n');
+        } catch (e) {
+            clearInterval(heartbeat);
+            sseClients = sseClients.filter(client => client !== res);
+        }
+    }, 15000);
+    
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        sseClients = sseClients.filter(client => client !== res);
+    });
+});
+
+// 公开的网站事件SSE端点（用于网站锁定通知）
+app.get('/api/site-events', (req, res) => {
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no'
+    });
+    
+    // 发送初始连接成功消息
+    res.write('data: ' + JSON.stringify({type: 'connected'}) + '\n\n');
+    
+    siteEventsClients.push(res);
+    
+    // 心跳机制 - 每15秒发送心跳保持连接
+    const heartbeat = setInterval(() => {
+        try {
+            res.write(': heartbeat\n\n');
+        } catch (e) {
+            clearInterval(heartbeat);
+            siteEventsClients = siteEventsClients.filter(client => client !== res);
+        }
+    }, 15000);
+    
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        siteEventsClients = siteEventsClients.filter(client => client !== res);
+    });
+});
+
+// 访问日志中间件 - 记录IP访问页面
+app.use((req, res, next) => {
+    // 只记录页面访问，不记录静态资源和API
+    if (!req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/) && 
+        !req.path.startsWith('/api/')) {
+        const ip = getClientIP(req);
+        const time = new Date().toLocaleString();
+        const page = req.path || '/';
+        addServerLog(`[${ip}] ${time} 访问页面: ${page}`, 'info');
+    }
+    next();
+});
+
+(async () => {
     await initDatabase();
+    await loadBannedIPs();
     
-    if (!process.env.VERCEL) {
+    if (!process.env.VERCEL && !process.env.RAILWAY) {
         app.listen(PORT, () => {
             console.log(`服务器运行在 http://localhost:${PORT}`);
         });
     }
-    
-    return app;
 })();
 
-module.exports = serverPromise;
+const isDevelopment = !process.env.VERCEL && !process.env.RAILWAY;

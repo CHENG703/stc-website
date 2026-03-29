@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>测试脚本</title>
+</head>
+<body>
+    <h1>测试脚本页面</h1>
+    
+    <script>
+        // 测试函数
+        function testAction(userId) {
+            alert('测试按钮工作正常！用户ID: ' + userId);
+            console.log('测试按钮被点击，用户ID:', userId);
+        }
+
+        function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin) {
+            console.log('showMemberActions被调用', {userId, username, isBanned, isAdmin, isSuperAdmin});
+            alert('showMemberActions被调用: ' + username);
+        }
+
+        console.log('脚本加载完成');
+    </script>
+
+    <!-- 测试按钮 -->
+    <button onclick="testAction(123)">测试按钮</button>
+    <button onclick="showMemberActions(123, 'REDACTED_USER', false, true, true)">操作按钮</button>
+</body>
+</html>

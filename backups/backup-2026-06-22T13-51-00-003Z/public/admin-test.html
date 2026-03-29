@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+    <meta charset='UTF-8'>
+    <title>测试页面</title>
+</head>
+<body>
+    <h1>JavaScript测试</h1>
+    <div id="result">测试中...</div>
+    
+    <script src="js/admin.js"></script>
+    
+    <script>
+        // 简单测试
+        console.log('页面加载');
+        document.getElementById('result').innerHTML = 'JavaScript正常工作';
+        
+        // 测试fetch
+        fetch('/api/user', {
+            credentials: 'include'
+        })
+        .then(response => {
+            console.log('API响应:', response.status);
+            document.getElementById('result').innerHTML = 'API响应: ' + response.status;
+            return response.json();
+        })
+        .then(data => {
+            console.log('API数据:', data);
+            document.getElementById('result').innerHTML = 'API数据: ' + JSON.stringify(data);
+        })
+        .catch(error => {
+            console.error('错误:', error);
+            document.getElementById('result').innerHTML = '错误: ' + error.message;
+        });
+    </script>
+</body>
+</html>

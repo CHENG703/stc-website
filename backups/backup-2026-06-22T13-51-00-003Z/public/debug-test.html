@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>调试测试</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .test-btn {
+            margin: 20px;
+            padding: 10px 20px;
+            background: #6366f1;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>调试测试页面</h1>
+    
+    <button class="test-btn" onclick="testModal()">测试模态框</button>
+    <button class="test-btn" onclick="testAlert()">测试Alert</button>
+    
+    <div id="log" style="margin: 20px; padding: 10px; background: #1a1a2e; border-radius: 8px; font-family: monospace;"></div>
+
+    <script>
+        function log(msg) {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML += new Date().toLocaleTimeString() + ' - ' + msg + '<br>';
+            console.log(msg);
+        }
+
+        function testAlert() {
+            log('Alert测试');
+            alert('Alert正常工作！');
+        }
+
+        function testModal() {
+            log('测试模态框开始');
+            try {
+                var modal = document.createElement('div');
+                modal.className = 'modal-overlay';
+                modal.style.display = 'flex';
+                modal.innerHTML = '<div class="modal-content">' +
+                    '<h3>测试模态框</h3>' +
+                    '<p>如果看到这个，说明模态框可以正常显示！</p>' +
+                    '<div class="modal-actions">' +
+                    '<button onclick="this.parentElement.parentElement.remove(); log(\'模态框已关闭\');" class="btn btn-secondary">关闭</button>' +
+                    '</div>' +
+                    '</div>';
+                
+                log('模态框元素已创建');
+                document.body.appendChild(modal);
+                log('模态框已添加到DOM');
+                
+                const modalInDom = document.querySelector('.modal-overlay');
+                if (modalInDom) {
+                    log('找到了模态框元素');
+                    log('模态框display样式: ' + modalInDom.style.display);
+                    log('模态框computed样式: ' + getComputedStyle(modalInDom).display);
+                } else {
+                    log('未找到模态框元素');
+                }
+            } catch (error) {
+                log('错误: ' + error.message);
+                console.error(error);
+            }
+        }
+
+        log('页面加载完成');
+    </script>
+</body>
+</html>

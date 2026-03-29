@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>管理面板简化版 - STC网站</title>
+    <link rel='stylesheet' href='css/style.css'>
+    <style>
+        .debug-info {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 500px;
+            height: 100vh;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            overflow-y: auto;
+            z-index: 10000;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .debug-info h3 {
+            color: #4ec9b0;
+            margin-top: 0;
+        }
+        .debug-info .success { color: #4ec9b0; }
+        .debug-info .error { color: #f48771; }
+        .debug-info .info { color: #569cd6; }
+        .debug-info .warning { color: #dcdcaa; }
+        .main-content {
+            margin-right: 500px;
+        }
+    </style>
+</head>
+<body>
+    <div class='debug-info' id='debugInfo'>
+        <h3>调试信息</h3>
+        <div id='debugLog'></div>
+    </div>
+
+    <div class='main-content'>
+        <nav class='navbar'>
+            <div class='container'>
+                <div class='nav-brand'>
+                    <a href='/'>STC网站</a>
+                </div>
+                <ul class='nav-menu'>
+                    <li><a href='/'>首页</a></li>
+                    <li><a href='/user'>用户中心</a></li>
+                    <li><a href='/admin' class='active'>管理面板</a></li>
+                    <li><a href='#' onclick='logout()'>登出</a></li>
+                </ul>
+            </div>
+        </nav>
+
+        <main>
+            <div class='container'>
+                <div class='admin-panel'>
+                    <h2>管理面板</h2>
+                    
+                    <div id='login-status' class='section'>
+                        <h3>登录状态</h3>
+                        <div id='login-status-content'>检查中...</div>
+                    </div>
+
+                    <div class='admin-section'>
+                        <h3>邀请码管理</h3>
+                        <button onclick='generateInviteCode()' class='btn btn-primary'>生成新邀请码</button>
+                        <button onclick='loadInviteCodes()' class='btn btn-secondary'>刷新列表</button>
+                        
+                        <div id='invite-codes-table' class='data-table'>
+                            <div class='loading'>加载中...</div>
+                        </div>
+                    </div>
+
+                    <div class='admin-section' id='members-section'>
+                        <h3>成员管理</h3>
+                        <button onclick='loadMembers()' class='btn btn-secondary'>刷新成员列表</button>
+                        
+                        <div id='members-table' class='data-table'>
+                            <div class='loading'>加载中...</div>
+                        </div>
+                    </div>
+
+                    <div class='admin-section' id='tasks-section'>
+                        <h3>任务管理</h3>
+                        <button onclick='loadTasks()' class='btn btn-secondary'>刷新任务列表</button>
+
+                        <div id='tasks-table' class='data-table'>
+                            <div class='loading'>加载中...</div>
+                        </div>
+                    </div>
+
+                    <div class='admin-section' id='messages-section'>
+                        <h3>留言管理</h3>
+                        <button onclick='loadMessages()' class='btn btn-secondary'>刷新留言列表</button>
+
+                        <div id='messages-table' class='data-table'>
+                            <div class='loading'>加载中...</div>
+                        </div>
+                    </div>
+
+                    <div class='admin-section' id='accounts-section'>
+                        <h3>账号管理</h3>
+                        <div id='accounts-table' class='data-table'>
+                            <div class='loading'>加载中...</div>
+                        </div>
+                    </div>
+
+                    <div class='admin-section' id='avatar-review-section'>
+                        <h3>头像审核</h3>
+                        <button onclick='loadPendingAvatars()' class='btn btn-secondary'>刷新待审核头像</button>
+                        
+                        <div id='pending-avatars-table' class='data-table'>
+                            <div class='loading'>加载中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // 调试系统
+        const debugLogs = [];
+        
+        function log(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            debugLogs.push({ time, message, type });
+            updateDebugLog();
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+        
+        function updateDebugLog() {
+            const logDiv = document.getElementById('debugLog');
+            logDiv.innerHTML = debugLogs.map(l => 
+                `<div class='${l.type}'>[${l.time}] ${l.message}</div>`
+            ).join('');
+        }
+        
+        // 封装的fetch函数
+        async function fetchWithAuth(url, options = {}) {
+            options.credentials = 'include';
+            
+            const response = await fetch(url, options);
+            
+            if (response.status === 401) {
+                log('401未授权错误: ' + url, 'error');
+                throw new Error('Unauthorized');
+            }
+            
+            if (response.status === 403) {
+                const error = await response.json();
+                log('403错误: ' + (error.error || '访问被拒绝'), 'error');
+                throw new Error('AccessDenied');
+            }
+            
+            return response;
+        }
+        
+        // 消息提示
+        function showMessage(message, type = 'success') {
+            log(message, type);
+            alert(message);
+        }
+        
+        // 登出
+        async function logout() {
+            try {
+                const response = await fetchWithAuth('/api/logout', {
+                    method: 'POST'
+                });
+                if (response.ok) {
+                    showMessage('登出成功');
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 1000);
+                } else {
+                    showMessage('登出失败', 'error');
+                }
+            } catch (error) {
+                if (error.message !== 'AccessDenied') {
+                    showMessage('登出失败', 'error');
+                }
+            }
+        }
+        
+        // 页面加载
+        document.addEventListener('DOMContentLoaded', function() {
+            log('页面加载完成', 'success');
+            log('当前URL: ' + window.location.href, 'info');
+            log('document.cookie: "' + document.cookie + '"', 'info');
+            
+            // 检查登录状态
+            checkLoginStatus();
+        });
+        
+        async function checkLoginStatus() {
+            log('开始检查登录状态...', 'info');
+            
+            const statusDiv = document.getElementById('login-status-content');
+            statusDiv.innerHTML = '<span class="loading">检查中...</span>';
+            
+            try {
+                const response = await fetchWithAuth('/api/user');
+                log('/api/user响应状态: ' + response.status, 'info');
+                
+                if (response.ok) {
+                    const user = await response.json();
+                    log('用户信息获取成功', 'success');
+                    log('用户名: ' + user.username, 'info');
+                    log('是否管理员: ' + user.isAdmin, 'info');
+                    log('是否超级管理员: ' + user.isSuperAdmin, 'info');
+                    
+                    statusDiv.innerHTML = `
+                        <p class="success">✓ 已登录</p>
+                        <p>用户名: ${user.username}</p>
+                        <p>管理员: ${user.isAdmin ? '是' : '否'}</p>
+                        <p>超级管理员: ${user.isSuperAdmin ? '是' : '否'}</p>
+                    `;
+                    
+                    if (!user.isAdmin) {
+                        log('权限不足，不是管理员', 'error');
+                        showMessage('需要管理员权限', 'error');
+                        setTimeout(function() {
+                            window.location.href = '/user';
+                        }, 2000);
+                    } else {
+                        log('权限检查通过，开始加载数据', 'success');
+                        loadInviteCodes();
+                        loadTasks();
+                        loadMessages();
+                        loadAccounts();
+                        loadPendingAvatars();
+                        
+                        if (user.username === 'REDACTED_USER' || user.isSuperAdmin) {
+                            log('显示成员管理', 'info');
+                            loadMembers();
+                        } else {
+                            log('隐藏成员管理', 'info');
+                            var membersSection = document.getElementById('members-section');
+                            if (membersSection) {
+                                membersSection.classList.add('hidden');
+                            }
+                            var accountsSection = document.getElementById('accounts-section');
+                            if (accountsSection) {
+                                accountsSection.classList.add('hidden');
+                            }
+                        }
+                    }
+                } else {
+                    log('未登录或认证失败', 'error');
+                    statusDiv.innerHTML = '<p class="error">✗ 未登录</p>';
+                    showMessage('请先登录', 'error');
+                    setTimeout(function() {
+                        window.location.href = '/login';
+                    }, 2000);
+                }
+            } catch (error) {
+                log('检查登录状态错误: ' + error.message, 'error');
+                statusDiv.innerHTML = '<p class="error">✗ 错误: ' + error.message + '</p>';
+                showMessage('请先登录: ' + error.message, 'error');
+                setTimeout(function() {
+                    window.location.href = '/login';
+                }, 2000);
+            }
+        }
+        
+        // 简化的加载函数
+        async function loadInviteCodes() {
+            try {
+                const response = await fetchWithAuth('/api/invite-codes');
+                if (response.ok) {
+                    const codes = await response.json();
+                    const tableContainer = document.getElementById('invite-codes-table');
+                    
+                    if (codes.length === 0) {
+                        tableContainer.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">暂无邀请码</p>';
+                        return;
+                    }
+
+                    tableContainer.innerHTML = `
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>邀请码</th>
+                                    <th>状态</th>
+                                    <th>创建时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${codes.map(code => `
+                                    <tr>
+                                        <td><code style="background: var(--bg-secondary); padding: 0.25rem 0.5rem; border-radius: 4px;">${code.code}</code></td>
+                                        <td>
+                                            <span class="status-badge ${code.is_used ? 'used' : 'available'}">
+                                                ${code.is_used ? '已使用' : '可用'}
+                                            </span>
+                                        </td>
+                                        <td>${code.created_at.split('T')[0]}</td>
+                                        <td>
+                                            <button onclick="deleteInviteCode(${code.id})" class="btn btn-primary" style="background: var(--error-color); padding: 0.375rem 0.75rem; font-size: 0.875rem;">删除</button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                }
+            } catch (error) {
+                if (error.message !== 'AccessDenied') {
+                    document.getElementById('invite-codes-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+                }
+            }
+        }
+        
+        async function loadTasks() {
+            log('开始加载任务...', 'info');
+            try {
+                const response = await fetchWithAuth('/api/tasks');
+                if (response.ok) {
+                    const tasks = await response.json();
+                    log('任务加载成功，共 ' + tasks.length + ' 个任务', 'success');
+                    const tableContainer = document.getElementById('tasks-table');
+                    
+                    if (tasks.length === 0) {
+                        tableContainer.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">暂无任务</p>';
+                        return;
+                    }
+
+                    tableContainer.innerHTML = `
+                        <div class="tasks-grid">
+                            ${tasks.map(task => `
+                                <div class="task-card">
+                                    <h4>${task.title}</h4>
+                                    <p>${task.content}</p>
+                                    <div class="task-meta">
+                                        <span>作者: ${task.author_name}</span>
+                                        <span>状态: ${task.status}</span>
+                                        <span>${task.created_at.split('T')[0]}</span>
+                                        ${task.is_pinned ? '<span class="pinned">置顶</span>' : ''}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    log('任务加载失败: ' + response.status, 'error');
+                    document.getElementById('tasks-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+                }
+            } catch (error) {
+                log('任务加载错误: ' + error.message, 'error');
+                document.getElementById('tasks-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+            }
+        }
+        
+        async function loadMessages() {
+            log('开始加载留言...', 'info');
+            try {
+                const response = await fetchWithAuth('/api/messages');
+                if (response.ok) {
+                    const messages = await response.json();
+                    log('留言加载成功，共 ' + messages.length + ' 条留言', 'success');
+                    const tableContainer = document.getElementById('messages-table');
+                    
+                    if (messages.length === 0) {
+                        tableContainer.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">暂无留言</p>';
+                        return;
+                    }
+
+                    tableContainer.innerHTML = `
+                        <div class="messages-list">
+                            ${messages.map(message => {
+                                const author = message.user_id ? '用户' + message.user_id : '未知用户';
+                                return `
+                                    <div class="message-card">
+                                        <div class="message-content">${message.content}</div>
+                                        <div class="message-meta">
+                                            <span>${author}</span>
+                                            <span>${message.created_at.split('T')[0]}</span>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    `;
+                } else {
+                    log('留言加载失败: ' + response.status, 'error');
+                    document.getElementById('messages-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+                }
+            } catch (error) {
+                log('留言加载错误: ' + error.message, 'error');
+                document.getElementById('messages-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+            }
+        }
+        
+        async function loadAccounts() {
+            log('开始加载账号统计...', 'info');
+            try {
+                // 获取所有用户
+                const response = await fetchWithAuth('/api/members');
+                if (response.ok) {
+                    const users = await response.json();
+                    log('账号统计加载成功，共 ' + users.length + ' 个用户', 'success');
+                    
+                    const stats = {
+                        total: users.length,
+                        admins: users.filter(u => u.is_admin).length,
+                        superAdmins: users.filter(u => u.is_super_admin).length,
+                        banned: users.filter(u => u.is_banned).length,
+                        normal: users.filter(u => !u.is_admin && !u.is_super_admin).length
+                    };
+
+                    document.getElementById('accounts-table').innerHTML = `
+                        <div class="accounts-stats">
+                            <div class="stat-item">
+                                <div class="stat-number">${stats.total}</div>
+                                <div class="stat-label">总用户数</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-number">${stats.superAdmins}</div>
+                                <div class="stat-label">超级管理员</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-number">${stats.admins}</div>
+                                <div class="stat-label">管理员</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-number">${stats.normal}</div>
+                                <div class="stat-label">普通用户</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-number">${stats.banned}</div>
+                                <div class="stat-label">已封禁</div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    log('账号统计加载失败: ' + response.status, 'error');
+                    document.getElementById('accounts-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+                }
+            } catch (error) {
+                log('账号统计加载错误: ' + error.message, 'error');
+                document.getElementById('accounts-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+            }
+        }
+        
+        async function loadPendingAvatars() {
+            log('开始加载待审核头像...', 'info');
+            try {
+                const response = await fetchWithAuth('/api/members');
+                if (response.ok) {
+                    const users = await response.json();
+                    const pendingAvatars = users.filter(u => u.pending_avatar && u.avatar_status === 'pending');
+                    log('待审核头像加载成功，共 ' + pendingAvatars.length + ' 个待审核', 'success');
+                    const tableContainer = document.getElementById('pending-avatars-table');
+                    
+                    if (pendingAvatars.length === 0) {
+                        tableContainer.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">暂无待审核头像</p>';
+                        return;
+                    }
+
+                    tableContainer.innerHTML = `
+                        <div class="pending-avatars-grid">
+                            ${pendingAvatars.map(user => `
+                                <div class="avatar-review-card">
+                                    <div class="avatar-preview">
+                                        <img src="/avatars/${user.pending_avatar}" alt="${user.username}" onerror="this.src='https://via.placeholder.com/100'">
+                                    </div>
+                                    <div class="avatar-info">
+                                        <h4>${user.username}</h4>
+                                        <p>${user.email}</p>
+                                    </div>
+                                    <div class="avatar-actions">
+                                        <button onclick="reviewAvatar(${user.id}, true)" class="btn btn-success">通过</button>
+                                        <button onclick="reviewAvatar(${user.id}, false)" class="btn btn-danger">拒绝</button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    log('待审核头像加载失败: ' + response.status, 'error');
+                    document.getElementById('pending-avatars-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+                }
+            } catch (error) {
+                log('待审核头像加载错误: ' + error.message, 'error');
+                document.getElementById('pending-avatars-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+            }
+        }
+        
+        async function loadMembers() {
+            log('开始加载成员...', 'info');
+            try {
+                const response = await fetchWithAuth('/api/members');
+                if (response.ok) {
+                    const members = await response.json();
+                    log('成员加载成功，共 ' + members.length + ' 个成员', 'success');
+                    const tableContainer = document.getElementById('members-table');
+                    
+                    if (members.length === 0) {
+                        tableContainer.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">暂无成员</p>';
+                        return;
+                    }
+
+                    tableContainer.innerHTML = `
+                        <div class="members-grid">
+                            ${members.map(member => `
+                                <div class="member-card">
+                                    <div class="member-avatar">
+                                        <span>${member.username.charAt(0).toUpperCase()}</span>
+                                    </div>
+                                    <div class="member-info">
+                                        <div class="member-name">${member.username}</div>
+                                        <div class="member-email">${member.email}</div>
+                                        <div class="member-status">
+                                            <span class="status-badge ${member.is_super_admin ? 'admin' : member.is_admin ? 'admin' : 'user'}">
+                                                ${member.is_super_admin ? '超级管理员' : member.is_admin ? '管理员' : '普通用户'}
+                                            </span>
+                                            <span class="status-badge ${member.is_banned ? 'banned' : 'available'}">
+                                                ${member.is_banned ? '已封禁' : '正常'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    log('成员加载失败: ' + response.status, 'error');
+                    document.getElementById('members-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+                }
+            } catch (error) {
+                log('成员加载错误: ' + error.message, 'error');
+                document.getElementById('members-table').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+            }
+        }
+        
+        async function generateInviteCode() {
+            showMessage('功能开发中', 'info');
+        }
+        
+        async function deleteInviteCode(codeId) {
+            if (!confirm('确定要删除这个邀请码吗？')) {
+                return;
+            }
+            try {
+                const response = await fetchWithAuth(`/api/invite-codes/${codeId}`, {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    log('邀请码删除成功', 'success');
+                    loadInviteCodes();
+                } else {
+                    log('邀请码删除失败', 'error');
+                }
+            } catch (error) {
+                if (error.message !== 'AccessDenied') {
+                    log('删除邀请码错误: ' + error.message, 'error');
+                }
+            }
+        }
+        
+        async function reviewAvatar(userId, approved) {
+            log('审核头像，用户ID: ' + userId + ', 结果: ' + (approved ? '通过' : '拒绝'), 'info');
+            showMessage('头像审核功能开发中', 'info');
+        }
+    </script>
+</body>
+</html>

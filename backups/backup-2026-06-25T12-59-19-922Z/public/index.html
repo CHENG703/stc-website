@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STC任务网站 - 欢迎访问</title>
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+    <meta name="googlebot" content="noindex, nofollow">
+    <meta name="slurp" content="noindex, nofollow">
+    <meta name="spider" content="noindex, nofollow">
+    <meta name="bot" content="noindex, nofollow">
+    <meta name="crawler" content="noindex, nofollow">
+    <link rel="stylesheet" href="css/style.css">
+    <script src="js/lang.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <a href="/home" data-lang="nav.brand">STC工会任务平台</a>
+            </div>
+            <ul class="nav-menu" id="navMenu">
+                <li><a href="/home" class="active" data-lang="nav.home">首页</a></li>
+                <li><a href="/about" data-lang="nav.about">关于我们</a></li>
+                <li><a href="#tasks" data-lang="nav.tasks">任务</a></li>
+                <li><a href="#messages" data-lang="nav.messages">留言</a></li>
+                <li><button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">🌙</button></li>
+                <li id="nav-user"><a href="/login" data-lang="nav.login">登录</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+                <h1 data-lang="home.title">欢迎来到STC任务网站</h1>
+                <p data-lang="home.subtitle">一个现代化的社区平台，分享你的想法</p>
+                <div class="hero-stats">
+                    <div class="stat-item">
+                        <span class="stat-value" id="union-years">0</span>
+                        <span class="stat-label" data-lang="home.years">年</span>
+                        <span class="stat-value" id="union-days">0</span>
+                        <span class="stat-label" data-lang="home.days">天</span>
+                    </div>
+                </div>
+                <div class="hero-buttons" id="hero-buttons">
+                    <a href="/register" class="btn btn-primary">立即注册</a>
+                    <a href="/login" class="btn btn-secondary" data-lang="nav.login">登录</a>
+                </div>
+            </div>
+        </section>
+
+        <section id="tasks" class="tasks-section">
+            <div class="container">
+                <h2 class="section-title" data-lang="home.tasksTitle">最近任务</h2>
+                
+                <!-- 任务统计 -->
+                <div id="task-stats" class="task-stats">
+                    <div class="loading" data-lang="common.loading">加载统计中...</div>
+                </div>
+                
+                <!-- 任务分类 -->
+                <div class="task-categories">
+                    <button class="category-btn active" data-category="all">全部</button>
+                    <button class="category-btn" data-category="pinned">置顶</button>
+                    <button class="category-btn" data-category="备货">备货中</button>
+                    <button class="category-btn" data-category="正在建">建设中</button>
+                    <button class="category-btn" data-category="已完成">已完成</button>
+                    <button class="category-btn" data-category="一笔未动">一笔未动</button>
+                </div>
+                
+                <div id="tasks-list" class="tasks-grid">
+                    <div class="loading" data-lang="common.loading">加载中...</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="messages" class="messages-section">
+            <div class="container">
+                <h2 class="section-title" data-lang="home.messagesTitle">留言板</h2>
+                
+                <div id="message-form-container" class="message-form-container hidden">
+                    <div class="message-form">
+                        <textarea id="message-content" placeholder="写下你的留言..." maxlength="500"></textarea>
+                        <button onclick="postMessage()" class="btn btn-primary">发布留言</button>
+                    </div>
+                </div>
+
+                <div id="messages-list" class="messages-list">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>
+                &copy; 2026 STC任务网站. All rights reserved. | 
+                <a href="#" onclick="showTerms('service')">使用条款</a> | 
+                <a href="#" onclick="showTerms('privacy')">隐私协议</a>
+            </p>
+            <p class="footer-note">一切解释权归STC团队</p>
+        </div>
+    </footer>
+
+    <!-- 版权水印 -->
+    <div class="copyright-watermark">© 2025-2026 STC 版权所有</div>
+
+    <script src="js/main.js"></script>
+    <script>
+        function showTerms(type) {
+            window.open('/terms.html?type=' + type, 'terms', 'width=800,height=600,scrollbars=yes,resizable=yes');
+        }
+    </script>
+</body>
+</html>

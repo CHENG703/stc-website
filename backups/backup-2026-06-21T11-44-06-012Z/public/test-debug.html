@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+    <meta charset='UTF-8'>
+    <title>测试页面</title>
+</head>
+<body>
+    <h1>测试页面</h1>
+    <div id="test-output"></div>
+    
+    <script>
+        console.log('脚本开始执行');
+        document.getElementById('test-output').innerHTML = '脚本执行成功！';
+        
+        // 测试基本功能
+        const currentUser = {"id":1778756468276,"username":"REDACTED_USER","email":"admin@stc.com","isAdmin":true,"isSuperAdmin":true};
+        
+        function showMessage(message, type = 'success') {
+            console.log('消息:', message);
+        }
+        
+        // 模拟页面加载
+        document.addEventListener('DOMContentLoaded', function() {
+            showMessage('欢迎回来，' + currentUser.username, 'success');
+            console.log('DOMContentLoaded 触发');
+        });
+    </script>
+</body>
+</html>

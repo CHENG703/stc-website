@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /
+
+# 禁止所有爬虫访问
+# STC任务网站 - 仅供内部使用

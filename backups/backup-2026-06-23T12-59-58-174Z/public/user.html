@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户中心 - STC网站</title>
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+    <meta name="googlebot" content="noindex, nofollow">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <a href="/">STC任务网站</a>
+            </div>
+            <ul class="nav-menu" id="navMenu">
+                <li><a href="/">首页</a></li>
+                <li id="nav-user"><a href="/user">用户中心</a></li>
+                <li><a href="#" onclick="logout()">登出</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <div class="container">
+            <div class="user-center">
+                <div class="user-info">
+                    <h2>用户中心</h2>
+                                    <div class="user-avatar-section">
+                    <h3>头像设置</h3>
+                    <div class="avatar-display">
+                        <div class="avatar-preview" id="avatar-preview">
+                            <span id="avatar-placeholder">👤</span>
+                        </div>
+                        <div class="avatar-info">
+                            <p id="avatar-status-text">当前头像：无</p>
+                            <button onclick="document.getElementById('avatar-input').click()" class="btn btn-secondary">更换头像</button>
+                            <input type="file" id="avatar-input" accept="image/*" style="display: none;" onchange="handleAvatarUpload(event)">
+                        </div>
+                    </div>
+                </div>
+
+
+
+
+<div class="user-details">
+                        <p><strong>用户名：</strong><span id="user-username">加载中...</span></p>
+                        <p><strong>邮箱：</strong><span id="user-email">加载中...</span></p>
+                        <p><strong>注册时间：</strong><span id="user-created">加载中...</span></p>
+                        <p><strong>角色：</strong><span id="user-role">加载中...</span></p>
+                        <p><strong>GitHub账号：</strong><span id="user-github">加载中...</span><button id="bind-github-btn" class="btn btn-sm btn-secondary" onclick="bindGitHub()" style="display: none; margin-left: 10px;">绑定</button></p>
+                        <p><strong>Microsoft账号：</strong><span id="user-microsoft">加载中...</span><button id="bind-microsoft-btn" class="btn btn-sm btn-secondary" onclick="bindMicrosoft()" style="display: none; margin-left: 10px;">绑定</button></p>
+                    </div>
+                </div>
+
+                <div class="user-actions">
+                    <div class="action-card">
+                        <h3>修改密码</h3>
+                        <form id="password-form" onsubmit="handleChangePassword(event)">
+                            <div class="form-group">
+                                <label for="old-password">旧密码</label>
+                                <input type="password" id="old-password" name="old-password" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="new-password">新密码</label>
+                                <input type="password" id="new-password" name="new-password" required placeholder="至少6位">
+                            </div>
+                            <div class="form-group">
+                                <label for="confirm-new-password">确认新密码</label>
+                                <input type="password" id="confirm-new-password" name="confirm-new-password" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">修改密码</button>
+                        </form>
+                    </div>
+
+                    <div class="action-card" id="invite-code-card">
+                        <h3>生成邀请码</h3>
+                        <p class="card-description">生成新的邀请码供其他人注册使用</p>
+                        <button onclick="generateInviteCode()" class="btn btn-primary">生成邀请码</button>
+                        <div id="invite-code-result" class="invite-code-result"></div>
+                    </div>
+
+                    <div class="action-card" id="publish-task-card">
+                        <h3>发布任务</h3>
+                        <p class="card-description">管理员可以发布新任务</p>
+                        <form id="task-form" onsubmit="handlePublishTask(event)" enctype="multipart/form-data">
+                            <div class="form-group">
+                                <label for="task-title">任务标题</label>
+                                <input type="text" id="task-title" name="task-title" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="task-content">任务内容</label>
+                                <textarea id="task-content" name="task-content" required placeholder="输入任务详细内容..." style="min-height: 120px;"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="task-status">任务状态</label>
+                                <select id="task-status" name="task-status">
+                                    <option value="备货">备货</option>
+                                    <option value="正在建">正在建</option>
+                                    <option value="已完成">已完成</option>
+                                    <option value="一笔未动">一笔未动</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="task-file">上传文件（可选，最大1.5GB）</label>
+                                <input type="file" id="task-file" name="file" accept="*/*">
+                                <small style="color: var(--text-secondary);">支持任意格式文件，最大1.5GB</small>
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="task-pinned" name="task-pinned">
+                                    置顶任务
+                                </label>
+                            </div>
+                            <button type="submit" class="btn btn-primary">发布任务</button>
+                        </form>
+                    </div>
+
+                    <div class="action-card danger-card">
+                        <h3>注销账号</h3>
+                        <p class="card-description" style="color: #dc3545;">此操作将永久删除您的账号及所有相关数据，且无法恢复！</p>
+                        <form id="delete-account-form" onsubmit="handleDeleteAccount(event)">
+                            <div class="form-group">
+                                <label for="delete-password">输入登录密码确认</label>
+                                <input type="password" id="delete-password" name="delete-password" required placeholder="请输入当前密码">
+                            </div>
+                            <button type="submit" class="btn btn-danger">永久注销账号</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+        <footer class="footer">
+            <div class="container">
+                <p>
+                    &copy; 2026 STC任务网站. All rights reserved. | 
+                    <a href="#" onclick="showTerms('service')">使用条款</a> | 
+                    <a href="#" onclick="showTerms('privacy')">隐私协议</a>
+                </p>
+                <p class="footer-note">一切解释权归STC团队</p>
+            </div>
+        </footer>
+    
+        <!-- 版权水印 -->
+        <div class="copyright-watermark">© 2025-2026 STC 版权所有</div>
+        
+        <script src="js/user.js"></script>
+        <script>
+            function showTerms(type) {
+                window.open('/terms.html?type=' + type, 'terms', 'width=800,height=600,scrollbars=yes,resizable=yes');
+            }
+        </script>
+    </body>
+    </html>

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>Session测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .test-item {
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        pre {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Session测试页面</h1>
+    
+    <div class="test-item info">
+        <h3>当前Cookie</h3>
+        <pre id="cookies">读取中...</pre>
+    </div>
+    
+    <div class="test-item info">
+        <h3>当前Session ID</h3>
+        <pre id="sessionId">读取中...</pre>
+    </div>
+
+    <div>
+        <button onclick="testLoginAPI()">测试登录API</button>
+        <button onclick="testUserAPI()">测试用户API</button>
+        <button onclick="testWithCredentials()">测试withCredentials</button>
+    </div>
+
+    <div id="test-results"></div>
+
+    <script>
+        // 显示当前Cookie
+        function displayCookies() {
+            const cookies = document.cookie;
+            document.getElementById('cookies').textContent = cookies || '没有Cookie';
+            
+            // 尝试提取session ID
+            const match = cookies.match(/stcsession=([^;]+)/);
+            if (match) {
+                document.getElementById('sessionId').textContent = match[1];
+            } else {
+                document.getElementById('sessionId').textContent = '未找到session cookie';
+            }
+        }
+
+        // 添加测试结果
+        function addResult(title, content, type = 'info') {
+            const resultsDiv = document.getElementById('test-results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-item ${type}`;
+            resultDiv.innerHTML = `
+                <h3>${title}</h3>
+                <pre>${JSON.stringify(content, null, 2)}</pre>
+            `;
+            resultsDiv.appendChild(resultDiv);
+        }
+
+        // 测试登录API
+        async function testLoginAPI() {
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        username: 'REDACTED_USER',
+                        password: '123456'
+                    })
+                });
+
+                const data = await response.json();
+                addResult('登录API测试', {
+                    status: response.status,
+                    ok: response.ok,
+                    data: data,
+                    headers: {
+                        'set-cookie': response.headers.get('set-cookie'),
+                        'content-type': response.headers.get('content-type')
+                    }
+                }, response.ok ? 'success' : 'error');
+
+                // 测试后更新cookie显示
+                setTimeout(displayCookies, 500);
+            } catch (error) {
+                addResult('登录API测试错误', error.message, 'error');
+            }
+        }
+
+        // 测试用户API
+        async function testUserAPI() {
+            try {
+                const response = await fetch('/api/user', {
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    addResult('用户API测试', {
+                        status: response.status,
+                        ok: response.ok,
+                        data: data
+                    }, 'success');
+                } else {
+                    addResult('用户API测试', {
+                        status: response.status,
+                        ok: response.ok,
+                        error: await response.text()
+                    }, 'error');
+                }
+            } catch (error) {
+                addResult('用户API测试错误', error.message, 'error');
+            }
+        }
+
+        // 测试不同的fetch配置
+        async function testWithCredentials() {
+            const tests = [
+                { name: '不使用credentials', config: {} },
+                { name: 'credentials: include', config: { credentials: 'include' } },
+                { name: 'credentials: same-origin', config: { credentials: 'same-origin' } }
+            ];
+
+            for (const test of tests) {
+                try {
+                    const response = await fetch('/api/user', test.config);
+                    const result = {
+                        name: test.name,
+                        status: response.status,
+                        ok: response.ok
+                    };
+
+                    if (response.ok) {
+                        result.data = await response.json();
+                    } else {
+                        result.error = await response.text();
+                    }
+
+                    addResult(`测试: ${test.name}`, result, response.ok ? 'success' : 'error');
+                } catch (error) {
+                    addResult(`测试: ${test.name} 错误`, error.message, 'error');
+                }
+            }
+        }
+
+        // 页面加载时显示Cookie
+        displayCookies();
+    </script>
+</body>
+</html>

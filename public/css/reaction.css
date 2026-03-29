@@ -1,0 +1,635 @@
+body.reaction-page {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+}
+
+.reaction-container {
+    padding: 60px 0;
+}
+
+.reaction-title {
+    text-align: center;
+    color: #fff;
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+}
+
+.reaction-desc {
+    text-align: center;
+    color: rgba(255,255,255,0.85);
+    font-size: 1rem;
+    margin-bottom: 30px;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.reaction-stats {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    margin-bottom: 30px;
+}
+
+.reaction-stats > div {
+    background: rgba(255,255,255,0.15);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 15px;
+    padding: 20px 30px;
+    text-align: center;
+    color: #fff;
+    min-width: 180px;
+}
+
+.reaction-stats .stat-label {
+    display: block;
+    font-size: 0.85rem;
+    opacity: 0.8;
+    margin-bottom: 5px;
+}
+
+.reaction-stats .stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+}
+
+.reaction-stats .stat-sep {
+    font-size: 1.5rem;
+    opacity: 0.6;
+    margin: 0 3px;
+}
+
+.reaction-stats .stat-total {
+    font-size: 1.5rem;
+    opacity: 0.8;
+}
+
+.reaction-stats .stat-unit {
+    font-size: 0.9rem;
+    opacity: 0.7;
+    margin-left: 3px;
+}
+
+.reaction-box {
+    width: 400px;
+    height: 250px;
+    margin: 0 auto 30px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    user-select: none;
+    -webkit-user-select: none;
+    position: relative;
+    overflow: hidden;
+}
+
+.reaction-box.waiting {
+    background: rgba(255,255,255,0.2);
+    backdrop-filter: blur(10px);
+    border: 2px dashed rgba(255,255,255,0.3);
+    color: #fff;
+}
+
+.reaction-box.waiting:hover {
+    background: rgba(255,255,255,0.25);
+}
+
+.reaction-box.ready {
+    background: rgba(255,255,255,0.2);
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(255,255,255,0.4);
+    color: #fff;
+}
+
+.reaction-box.green {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    color: #fff;
+    border: none;
+    box-shadow: 0 0 60px rgba(56, 239, 125, 0.5);
+    animation: pulse 0.3s ease-in-out infinite alternate;
+}
+
+.reaction-box.too-soon {
+    background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+    color: #fff;
+    border: none;
+    box-shadow: 0 0 40px rgba(238, 9, 121, 0.4);
+}
+
+.reaction-box.done {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    border: none;
+}
+
+.reaction-box .box-content {
+    text-align: center;
+    padding: 20px;
+}
+
+.reaction-box #box-message {
+    font-size: 1.3rem;
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+@keyframes pulse {
+    from {
+        transform: scale(1);
+    }
+    to {
+        transform: scale(1.02);
+    }
+}
+
+.reaction-controls {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.btn-reaction {
+    font-size: 1.1rem;
+    padding: 12px 40px;
+    border-radius: 30px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn-reaction:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+}
+
+.btn-reaction.hidden {
+    display: none;
+}
+
+.round-results {
+    max-width: 500px;
+    margin: 0 auto 30px;
+    background: rgba(255,255,255,0.15);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 15px;
+    padding: 20px;
+    color: #fff;
+}
+
+.round-results.hidden {
+    display: none;
+}
+
+.round-results h3 {
+    margin: 0 0 15px 0;
+    font-size: 1.1rem;
+    text-align: center;
+    opacity: 0.9;
+}
+
+.results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.result-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 8px;
+    font-size: 0.95rem;
+}
+
+.result-round {
+    opacity: 0.8;
+}
+
+.result-time {
+    font-weight: 600;
+    font-family: 'Courier New', monospace;
+}
+
+.final-result {
+    max-width: 500px;
+    margin: 0 auto;
+    text-align: center;
+    background: rgba(255,255,255,0.95);
+    border-radius: 25px;
+    padding: 40px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+
+.final-result.hidden {
+    display: none;
+}
+
+.final-result h2 {
+    margin: 0 0 20px 0;
+    color: #333;
+}
+
+.final-score {
+    font-size: 4rem;
+    font-weight: 700;
+    color: #667eea;
+    margin-bottom: 10px;
+    line-height: 1;
+}
+
+.final-score .score-unit {
+    font-size: 1.5rem;
+    color: #999;
+    font-weight: 400;
+}
+
+.final-rank {
+    font-size: 1.2rem;
+    color: #555;
+    margin-bottom: 25px;
+    font-weight: 500;
+}
+
+.final-result .btn {
+    font-size: 1rem;
+    padding: 12px 35px;
+    border-radius: 25px;
+}
+
+@media (max-width: 480px) {
+    .reaction-title {
+        font-size: 1.8rem;
+    }
+
+    .reaction-desc {
+        font-size: 0.9rem;
+        padding: 0 20px;
+    }
+
+    .reaction-stats {
+        flex-direction: column;
+        gap: 15px;
+        align-items: center;
+    }
+
+    .reaction-stats > div {
+        min-width: 200px;
+        padding: 15px 20px;
+    }
+
+    .reaction-box {
+        width: 320px;
+        height: 200px;
+    }
+
+    .final-result {
+        margin: 0 15px;
+        padding: 30px 20px;
+    }
+}
+
+.tabs {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 30px;
+}
+
+.tab-btn {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: #fff;
+    padding: 10px 30px;
+    border-radius: 25px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.tab-btn:hover {
+    background: rgba(255,255,255,0.25);
+}
+
+.tab-btn.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-color: transparent;
+    box-shadow: 0 4px 15px rgba(102,126,234,0.4);
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.duration-selector {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 25px;
+    color: #fff;
+    font-size: 1rem;
+}
+
+.duration-label {
+    font-weight: 600;
+}
+
+.duration-btn {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    padding: 8px 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.3s ease;
+}
+
+.duration-btn:hover {
+    background: rgba(255,255,255,0.25);
+}
+
+.duration-btn.active {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    border-color: transparent;
+    font-weight: 600;
+}
+
+.clickspeed-stats {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-bottom: 25px;
+    flex-wrap: wrap;
+}
+
+.clickspeed-stats .stat-item {
+    background: rgba(255,255,255,0.15);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 15px;
+    padding: 15px 25px;
+    text-align: center;
+    color: #fff;
+    min-width: 120px;
+}
+
+.clickspeed-stats .stat-label {
+    display: block;
+    font-size: 0.8rem;
+    opacity: 0.8;
+    margin-bottom: 5px;
+}
+
+.clickspeed-stats .stat-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    font-family: 'Courier New', monospace;
+}
+
+.clickspeed-stats .stat-unit {
+    font-size: 0.8rem;
+    opacity: 0.7;
+    margin-left: 2px;
+}
+
+.left-color {
+    color: #ff4444;
+}
+
+.right-color {
+    color: #44ff44;
+}
+
+.click-area {
+    width: 100%;
+    max-width: 600px;
+    height: 200px;
+    margin: 0 auto 25px;
+    background: rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px);
+    border: 2px dashed rgba(255,255,255,0.3);
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.click-area:hover {
+    background: rgba(255,255,255,0.15);
+}
+
+.click-area.active {
+    background: linear-gradient(135deg, rgba(255,68,68,0.2) 0%, rgba(68,255,68,0.2) 100%);
+    border-style: solid;
+    border-color: rgba(255,255,255,0.4);
+    animation: clickPulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes clickPulse {
+    from { transform: scale(1); }
+    to { transform: scale(1.01); }
+}
+
+.click-area #click-message {
+    color: #fff;
+    font-size: 1.2rem;
+    font-weight: 600;
+    pointer-events: none;
+}
+
+.click-area.active::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: repeating-linear-gradient(
+        45deg,
+        transparent,
+        transparent 10px,
+        rgba(255,255,255,0.03) 10px,
+        rgba(255,255,255,0.03) 20px
+    );
+    pointer-events: none;
+}
+
+.click-dot {
+    position: absolute;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    animation: dotFadeOut 1s ease-out forwards;
+    z-index: 10;
+}
+
+.click-dot.left {
+    background: radial-gradient(circle, #ff4444 0%, rgba(255, 68, 68, 0.8) 40%, rgba(255, 68, 68, 0) 70%);
+    box-shadow: 0 0 10px rgba(255, 68, 68, 0.6);
+}
+
+.click-dot.right {
+    background: radial-gradient(circle, #44ff44 0%, rgba(68, 255, 68, 0.8) 40%, rgba(68, 255, 68, 0) 70%);
+    box-shadow: 0 0 10px rgba(68, 255, 68, 0.6);
+}
+
+@keyframes dotFadeOut {
+    0% {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+    50% {
+        opacity: 0.8;
+        transform: translate(-50%, -50%) scale(1.5);
+    }
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(2.5);
+    }
+}
+
+.chart-container {
+    max-width: 750px;
+    margin: 0 auto 25px;
+    background: rgba(255,255,255,0.95);
+    border-radius: 20px;
+    padding: 25px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+}
+
+.chart-container h3 {
+    margin: 0 0 15px 0;
+    color: #333;
+    text-align: center;
+}
+
+#click-chart {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 10px;
+}
+
+.chart-legend {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    margin-top: 15px;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #555;
+    font-size: 0.9rem;
+}
+
+.legend-color {
+    display: inline-block;
+    width: 20px;
+    height: 4px;
+    border-radius: 2px;
+}
+
+.legend-color.left-color {
+    background: #ff4444;
+}
+
+.legend-color.right-color {
+    background: #44ff44;
+}
+
+.final-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.final-stat-item {
+    background: #f5f5f5;
+    border-radius: 12px;
+    padding: 15px;
+    text-align: center;
+}
+
+.final-stat-item.highlight {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+}
+
+.final-stat-item.highlight .final-stat-label,
+.final-stat-item.highlight .final-stat-value {
+    color: #fff;
+}
+
+.final-stat-label {
+    display: block;
+    font-size: 0.85rem;
+    color: #888;
+    margin-bottom: 5px;
+}
+
+.final-stat-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #333;
+    font-family: 'Courier New', monospace;
+}
+
+@media (max-width: 480px) {
+    .clickspeed-stats {
+        gap: 10px;
+    }
+
+    .clickspeed-stats .stat-item {
+        min-width: 80px;
+        padding: 10px 15px;
+    }
+
+    .clickspeed-stats .stat-value {
+        font-size: 1.3rem;
+    }
+
+    .click-area {
+        height: 150px;
+    }
+
+    .final-stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .tabs {
+        gap: 8px;
+    }
+
+    .tab-btn {
+        padding: 8px 20px;
+        font-size: 0.9rem;
+    }
+
+    .duration-selector {
+        flex-wrap: wrap;
+    }
+}

@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Session调试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #007bff;
+            font-size: 18px;
+        }
+        pre {
+            background-color: #282c34;
+            color: #abb2bf;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.warning {
+            background-color: #ffc107;
+            color: #333;
+        }
+        button.warning:hover {
+            background-color: #e0a800;
+        }
+        button.danger {
+            background-color: #dc3545;
+        }
+        button.danger:hover {
+            background-color: #c82333;
+        }
+        .cookie-info {
+            margin-top: 20px;
+        }
+        .cookie-item {
+            padding: 10px;
+            margin: 5px 0;
+            background-color: #e9ecef;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status.warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Session调试工具</h1>
+        
+        <div class="section">
+            <h2>操作按钮</h2>
+            <button onclick="checkSession()">检查Session状态</button>
+            <button onclick="checkUser()">检查用户信息</button>
+            <button onclick="testCredentials()">测试Credentials</button>
+            <button class="warning" onclick="showCookies()">显示Cookies</button>
+            <button class="danger" onclick="clearCookies()">清除Cookies</button>
+            <button class="danger" onclick="logout()">登出</button>
+        </div>
+
+        <div class="section">
+            <h2>结果输出</h2>
+            <pre id="output">点击上面的按钮开始调试...</pre>
+        </div>
+
+        <div class="section">
+            <h2>Cookies信息</h2>
+            <div id="cookies" class="cookie-info">
+                点击"显示Cookies"按钮查看cookies
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>浏览器信息</h2>
+            <pre id="browser-info"></pre>
+        </div>
+    </div>
+
+    <script>
+        // 显示浏览器信息
+        function showBrowserInfo() {
+            const info = {
+                userAgent: navigator.userAgent,
+                language: navigator.language,
+                cookieEnabled: navigator.cookieEnabled,
+                localStorage: typeof localStorage !== 'undefined',
+                sessionStorage: typeof sessionStorage !== 'undefined'
+            };
+            document.getElementById('browser-info').textContent = JSON.stringify(info, null, 2);
+        }
+
+        // 检查Session状态
+        async function checkSession() {
+            try {
+                const response = await fetch('/api/user', {
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                const data = {
+                    url: '/api/user',
+                    method: 'GET',
+                    credentials: 'include',
+                    status: response.status,
+                    statusText: response.statusText,
+                    ok: response.ok,
+                    headers: Object.fromEntries(response.headers.entries())
+                };
+
+                if (response.ok) {
+                    const user = await response.json();
+                    data.body = user;
+                    data.result = '成功 - 用户已登录';
+                } else {
+                    const error = await response.json();
+                    data.body = error;
+                    data.result = '失败 - 用户未登录或认证错误';
+                }
+
+                document.getElementById('output').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('output').textContent = '错误: ' + error.message;
+            }
+        }
+
+        // 检查用户信息
+        async function checkUser() {
+            try {
+                const response = await fetch('/api/user', {
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const user = await response.json();
+                    const info = {
+                        用户ID: user.id,
+                        用户名: user.username,
+                        邮箱: user.email,
+                        是否管理员: user.isAdmin,
+                        注册时间: user.createdAt
+                    };
+                    document.getElementById('output').textContent = JSON.stringify(info, null, 2);
+                } else {
+                    document.getElementById('output').textContent = '未登录或请求失败';
+                }
+            } catch (error) {
+                document.getElementById('output').textContent = '错误: ' + error.message;
+            }
+        }
+
+        // 测试不同的credentials设置
+        async function testCredentials() {
+            const tests = [
+                { name: 'credentials: include', config: { credentials: 'include' } },
+                { name: 'credentials: same-origin', config: { credentials: 'same-origin' } },
+                { name: 'credentials: omit', config: { credentials: 'omit' } },
+                { name: '无credentials', config: {} }
+            ];
+
+            const results = [];
+
+            for (const test of tests) {
+                try {
+                    const response = await fetch('/api/user', test.config);
+                    results.push({
+                        test: test.name,
+                        status: response.status,
+                        ok: response.ok
+                    });
+                } catch (error) {
+                    results.push({
+                        test: test.name,
+                        error: error.message
+                    });
+                }
+            }
+
+            document.getElementById('output').textContent = JSON.stringify(results, null, 2);
+        }
+
+        // 显示Cookies
+        function showCookies() {
+            const cookies = document.cookie;
+            if (cookies) {
+                const cookieArray = cookies.split(';').map(c => c.trim());
+                let html = '';
+                cookieArray.forEach(cookie => {
+                    html += `<div class="cookie-item">${escapeHtml(cookie)}</div>`;
+                });
+                document.getElementById('cookies').innerHTML = html;
+                
+                // 同时在输出框显示
+                const cookieObj = {};
+                cookieArray.forEach(cookie => {
+                    const [name, value] = cookie.split('=');
+                    cookieObj[name] = value;
+                });
+                document.getElementById('output').textContent = JSON.stringify(cookieObj, null, 2);
+            } else {
+                document.getElementById('cookies').innerHTML = '<p>没有Cookies</p>';
+                document.getElementById('output').textContent = '没有Cookies';
+            }
+        }
+
+        // 清除Cookies
+        function clearCookies() {
+            const cookies = document.cookie.split(';');
+            
+            cookies.forEach(cookie => {
+                const eqPos = cookie.indexOf('=');
+                const name = eqPos > -1 ? cookie.substr(0, eqPos) : cookie;
+                document.cookie = name + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
+            });
+            
+            document.getElementById('cookies').innerHTML = '<p>Cookies已清除</p>';
+            document.getElementById('output').textContent = 'Cookies已清除';
+        }
+
+        // 登出
+        async function logout() {
+            try {
+                const response = await fetch('/api/logout', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    document.getElementById('output').textContent = '登出成功';
+                    clearCookies();
+                    setTimeout(() => {
+                        window.location.href = '/login';
+                    }, 1000);
+                } else {
+                    document.getElementById('output').textContent = '登出失败';
+                }
+            } catch (error) {
+                document.getElementById('output').textContent = '登出错误: ' + error.message;
+            }
+        }
+
+        // HTML转义
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 页面加载时显示浏览器信息
+        window.onload = function() {
+            showBrowserInfo();
+        };
+    </script>
+</body>
+</html>

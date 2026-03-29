@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>Session调试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 1000px;
+            margin: 0 auto;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .section {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+        }
+        .warning {
+            background-color: #fff3cd;
+            border-color: #ffeaa7;
+        }
+        .info {
+            background-color: #d1ecf1;
+            border-color: #bee5eb;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button.danger {
+            background: #dc3545;
+        }
+        button.danger:hover {
+            background: #c82333;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            border: 1px solid #dee2e6;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .log-entry {
+            padding: 5px;
+            margin: 2px 0;
+            border-left: 3px solid #007bff;
+            background: #f8f9fa;
+            padding-left: 10px;
+        }
+        .log-entry.error {
+            border-left-color: #dc3545;
+        }
+        .log-entry.success {
+            border-left-color: #28a745;
+        }
+        .log-entry.warning {
+            border-left-color: #ffc107;
+        }
+        #log-container {
+            max-height: 400px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            padding: 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Session调试工具</h1>
+    
+    <div class="container">
+        <h2>1. Cookie信息</h2>
+        <div id="cookie-info" class="section info">检查中...</div>
+        
+        <h2>2. Session文件信息</h2>
+        <div id="session-files" class="section info">检查中...</div>
+        
+        <h2>3. 测试操作</h2>
+        <div class="section">
+            <button onclick="testLogin()">测试登录</button>
+            <button onclick="testUserAPI()">测试用户API</button>
+            <button onclick="testAdminAPI()">测试管理面板API</button>
+            <button onclick="clearCookies()">清除Cookie</button>
+            <button onclick="refreshAll()">刷新所有信息</button>
+        </div>
+        
+        <h2>4. API测试结果</h2>
+        <div id="api-results"></div>
+        
+        <h2>5. 日志</h2>
+        <div id="log-container"></div>
+    </div>
+
+    <script>
+        // 日志功能
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('log-container');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            const time = new Date().toLocaleTimeString();
+            logEntry.innerHTML = `<strong>[${time}]</strong> ${message}`;
+            logContainer.insertBefore(logEntry, logContainer.firstChild);
+        }
+
+        // 显示Cookie信息
+        function displayCookieInfo() {
+            const cookies = document.cookie;
+            const cookieDiv = document.getElementById('cookie-info');
+            
+            if (!cookies) {
+                cookieDiv.innerHTML = '<strong>没有Cookie</strong><br>浏览器没有发送任何cookie';
+                cookieDiv.className = 'section error';
+                log('没有Cookie', 'error');
+                return;
+            }
+            
+            const cookieObj = {};
+            cookies.split(';').forEach(cookie => {
+                const [name, value] = cookie.trim().split('=');
+                cookieObj[name] = value;
+            });
+            
+            let html = '<strong>当前Cookie:</strong><br>';
+            html += '<pre>' + JSON.stringify(cookieObj, null, 2) + '</pre>';
+            
+            if (cookieObj['stcsession']) {
+                html += '<br><strong>Session ID:</strong> ' + cookieObj['stcsession'];
+                html += '<br><span class="success">✓ 找到session cookie</span>';
+                cookieDiv.className = 'section success';
+                log('找到session cookie: ' + cookieObj['stcsession'], 'success');
+            } else {
+                html += '<br><span class="error">✗ 没有找到session cookie</span>';
+                cookieDiv.className = 'section error';
+                log('没有找到session cookie', 'error');
+            }
+            
+            cookieDiv.innerHTML = html;
+        }
+
+        // 测试登录
+        async function testLogin() {
+            log('开始测试登录...', 'info');
+            
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        username: 'REDACTED_USER',
+                        password: '123456'
+                    })
+                });
+
+                const resultDiv = document.getElementById('api-results');
+                const data = await response.json();
+                
+                let html = '<div class="section">';
+                html += '<h3>登录API测试</h3>';
+                html += '<strong>状态:</strong> ' + response.status + ' ' + response.statusText + '<br>';
+                html += '<strong>成功:</strong> ' + response.ok + '<br>';
+                html += '<strong>响应:</strong><br>';
+                html += '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                
+                if (response.ok) {
+                    html += '<span class="success">✓ 登录成功</span>';
+                    log('登录成功: ' + JSON.stringify(data), 'success');
+                } else {
+                    html += '<span class="error">✗ 登录失败</span>';
+                    log('登录失败: ' + JSON.stringify(data), 'error');
+                }
+                
+                html += '</div>';
+                resultDiv.innerHTML = html;
+                
+                // 等待一下后检查cookie
+                setTimeout(() => {
+                    displayCookieInfo();
+                    refreshSessionFiles();
+                }, 500);
+                
+            } catch (error) {
+                log('登录测试错误: ' + error.message, 'error');
+                const resultDiv = document.getElementById('api-results');
+                resultDiv.innerHTML = '<div class="section error"><h3>登录API测试</h3><strong>错误:</strong> ' + error.message + '</div>';
+            }
+        }
+
+        // 测试用户API
+        async function testUserAPI() {
+            log('测试用户API...', 'info');
+            
+            try {
+                const response = await fetch('/api/user', {
+                    credentials: 'include'
+                });
+
+                const resultDiv = document.getElementById('api-results');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    let html = '<div class="section success">';
+                    html += '<h3>用户API测试</h3>';
+                    html += '<strong>状态:</strong> ' + response.status + '<br>';
+                    html += '<strong>用户信息:</strong><br>';
+                    html += '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                    html += '<span class="success">✓ Session有效</span>';
+                    html += '</div>';
+                    resultDiv.innerHTML = html;
+                    log('用户API成功: ' + data.username, 'success');
+                } else {
+                    let html = '<div class="section error">';
+                    html += '<h3>用户API测试</h3>';
+                    html += '<strong>状态:</strong> ' + response.status + '<br>';
+                    html += '<strong>错误:</strong> ' + await response.text();
+                    html += '<br><span class="error">✗ Session无效</span>';
+                    html += '</div>';
+                    resultDiv.innerHTML = html;
+                    log('用户API失败: ' + response.status, 'error');
+                }
+            } catch (error) {
+                log('用户API测试错误: ' + error.message, 'error');
+                const resultDiv = document.getElementById('api-results');
+                resultDiv.innerHTML = '<div class="section error"><h3>用户API测试</h3><strong>错误:</strong> ' + error.message + '</div>';
+            }
+        }
+
+        // 测试管理面板API
+        async function testAdminAPI() {
+            log('测试管理面板API...', 'info');
+            
+            try {
+                const response = await fetch('/api/invite-codes', {
+                    credentials: 'include'
+                });
+
+                const resultDiv = document.getElementById('api-results');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    let html = '<div class="section success">';
+                    html += '<h3>管理面板API测试</h3>';
+                    html += '<strong>状态:</strong> ' + response.status + '<br>';
+                    html += '<strong>邀请码数量:</strong> ' + (data.length || data.inviteCodes?.length || 0) + '<br>';
+                    html += '<span class="success">✓ 管理权限有效</span>';
+                    html += '</div>';
+                    resultDiv.innerHTML = html;
+                    log('管理API成功', 'success');
+                } else {
+                    let html = '<div class="section error">';
+                    html += '<h3>管理面板API测试</h3>';
+                    html += '<strong>状态:</strong> ' + response.status + '<br>';
+                    html += '<strong>错误:</strong> ' + await response.text();
+                    html += '<br><span class="error">✗ 没有管理权限</span>';
+                    html += '</div>';
+                    resultDiv.innerHTML = html;
+                    log('管理API失败: ' + response.status, 'error');
+                }
+            } catch (error) {
+                log('管理API测试错误: ' + error.message, 'error');
+                const resultDiv = document.getElementById('api-results');
+                resultDiv.innerHTML = '<div class="section error"><h3>管理面板API测试</h3><strong>错误:</strong> ' + error.message + '</div>';
+            }
+        }
+
+        // 清除Cookie
+        function clearCookies() {
+            log('清除Cookie...', 'warning');
+            document.cookie.split(';').forEach(cookie => {
+                const eqPos = cookie.indexOf('=');
+                const name = eqPos > -1 ? cookie.substr(0, eqPos) : cookie;
+                document.cookie = name + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
+            });
+            log('Cookie已清除', 'warning');
+            displayCookieInfo();
+        }
+
+        // 刷新所有信息
+        function refreshAll() {
+            log('刷新所有信息...', 'info');
+            displayCookieInfo();
+            refreshSessionFiles();
+        }
+
+        // 刷新Session文件信息
+        async function refreshSessionFiles() {
+            log('检查session文件...', 'info');
+            
+            try {
+                const response = await fetch('/api/debug/sessions', {
+                    credentials: 'include'
+                });
+
+                const sessionDiv = document.getElementById('session-files');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    let html = '<strong>Session文件信息:</strong><br>';
+                    html += '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                    
+                    if (data.currentSession) {
+                        html += '<br><span class="success">✓ 找到当前session</span>';
+                        sessionDiv.className = 'section success';
+                        log('找到当前session', 'success');
+                    } else {
+                        html += '<br><span class="warning">⚠ 没有找到当前session</span>';
+                        sessionDiv.className = 'section warning';
+                        log('没有找到当前session', 'warning');
+                    }
+                    
+                    sessionDiv.innerHTML = html;
+                } else {
+                    sessionDiv.innerHTML = '<strong>错误:</strong> ' + await response.text();
+                    sessionDiv.className = 'section error';
+                    log('无法获取session文件信息', 'error');
+                }
+            } catch (error) {
+                log('获取session文件信息错误: ' + error.message, 'error');
+                const sessionDiv = document.getElementById('session-files');
+                sessionDiv.innerHTML = '<strong>错误:</strong> ' + error.message;
+                sessionDiv.className = 'section error';
+            }
+        }
+
+        // 页面加载时执行
+        window.onload = function() {
+            log('页面加载完成', 'info');
+            displayCookieInfo();
+            refreshSessionFiles();
+        };
+    </script>
+</body>
+</html>

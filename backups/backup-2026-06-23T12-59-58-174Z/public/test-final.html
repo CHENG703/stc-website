@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>最终测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        pre {
+            background-color: #282c34;
+            color: #abb2bf;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.success {
+            background-color: #28a745;
+        }
+        button.success:hover {
+            background-color: #218838;
+        }
+        input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>管理面板最终测试</h1>
+        
+        <div class="section">
+            <h2>第一步：登录</h2>
+            <input type="text" id="username" placeholder="用户名" value="REDACTED_USER">
+            <input type="password" id="password" placeholder="密码" value="Admin@123456">
+            <button onclick="login()" class="success">登录</button>
+        </div>
+
+        <div class="section">
+            <h2>第二步：测试管理面板</h2>
+            <button onclick="testAdmin()">测试管理面板访问</button>
+        </div>
+
+        <div class="section">
+            <h2>测试结果</h2>
+            <div id="status"></div>
+        </div>
+
+        <div class="section">
+            <h2>详细信息</h2>
+            <pre id="details">点击按钮开始测试...</pre>
+        </div>
+    </div>
+
+    <script>
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showStatus('登录成功！', 'success');
+                    showDetails('登录响应:', data);
+                } else {
+                    showStatus('登录失败: ' + (data.error || '未知错误'), 'error');
+                    showDetails('登录失败:', data);
+                }
+            } catch (error) {
+                showStatus('登录错误: ' + error.message, 'error');
+                showDetails('登录错误:', error.message);
+            }
+        }
+        
+        async function testAdmin() {
+            try {
+                showStatus('正在测试管理面板...', 'info');
+                showDetails('开始测试管理面板访问...');
+                
+                const response = await fetch('/api/user', {
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const user = await response.json();
+                    showDetails('用户信息:', user);
+                    
+                    if (user.isAdmin) {
+                        showStatus('✅ 可以访问管理面板！', 'success');
+                        showDetails('管理员验证通过，用户名:', user.username);
+                        
+                        // 尝试访问管理面板
+                        setTimeout(() => {
+                            window.location.href = '/admin.html';
+                        }, 1000);
+                    } else {
+                        showStatus('❌ 权限不足，不是管理员', 'error');
+                        showDetails('用户不是管理员');
+                    }
+                } else {
+                    const error = await response.json();
+                    showStatus('❌ 未登录', 'error');
+                    showDetails('错误信息:', error);
+                }
+            } catch (error) {
+                showStatus('❌ 测试失败: ' + error.message, 'error');
+                showDetails('错误信息:', error.message);
+            }
+        }
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = 'status ' + type;
+            statusDiv.textContent = message;
+        }
+        
+        function showDetails(...messages) {
+            const detailsDiv = document.getElementById('details');
+            const currentDetails = detailsDiv.textContent;
+            detailsDiv.textContent = currentDetails + '\n' + messages.join(' ');
+        }
+    </script>
+</body>
+</html>

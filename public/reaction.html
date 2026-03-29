@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>反应力与手速测试 - STC任务网站</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/reaction.css">
+    <script src="js/lang.js"></script>
+</head>
+<body class="reaction-page">
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <a href="/home" data-lang="nav.brand">STC工会任务平台</a>
+            </div>
+            <ul class="nav-menu" id="navMenu">
+                <li><a href="/home" data-lang="nav.home">首页</a></li>
+                <li><a href="/about" data-lang="nav.about">关于我们</a></li>
+                <li><a href="/home#tasks" data-lang="nav.tasks">任务</a></li>
+                <li><a href="/reaction" class="active">测试</a></li>
+                <li><a href="/home#messages" data-lang="nav.messages">留言</a></li>
+                <li><button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">🌙</button></li>
+                <li id="nav-user"><a href="/login" data-lang="nav.login">登录</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <section class="reaction-container">
+            <div class="container">
+                <h1 class="reaction-title">⚡ 测试中心</h1>
+
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="switchTab('reaction')">反应力测试</button>
+                    <button class="tab-btn" onclick="switchTab('clickspeed')">手速测试</button>
+                </div>
+
+                <div id="reaction-tab" class="tab-content active">
+                    <p class="reaction-desc">点击「开始」后，方框会在 3~10 秒内随机变绿，看到绿色后立即点击停止。共 5 轮，取平均值。</p>
+                    
+                    <div class="reaction-stats">
+                        <div class="stat-rounds">
+                            <span class="stat-label">轮次</span>
+                            <span class="stat-value" id="current-round">0</span>
+                            <span class="stat-sep">/</span>
+                            <span class="stat-total">5</span>
+                        </div>
+                        <div class="stat-average">
+                            <span class="stat-label">平均反应时间</span>
+                            <span class="stat-value" id="avg-time">--</span>
+                            <span class="stat-unit">ms</span>
+                        </div>
+                    </div>
+
+                    <div id="reaction-box" class="reaction-box waiting" onclick="handleBoxClick()">
+                        <div class="box-content">
+                            <span id="box-message">点击下方「开始」按钮</span>
+                        </div>
+                    </div>
+
+                    <div class="reaction-controls">
+                        <button id="start-btn" class="btn btn-primary btn-reaction" onclick="startTest()">开始</button>
+                        <button id="reset-btn" class="btn btn-secondary btn-reaction hidden" onclick="resetTest()">重置</button>
+                    </div>
+
+                    <div id="round-results" class="round-results hidden">
+                        <h3>各轮成绩</h3>
+                        <div id="results-list" class="results-list"></div>
+                    </div>
+
+                    <div id="final-result" class="final-result hidden">
+                        <h2>测试完成！</h2>
+                        <div class="final-score">
+                            <span id="final-avg">0</span>
+                            <span class="score-unit">ms</span>
+                        </div>
+                        <p id="final-rank" class="final-rank"></p>
+                        <button class="btn btn-primary" onclick="resetTest()">再测一次</button>
+                    </div>
+                </div>
+
+                <div id="clickspeed-tab" class="tab-content">
+                    <p class="reaction-desc">选择测试时长，在区域内快速点击鼠标（左键红色，右键绿色），系统将记录每秒点击次数并绘制曲线图。</p>
+                    
+                    <div class="duration-selector">
+                        <span class="duration-label">选择时长：</span>
+                        <button class="duration-btn active" data-duration="10" onclick="setDuration(10)">10秒</button>
+                        <button class="duration-btn" data-duration="30" onclick="setDuration(30)">30秒</button>
+                        <button class="duration-btn" data-duration="60" onclick="setDuration(60)">1分钟</button>
+                    </div>
+
+                    <div class="clickspeed-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">剩余时间</span>
+                            <span class="stat-value" id="remaining-time">--</span>
+                            <span class="stat-unit">s</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">左键次数</span>
+                            <span class="stat-value left-color" id="left-clicks">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">右键次数</span>
+                            <span class="stat-value right-color" id="right-clicks">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">总CPS</span>
+                            <span class="stat-value" id="total-cps">0</span>
+                            <span class="stat-unit">次/秒</span>
+                        </div>
+                    </div>
+
+                    <div id="click-area" class="click-area" onmousedown="handleClick(event)">
+                        <span id="click-message">点击「开始测试」按钮</span>
+                    </div>
+
+                    <div class="reaction-controls">
+                        <button id="start-clickspeed-btn" class="btn btn-primary btn-reaction" onclick="startClickSpeedTest()">开始测试</button>
+                        <button id="reset-clickspeed-btn" class="btn btn-secondary btn-reaction hidden" onclick="resetClickSpeedTest()">重置</button>
+                    </div>
+
+                    <div id="chart-container" class="chart-container hidden">
+                        <h3>点击频率曲线图</h3>
+                        <canvas id="click-chart" width="700" height="250"></canvas>
+                        <div class="chart-legend">
+                            <span class="legend-item"><span class="legend-color left-color"></span>左键</span>
+                            <span class="legend-item"><span class="legend-color right-color"></span>右键</span>
+                        </div>
+                    </div>
+
+                    <div id="clickspeed-result" class="final-result hidden">
+                        <h2>测试完成！</h2>
+                        <div class="final-stats-grid">
+                            <div class="final-stat-item">
+                                <span class="final-stat-label">总点击</span>
+                                <span class="final-stat-value" id="final-total-clicks">0</span>
+                            </div>
+                            <div class="final-stat-item">
+                                <span class="final-stat-label">左键 CPS</span>
+                                <span class="final-stat-value left-color" id="final-left-cps">0</span>
+                            </div>
+                            <div class="final-stat-item">
+                                <span class="final-stat-label">右键 CPS</span>
+                                <span class="final-stat-value right-color" id="final-right-cps">0</span>
+                            </div>
+                            <div class="final-stat-item highlight">
+                                <span class="final-stat-label">总 CPS</span>
+                                <span class="final-stat-value" id="final-total-cps">0</span>
+                            </div>
+                        </div>
+                        <p id="clickspeed-rank" class="final-rank"></p>
+                        <button class="btn btn-primary" onclick="resetClickSpeedTest()">再测一次</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>
+                &copy; 2026 STC任务网站. All rights reserved. | 
+                <a href="#" onclick="showTerms('service')">使用条款</a> | 
+                <a href="#" onclick="showTerms('privacy')">隐私协议</a>
+            </p>
+            <p class="footer-note">一切解释权归STC团队</p>
+        </div>
+    </footer>
+
+    <div class="copyright-watermark">© 2025-2026 STC 版权所有</div>
+
+    <script src="js/main.js"></script>
+    <script src="js/reaction.js"></script>
+    <script src="js/clickspeed.js"></script>
+    <script>
+        function showTerms(type) {
+            window.open('/terms.html?type=' + type, 'terms', 'width=800,height=600,scrollbars=yes,resizable=yes');
+        }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            if (tab === 'reaction') {
+                document.querySelectorAll('.tab-btn')[0].classList.add('active');
+                document.getElementById('reaction-tab').classList.add('active');
+            } else {
+                document.querySelectorAll('.tab-btn')[1].classList.add('active');
+                document.getElementById('clickspeed-tab').classList.add('active');
+            }
+        }
+    </script>
+</body>
+</html>

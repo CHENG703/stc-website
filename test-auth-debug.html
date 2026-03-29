@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>认证调试 - STC网站</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .test-result { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
+        .success { background: #d4edda; border-color: #c3e6cb; }
+        .error { background: #f8d7da; border-color: #f5c6cb; }
+        .info { background: #d1ecf1; border-color: #bee5eb; }
+        button { margin: 5px; padding: 10px 20px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>认证状态调试</h1>
+    
+    <div id='results'></div>
+    
+    <button onclick='testAuth()'>测试认证状态</button>
+    <button onclick='showCookies()'>显示Cookies</button>
+    <button onclick='testFetchWithCredentials()'>测试带凭证的Fetch</button>
+    <button onclick='testFetchWithoutCredentials()'>测试不带凭证的Fetch</button>
+    
+    <script>
+        async function testAuth() {
+            const results = document.getElementById('results');
+            results.innerHTML = '<div class="info">正在测试认证状态...</div>';
+            
+            try {
+                const response = await fetch('/api/user', {
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    results.innerHTML += '<div class="success">✓ 认证成功</div>';
+                    results.innerHTML += '<div class="info">用户信息: ' + JSON.stringify(data) + '</div>';
+                } else {
+                    results.innerHTML += '<div class="error">✗ 认证失败: ' + (data.error || '未知错误') + '</div>';
+                }
+            } catch (error) {
+                results.innerHTML += '<div class="error">✗ 请求错误: ' + error.message + '</div>';
+            }
+        }
+        
+        function showCookies() {
+            const results = document.getElementById('results');
+            results.innerHTML += '<div class="info">Cookies: ' + document.cookie + '</div>';
+            results.innerHTML += '<div class="info">Cookie详细: ' + JSON.stringify(document.cookie) + '</div>';
+        }
+        
+        async function testFetchWithCredentials() {
+            const results = document.getElementById('results');
+            results.innerHTML += '<div class="info">测试带credentials: include的请求...</div>';
+            
+            try {
+                const response = await fetch('/api/user', {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                results.innerHTML += '<div class="info">状态码: ' + response.status + '</div>';
+                results.innerHTML += '<div class="info">响应头: ' + JSON.stringify([...response.headers.entries()]) + '</div>';
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    results.innerHTML += '<div class="success">✓ 成功: ' + JSON.stringify(data) + '</div>';
+                } else {
+                    const error = await response.json();
+                    results.innerHTML += '<div class="error">✗ 失败: ' + JSON.stringify(error) + '</div>';
+                }
+            } catch (error) {
+                results.innerHTML += '<div class="error">✗ 错误: ' + error.message + '</div>';
+            }
+        }
+        
+        async function testFetchWithoutCredentials() {
+            const results = document.getElementById('results');
+            results.innerHTML += '<div class="info">测试不带credentials的请求...</div>';
+            
+            try {
+                const response = await fetch('/api/user', {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                results.innerHTML += '<div class="info">状态码: ' + response.status + '</div>';
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    results.innerHTML += '<div class="success">✓ 成功: ' + JSON.stringify(data) + '</div>';
+                } else {
+                    const error = await response.json();
+                    results.innerHTML += '<div class="error">✗ 失败: ' + JSON.stringify(error) + '</div>';
+                }
+            } catch (error) {
+                results.innerHTML += '<div class="error">✗ 错误: ' + error.message + '</div>';
+            }
+        }
+        
+        // 页面加载时自动测试
+        window.addEventListener('DOMContentLoaded', function() {
+            testAuth();
+            showCookies();
+        });
+    </script>
+</body>
+</html>

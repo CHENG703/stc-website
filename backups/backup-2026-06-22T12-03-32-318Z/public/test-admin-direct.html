@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>直接访问管理面板测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        pre {
+            background-color: #282c34;
+            color: #abb2bf;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.success {
+            background-color: #28a745;
+        }
+        button.danger {
+            background-color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>管理面板直接访问测试</h1>
+        
+        <div class="section">
+            <h2>测试步骤</h2>
+            <ol>
+                <li>确保你已经登录（使用之前的测试页面登录）</li>
+                <li>点击下面的按钮检查当前登录状态</li>
+                <li>如果已登录，点击"访问管理面板"按钮</li>
+            </ol>
+        </div>
+
+        <div class="section">
+            <h2>操作按钮</h2>
+            <button onclick="checkStatus()">检查登录状态</button>
+            <button onclick="goToAdmin()" class="success">访问管理面板</button>
+            <button onclick="goToTestLogin()" class="danger">去登录页面</button>
+        </div>
+
+        <div class="section">
+            <h2>状态信息</h2>
+            <pre id="status-info">点击按钮查看状态...</pre>
+        </div>
+
+        <div class="section">
+            <h2>管理面板脚本测试</h2>
+            <button onclick="testAdminJS()">测试admin.js逻辑</button>
+            <pre id="admin-js-test">点击按钮测试admin.js逻辑...</pre>
+        </div>
+    </div>
+
+    <script>
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/user', {
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const user = await response.json();
+                    document.getElementById('status-info').innerHTML = 
+                        '<span style="color: green;">✓ 已登录</span>\n' +
+                        '用户名: ' + user.username + '\n' +
+                        '管理员: ' + (user.isAdmin ? '是' : '否') + '\n' +
+                        '超级管理员: ' + (user.isSuperAdmin ? '是' : '否');
+                } else {
+                    document.getElementById('status-info').innerHTML = 
+                        '<span style="color: red;">✗ 未登录</span>\n' +
+                        '请先登录';
+                }
+            } catch (error) {
+                document.getElementById('status-info').innerHTML = 
+                    '<span style="color: red;">✗ 错误: ' + error.message + '</span>';
+            }
+        }
+
+        function goToAdmin() {
+            window.location.href = '/admin.html';
+        }
+
+        function goToTestLogin() {
+            window.location.href = '/test-full-login.html';
+        }
+
+        async function testAdminJS() {
+            const result = [];
+            
+            try {
+                // 模拟admin.js中的fetchWithAuth函数
+                const options = { credentials: 'include' };
+                const response = await fetch('/api/user', options);
+                
+                result.push({
+                    step: '1. fetchWithAuth调用',
+                    status: response.status,
+                    ok: response.ok
+                });
+                
+                if (response.ok) {
+                    const user = await response.json();
+                    result.push({
+                        step: '2. 用户信息获取成功',
+                        username: user.username,
+                        isAdmin: user.isAdmin
+                    });
+                    
+                    if (!user.isAdmin) {
+                        result.push({
+                            step: '3. 权限检查',
+                            result: '不是管理员，应该跳转到用户中心'
+                        });
+                    } else {
+                        result.push({
+                            step: '3. 权限检查',
+                            result: '是管理员，可以访问管理面板'
+                        });
+                        
+                        if (user.username === 'REDACTED_USER') {
+                            result.push({
+                                step: '4. 超级管理员检查',
+                                result: '是超级管理员，显示所有功能'
+                            });
+                        } else {
+                            result.push({
+                                step: '4. 超级管理员检查',
+                                result: '普通管理员，隐藏部分功能'
+                            });
+                        }
+                    }
+                } else {
+                    result.push({
+                        step: '2. 用户信息获取失败',
+                        error: '未登录或认证失败'
+                    });
+                }
+            } catch (error) {
+                result.push({
+                    step: '错误',
+                    error: error.message
+                });
+            }
+            
+            document.getElementById('admin-js-test').textContent = JSON.stringify(result, null, 2);
+        }
+
+        // 页面加载时自动检查状态
+        window.onload = function() {
+            checkStatus();
+        };
+    </script>
+</body>
+</html>

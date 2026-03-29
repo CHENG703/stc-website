@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>管理面板 - STC网站</title>
+    <meta name='robots' content='noindex, nofollow, noarchive, nosnippet, noimageindex'>
+    <meta name='googlebot' content='noindex, nofollow'>
+    <link rel='stylesheet' href='css/style.css'>
+</head>
+<body>
+    <nav class='navbar'>
+        <div class='container'>
+            <div class='nav-brand'>
+                <a href='/'>STC工会任务平台</a>
+            </div>
+            <ul class='nav-menu'>
+                <li><a href='/'>首页</a></li>
+                <li><a href='/about'>关于我们</a></li>
+                <li><a href='/user'>用户中心</a></li>
+                <li><a href='/admin' class='active'>管理面板</a></li>
+                <li><a href='#' onclick='logout()'>登出</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <div class='container'>
+            <div class='admin-panel'>
+                <h2>管理面板</h2>
+                
+                <div id='login-status' class='section'>
+                    <h3>登录状态</h3>
+                    <div id='login-status-content'>检查中...</div>
+                </div>
+
+                <div class='admin-section'>
+                    <h3>邀请码管理</h3>
+                    <button onclick='generateInviteCode()' class='btn btn-primary'>生成新邀请码</button>
+                    <button onclick='loadInviteCodes()' class='btn btn-secondary'>刷新列表</button>
+                    
+                    <div id='invite-codes-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
+                <div class='admin-section' id='members-section'>
+                    <h3>成员管理</h3>
+                    <button onclick='loadMembers()' class='btn btn-secondary'>刷新成员列表</button>
+                    
+                    <div id='members-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
+                <div class='admin-section' id='tasks-section'>
+                    <h3>任务管理</h3>
+                    <button onclick='loadTasks()' class='btn btn-secondary'>刷新任务列表</button>
+
+                    <div id='tasks-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
+                <div class='admin-section' id='messages-section'>
+                    <h3>留言管理</h3>
+                    <button onclick='loadMessages()' class='btn btn-secondary'>刷新留言列表</button>
+
+                    <div id='messages-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
+                <div class='admin-section' id='accounts-section'>
+                    <h3>账号管理</h3>
+                    <div id='accounts-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
+                <div class='admin-section' id='avatar-review-section'>
+                    <h3>头像审核</h3>
+                    <button onclick='loadPendingAvatars()' class='btn btn-secondary'>刷新待审核头像</button>
+                    
+                    <div id='pending-avatars-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>
+                &copy; 2026 STC任务网站. All rights reserved. | 
+                <a href="#" onclick="showTerms('service')">使用条款</a> | 
+                <a href="#" onclick="showTerms('privacy')">隐私协议</a>
+            </p>
+            <p class="footer-note">一切解释权归STC团队</p>
+        </div>
+    </footer>
+
+    <script src="js/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STC工会 - 介绍</title>
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+    <link rel="stylesheet" href="css/style.css">
+    <script src="js/lang.js"></script>
+    <style>
+        /* 关于我们页面专用 - 清爽蓝白背景 */
+        body.about-page {
+            background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 50%, #ffffff 100%);
+            min-height: 100vh;
+        }
+        body.about-page .navbar {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(15px);
+            border-bottom: 1px solid rgba(14, 165, 233, 0.15);
+        }
+        body.about-page .navbar a {
+            color: #0c4a6e;
+        }
+        body.about-page .navbar a.active {
+            color: #0284c7;
+        }
+        body.about-page .nav-brand a {
+            color: #0284c7;
+            font-weight: 700;
+        }
+        body.about-page .section-title {
+            color: #0c4a6e;
+        }
+        body.about-page .about-card {
+            background: rgba(255, 255, 255, 0.7);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+        }
+        body.about-page .about-card h3 {
+            color: #0c4a6e;
+        }
+        body.about-page .about-card p {
+            color: #475569;
+        }
+        body.about-page .feature-card {
+            background: rgba(255, 255, 255, 0.7);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+        }
+        body.about-page .feature-card h3 {
+            color: #0c4a6e;
+        }
+        body.about-page .feature-card p {
+            color: #475569;
+        }
+        body.about-page .team-card {
+            background: rgba(255, 255, 255, 0.7);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+        }
+        body.about-page .team-card h3 {
+            color: #0c4a6e;
+        }
+        body.about-page .team-card .team-desc {
+            color: #475569;
+        }
+        body.about-page .stat-card {
+            background: rgba(255, 255, 255, 0.7);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+        }
+        body.about-page .stat-card .stat-label {
+            color: #475569;
+        }
+        body.about-page .footer {
+            background: rgba(255, 255, 255, 0.8);
+            color: #475569;
+            border-top: 1px solid rgba(14, 165, 233, 0.15);
+        }
+        
+        /* 公告区域 */
+        .announcement-section {
+            padding: 2rem 0;
+            background: linear-gradient(135deg, rgba(14, 165, 233, 0.08) 0%, rgba(56, 189, 248, 0.05) 100%);
+        }
+        .announcement-box {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+            border-radius: 16px;
+            padding: 1.5rem 2rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            box-shadow: 0 4px 20px rgba(14, 165, 233, 0.1);
+        }
+        .announcement-icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+        .announcement-content {
+            flex: 1;
+        }
+        .announcement-content h3 {
+            color: #0c4a6e;
+            font-size: 1.1rem;
+            margin: 0 0 0.25rem;
+            font-weight: 600;
+        }
+        .announcement-content p {
+            color: #475569;
+            font-size: 0.95rem;
+            margin: 0;
+            line-height: 1.5;
+        }
+        .announcement-date {
+            color: #94a3b8;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+        }
+        
+        /* 团队成员新样式 */
+        .team-section-new {
+            padding: 4rem 0;
+        }
+        .team-section-new .section-title {
+            margin-bottom: 1.5rem;
+        }
+        .team-section-new .section-desc {
+            color: #475569;
+            font-size: 1rem;
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+        .team-grid-new {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 1.5rem;
+        }
+        .team-card-new {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(14, 165, 233, 0.15);
+            border-radius: 20px;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            transition: all 0.4s;
+        }
+        .team-card-new:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(14, 165, 233, 0.15);
+            border-color: rgba(14, 165, 233, 0.3);
+        }
+        .team-card-new .team-avatar-img {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin: 0 auto 1rem;
+            border: 3px solid rgba(14, 165, 233, 0.2);
+            transition: all 0.3s;
+        }
+        .team-card-new:hover .team-avatar-img {
+            border-color: rgba(14, 165, 233, 0.5);
+            transform: scale(1.05);
+        }
+        .team-card-new .team-avatar-placeholder {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #e0f2fe, #bae6fd);
+            margin: 0 auto 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            border: 3px solid rgba(14, 165, 233, 0.2);
+        }
+        .team-card-new h3 {
+            color: #0c4a6e;
+            font-size: 1.15rem;
+            margin: 0 0 0.5rem;
+            font-weight: 600;
+        }
+        .team-card-new .team-role-new {
+            color: #64748b;
+            font-size: 0.9rem;
+            margin: 0 0 1rem;
+        }
+        .team-card-new .team-divider {
+            width: 40px;
+            height: 2px;
+            background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+            margin: 0 auto 1rem;
+            border-radius: 2px;
+        }
+        .team-card-new .team-desc-new {
+            color: #94a3b8;
+            font-size: 0.85rem;
+            margin: 0;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body class="about-page">
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <a href="/home">STC</a>
+            </div>
+            <ul class="nav-menu" id="navMenu">
+                <li><a href="/home" data-lang="nav.home">首页</a></li>
+                <li><a href="/about" class="active" data-lang="nav.about">关于我们</a></li>
+                <li><a href="/home#tasks" data-lang="nav.tasks">任务</a></li>
+                <li><a href="/reaction">测试</a></li>
+                <li><a href="/home#messages" data-lang="nav.messages">留言</a></li>
+                <li><button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">🌙</button></li>
+                <li id="nav-user"><a href="/login" data-lang="nav.login">登录</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <section class="about-hero">
+            <div class="bubble"></div>
+            <div class="bubble"></div>
+            <div class="bubble"></div>
+            <div class="bubble"></div>
+            <div class="bubble"></div>
+            <div class="container">
+                <div class="about-hero-content">
+                    <div class="hero-icon">⛏️</div>
+                    <h1>STC工会</h1>
+                    <p class="hero-subtitle">一个充满激情的Minecraft游戏团队</p>
+                    <div class="hero-timer">
+                        <span id="union-years">0</span> 年 <span id="union-days">0</span> 天
+                    </div>
+                    <div class="hero-badges">
+                        <span class="badge">🎮 Minecraft</span>
+                        <span class="badge">🏗️ 建筑团队</span>
+                        <span class="badge">⚡ 生电玩法</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="announcement-section">
+            <div class="container">
+                <div class="announcement-box">
+                    <div class="announcement-icon">📢</div>
+                    <div class="announcement-content">
+                        <h3>最新公告</h3>
+                        <p>STC工会正在招募新成员！欢迎热爱Minecraft的玩家加入我们，一起创造精彩世界。</p>
+                    </div>
+                    <div class="announcement-date">2025-01-24</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="about-section">
+            <div class="container">
+                <h2 class="section-title">关于我们</h2>
+                <div class="about-content">
+                    <div class="about-card">
+                        <div class="card-icon">🌟</div>
+                        <h3>团队简介</h3>
+                        <p>STC工会成立于2025年1月24日，是一个专注于Minecraft游戏的玩家团队。我们致力于创造精彩的游戏体验，无论是建筑创作、红石科技还是生存冒险，都有着丰富的经验和热情。</p>
+                    </div>
+                    <div class="about-card">
+                        <div class="card-icon">🎯</div>
+                        <h3>我们的目标</h3>
+                        <p>打造一个友好、团结的游戏社区，让每一位成员都能在Minecraft的世界中找到属于自己的乐趣。我们追求创新与品质，不断挑战自我，创造更多精彩作品。</p>
+                    </div>
+                    <div class="about-card">
+                        <div class="card-icon">💎</div>
+                        <h3>核心价值观</h3>
+                        <p>团结协作、勇于创新、追求卓越、友好互助。我们相信，每一个成员都是团队的重要组成部分，只有齐心协力才能创造奇迹。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="features-section">
+            <div class="container">
+                <h2 class="section-title">特色玩法</h2>
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">🏗️</div>
+                        <h3>建筑创作</h3>
+                        <p>从精致的小屋到宏伟的城堡，我们的建筑师们用方块创造出无数令人惊叹的作品。</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">⚙️</div>
+                        <h3>红石科技</h3>
+                        <p>复杂的红石电路、自动化农场、精密的机械装置，展示科技的魅力。</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">⚡</div>
+                        <h3>生电玩法</h3>
+                        <p>高效的生存电路、物品分类系统、自动工厂，让生存变得更加有趣。</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🌍</div>
+                        <h3>生存冒险</h3>
+                        <p>探索未知的世界，挑战强大的怪物，收集珍贵的资源，体验最纯粹的生存乐趣。</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🎨</div>
+                        <h3>像素艺术</h3>
+                        <p>用方块绘制精美图案，将创意转化为视觉艺术，展现无限想象力。</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🏆</div>
+                        <h3>团队活动</h3>
+                        <p>定期举办建筑比赛、生存挑战等活动，增进成员之间的友谊，共同成长。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="team-section-new">
+            <div class="container">
+                <h2 class="section-title">团队</h2>
+                <p class="section-desc">STC 致力于稳定、友好的生存与建筑体验，让每一位成员都能享受Minecraft的乐趣。</p>
+                <div class="team-grid-new">
+                    <div class="team-card-new">
+                        <img src="/b_4a30411ebda3031d259ea08b03d4c9b7.jpg" alt="世纪城awa" class="team-avatar-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="team-avatar-placeholder" style="display:none">👑</div>
+                        <h3>世纪城awa</h3>
+                        <p class="team-role-new">创始人 / 超级管理员</p>
+                        <div class="team-divider"></div>
+                        <p class="team-desc-new">工会的创立者</p>
+                    </div>
+                    <div class="team-card-new">
+                        <img src="/b_41905953ae4fc633db59f8a258be1c9f.jpg" alt="却续Amc" class="team-avatar-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="team-avatar-placeholder" style="display:none">�</div>
+                        <h3>却续Amc</h3>
+                        <p class="team-role-new">会长</p>
+                        <div class="team-divider"></div>
+                        <p class="team-desc-new">工会领导者</p>
+                    </div>
+                    <div class="team-card-new">
+                        <img src="/b_ad4a395192fb9eec76b2abeef4d15e2e.jpg" alt="陈某入" class="team-avatar-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="team-avatar-placeholder" style="display:none">🛡️</div>
+                        <h3>陈某入</h3>
+                        <p class="team-role-new">副会长</p>
+                        <div class="team-divider"></div>
+                        <p class="team-desc-new">协助会长管理工会</p>
+                    </div>
+                    <div class="team-card-new">
+                        <img src="/b_e446ee7b115a5fc20455e8fb8bc26337.jpg" alt="mozhilou" class="team-avatar-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="team-avatar-placeholder" style="display:none">🏗️</div>
+                        <h3>mozhilou</h3>
+                        <p class="team-role-new">建筑师 / 红石工程师</p>
+                        <div class="team-divider"></div>
+                        <p class="team-desc-new">负责建筑与红石系统</p>
+                    </div>
+                    <div class="team-card-new">
+                        <img src="/b_e6b04810dabef494ffa882668cdd0848.png" alt="mc_Alice" class="team-avatar-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="team-avatar-placeholder" style="display:none">⚙️</div>
+                        <h3>mc_Alice</h3>
+                        <p class="team-role-new">红石工程师 / 建筑师</p>
+                        <div class="team-divider"></div>
+                        <p class="team-desc-new">负责红石与建筑创作</p>
+                    </div>
+                    <div class="team-card-new">
+                        <img src="/b_bf35c9bb43c490a2c0528bc19582b14b.jpg" alt="ohmlni007" class="team-avatar-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="team-avatar-placeholder" style="display:none">🐠</div>
+                        <h3>ohmlni007</h3>
+                        <p class="team-role-new">成员</p>
+                        <div class="team-divider"></div>
+                        <p class="team-desc-new">潜水</p>
+                    </div>
+                    <div class="team-card-new" onclick="window.location.href='/members'" style="cursor: pointer;">
+                        <div class="team-avatar-placeholder">👥</div>
+                        <h3>成员们</h3>
+                        <p class="team-role-new">核心力量</p>
+                        <div class="team-divider"></div>
+                        <p class="team-desc-new">点击查看完整成员列表 →</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="stats-section">
+            <div class="container">
+                <h2 class="section-title">团队数据</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-members">0</div>
+                        <div class="stat-label">团队成员</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-projects">0</div>
+                        <div class="stat-label">完成项目</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-builds">0</div>
+                        <div class="stat-label">建筑作品</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-events">0</div>
+                        <div class="stat-label">举办活动</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="gallery-section">
+            <div class="container">
+                <h2 class="section-title">精彩瞬间</h2>
+                <div class="gallery-grid">
+                    <div class="gallery-item">
+                        <img src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=Minecraft%20epic%20castle%20build%20with%20redstone%20lighting%2C%20medieval%20style%2C%20sunset%20lighting&image_size=landscape_16_9" alt="城堡建筑">
+                        <div class="gallery-overlay">宏伟城堡</div>
+                    </div>
+                    <div class="gallery-item">
+                        <img src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=Minecraft%20futuristic%20city%20with%20modern%20buildings%2C%20neon%20lights%2C%20night%20scene&image_size=landscape_16_9" alt="未来城市">
+                        <div class="gallery-overlay">未来都市</div>
+                    </div>
+                    <div class="gallery-item">
+                        <img src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=Minecraft%20redstone%20factory%20with%20complex%20circuits%2C%20industrial%20style&image_size=landscape_16_9" alt="红石工厂">
+                        <div class="gallery-overlay">红石工厂</div>
+                    </div>
+                    <div class="gallery-item">
+                        <img src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=Minecraft%20beautiful%20nature%20landscape%20with%20mountains%20and%20lake%2C%20sunrise&image_size=landscape_16_9" alt="自然景观">
+                        <div class="gallery-overlay">自然景观</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="join-section">
+            <div class="container">
+                <h2 class="section-title">加入我们</h2>
+                <div class="join-content">
+                    <p>如果你热爱Minecraft，有创意有热情，欢迎加入STC工会！我们期待你的到来，一起创造更多精彩！</p>
+                    <div class="join-buttons">
+                    <a href="https://qm.qq.com/q/3NATk5HUac" target="_blank" rel="noopener noreferrer" class="btn btn-primary">加入QQ群</a>
+                    <a href="/login" class="btn btn-secondary">登录账号</a>
+                </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>
+                &copy; 2025-2026 STC工会. All rights reserved. | 
+                <a href="#" onclick="showTerms('service')">使用条款</a> | 
+                <a href="#" onclick="showTerms('privacy')">隐私协议</a>
+            </p>
+            <p class="footer-note">一切解释权归STC团队</p>
+        </div>
+    </footer>
+
+    <div class="copyright-watermark">© 2025-2026 STC 版权所有</div>
+
+    <script src="js/main.js"></script>
+    <script>
+        function updateUnionTimer() {
+            const startDate = new Date('2025-01-24');
+            const now = new Date();
+            const diffTime = now - startDate;
+            const totalDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            const years = Math.floor(totalDays / 365);
+            const days = totalDays % 365;
+            
+            document.getElementById('union-years').textContent = years;
+            document.getElementById('union-days').textContent = days;
+        }
+        
+        updateUnionTimer();
+        
+        const stats = [
+            { id: 'stat-members', value: 50, duration: 2000 },
+            { id: 'stat-projects', value: 20, duration: 2000 },
+            { id: 'stat-builds', value: 100, duration: 2000 },
+            { id: 'stat-events', value: 15, duration: 2000 }
+        ];
+        
+        function animateNumber(id, endValue, duration) {
+            const element = document.getElementById(id);
+            if (!element) return;
+            
+            let startValue = 0;
+            const startTime = performance.now();
+            
+            function update(currentTime) {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                const easeOutQuart = 1 - Math.pow(1 - progress, 4);
+                const currentValue = Math.floor(startValue + (endValue - startValue) * easeOutQuart);
+                
+                element.textContent = currentValue;
+                
+                if (progress < 1) {
+                    requestAnimationFrame(update);
+                }
+            }
+            
+            requestAnimationFrame(update);
+        }
+        
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    stats.forEach(stat => {
+                        animateNumber(stat.id, stat.value, stat.duration);
+                    });
+                    observer.disconnect();
+                }
+            });
+        }, { threshold: 0.3 });
+        
+        const statsSection = document.querySelector('.stats-section');
+        if (statsSection) {
+            observer.observe(statsSection);
+        }
+    </script>
+</body>
+</html>

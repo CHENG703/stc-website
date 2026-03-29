@@ -1,0 +1,69 @@
+╔═══════════════════════════════════════════════════════════════╗
+║           STC Website - Quick Start Guide                    ║
+╚═══════════════════════════════════════════════════════════════╝
+
+🎯 Quick Start (3 Easy Steps)
+
+STEP 1: Login to ngrok (First time only)
+   Double click: ngrok-login-en.bat
+   Follow the prompts to complete registration and login
+
+STEP 2: Start the website
+   Double click: start-en.bat
+   Wait for automatic configuration and startup
+
+STEP 3: Start using
+   Browser will open automatically
+   Default account: REDACTED_USER
+   Default password: REDACTED
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 Prerequisites Checklist
+
+□ Node.js installed (visit nodejs.org to download)
+□ STC website folder copied completely
+□ Network connection is available (first time needs to download dependencies)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🛠️ Common Tools
+
+start-en.bat        → Start local server + external tunnel
+stop-en.bat         → Stop all services
+ngrok-login-en.bat  → Login to ngrok account
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🌐 Access URLs
+
+Local access: http://localhost:3000
+External access: Check command line output for ngrok address
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ Important Notes
+
+1. First startup requires installing dependencies, please be patient
+2. Closing startup window will not stop services
+3. Need to stop services, run "stop-en.bat"
+4. External access requires ngrok running
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📞 Having Problems?
+
+1. Check logs folder for log files
+2. Run "start-en.bat" again
+3. Make sure Node.js is properly installed
+4. Check network connection
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎉 Let's Get Started!
+
+Double click "start-en.bat" and start using STC website!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For detailed instructions, see: DEPLOYMENT-GUIDE-EN.md

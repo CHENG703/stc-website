@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录响应测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #007bff;
+            font-size: 18px;
+        }
+        pre {
+            background-color: #282c34;
+            color: #abb2bf;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .highlight {
+            background-color: #fff3cd;
+            padding: 5px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>登录响应测试</h1>
+        
+        <div class="section">
+            <h2>测试登录</h2>
+            <input type="text" id="username" placeholder="用户名" value="REDACTED_USER">
+            <input type="password" id="password" placeholder="密码" value="Admin@123456">
+            <button onclick="testLogin()">测试登录</button>
+        </div>
+
+        <div class="section">
+            <h2>登录响应头</h2>
+            <pre id="response-headers">点击"测试登录"查看响应头...</pre>
+        </div>
+
+        <div class="section">
+            <h2>登录响应体</h2>
+            <pre id="response-body">点击"测试登录"查看响应体...</pre>
+        </div>
+
+        <div class="section">
+            <h2>当前Cookies</h2>
+            <pre id="current-cookies">点击"测试登录"查看Cookies...</pre>
+        </div>
+
+        <div class="section">
+            <h2>登录后检查</h2>
+            <button onclick="checkAfterLogin()">登录后检查用户状态</button>
+            <pre id="after-login">点击按钮检查登录后状态...</pre>
+        </div>
+    </div>
+
+    <script>
+        async function testLogin() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password })
+                });
+
+                // 获取响应头
+                const headers = {};
+                response.headers.forEach((value, name) => {
+                    headers[name] = value;
+                });
+
+                // 获取响应体
+                const body = await response.json();
+
+                // 显示响应头
+                let headersText = JSON.stringify(headers, null, 2);
+                
+                // 检查Set-Cookie
+                if (headers['set-cookie']) {
+                    headersText += '\n\n<span class="highlight">发现Set-Cookie头:</span>\n' + headers['set-cookie'];
+                } else {
+                    headersText += '\n\n<span class="highlight">警告: 没有找到Set-Cookie头!</span>';
+                }
+
+                document.getElementById('response-headers').innerHTML = headersText;
+                document.getElementById('response-body').textContent = JSON.stringify(body, null, 2);
+
+                // 显示当前cookies
+                showCookies();
+
+            } catch (error) {
+                document.getElementById('response-headers').textContent = '错误: ' + error.message;
+                document.getElementById('response-body').textContent = '错误: ' + error.message;
+            }
+        }
+
+        function showCookies() {
+            const cookies = document.cookie;
+            if (cookies) {
+                document.getElementById('current-cookies').textContent = cookies;
+            } else {
+                document.getElementById('current-cookies').textContent = '没有Cookies';
+            }
+        }
+
+        async function checkAfterLogin() {
+            try {
+                const response = await fetch('/api/user', {
+                    credentials: 'include'
+                });
+
+                const headers = {};
+                response.headers.forEach((value, name) => {
+                    headers[name] = value;
+                });
+
+                const result = {
+                    status: response.status,
+                    statusText: response.statusText,
+                    ok: response.ok,
+                    headers: headers
+                };
+
+                if (response.ok) {
+                    const user = await response.json();
+                    result.user = user;
+                    result.message = '登录成功!';
+                } else {
+                    const error = await response.json();
+                    result.error = error;
+                    result.message = '登录失败!';
+                }
+
+                document.getElementById('after-login').textContent = JSON.stringify(result, null, 2);
+                showCookies();
+
+            } catch (error) {
+                document.getElementById('after-login').textContent = '错误: ' + error.message;
+            }
+        }
+
+        // 页面加载时显示cookies
+        window.onload = function() {
+            showCookies();
+        };
+    </script>
+</body>
+</html>

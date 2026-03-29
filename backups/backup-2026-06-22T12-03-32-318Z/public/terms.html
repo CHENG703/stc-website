@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>服务条款与隐私协议 - STC网站</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        .terms-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+        }
+        
+        .terms-content {
+            background: white;
+            width: 90%;
+            max-width: 800px;
+            max-height: 80vh;
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .terms-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .terms-header h2 {
+            margin: 0;
+            font-size: 24px;
+        }
+        
+        .terms-close {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            font-size: 24px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.3s;
+        }
+        
+        .terms-close:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .terms-body {
+            padding: 30px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        
+        .terms-body h3 {
+            color: #333;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 5px;
+        }
+        
+        .terms-body h3:first-child {
+            margin-top: 0;
+        }
+        
+        .terms-body p {
+            color: #666;
+            line-height: 1.8;
+            margin-bottom: 15px;
+        }
+        
+        .terms-body ul {
+            color: #666;
+            line-height: 1.8;
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .terms-body li {
+            margin-bottom: 8px;
+        }
+        
+        .terms-footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            border-top: 1px solid #dee2e6;
+        }
+        
+        .disclaimer {
+            color: #666;
+            font-style: italic;
+            font-size: 14px;
+        }
+        
+        .terms-nav {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .terms-nav button {
+            padding: 8px 16px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .terms-nav button.active,
+        .terms-nav button:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        .terms-section {
+            display: none;
+        }
+        
+        .terms-section.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="terms-modal" id="termsModal">
+        <div class="terms-content">
+            <div class="terms-header">
+                <h2 id="termsTitle">服务条款与隐私协议</h2>
+                <button class="terms-close" onclick="closeTerms()">×</button>
+            </div>
+            
+            <div class="terms-nav">
+                <button onclick="showSection('service')" id="btn-service" class="active">服务条款</button>
+                <button onclick="showSection('privacy')" id="btn-privacy">隐私协议</button>
+            </div>
+            
+            <div class="terms-body">
+                <!-- 服务条款 -->
+                <div id="service-section" class="terms-section active">
+                    <h3>1. 服务说明</h3>
+                    <p>STC网站提供任务管理、留言交流、用户管理等在线服务。用户注册并使用本服务即表示同意本条款。</p>
+                    
+                    <h3>2. 用户注册</h3>
+                    <ul>
+                        <li>用户需提供真实、准确的个人信息</li>
+                        <li>用户有责任妥善保管账号密码</li>
+                        <li>禁止恶意注册多个账号</li>
+                        <li>账号使用权仅归注册者所有，不得转让或借用</li>
+                    </ul>
+                    
+                    <h3>3. 使用规范</h3>
+                    <ul>
+                        <li>禁止发布违法、有害、暴力、色情、歧视等内容</li>
+                        <li>禁止发布垃圾信息、广告或恶意链接</li>
+                        <li>禁止侵犯他人知识产权或隐私权</li>
+                        <li>禁止利用网站进行任何非法活动</li>
+                        <li>禁止攻击、破坏网站系统或安全</li>
+                        <li>请勿抄袭本网站，侵权必究</li>
+                    </ul>
+                    
+                    <h3>4. 内容责任</h3>
+                    <ul>
+                        <li>用户发布的内容由用户自行负责</li>
+                        <li>网站有权删除违规内容</li>
+                        <li>用户需对自己言论承担法律责任</li>
+                    </ul>
+                    
+                    <h3>5. 账号管理</h3>
+                    <ul>
+                        <li>网站有权封禁违规账号</li>
+                        <li>封禁账号将无法使用网站服务</li>
+                        <li>被封禁用户可联系管理员申诉</li>
+                    </ul>
+                    
+                    <h3>6. 服务变更</h3>
+                    <ul>
+                        <li>网站有权随时修改服务条款</li>
+                        <li>重大变更会提前通知用户</li>
+                        <li>用户可随时停止使用服务</li>
+                    </ul>
+                    
+                    <h3>7. 免责声明</h3>
+                    <ul>
+                        <li>网站不对用户间纠纷承担责任</li>
+                        <li>网站不对因技术故障导致的损失负责</li>
+                        <li>用户使用风险需自行承担</li>
+                    </ul>
+                </div>
+                
+                <!-- 隐私协议 -->
+                <div id="privacy-section" class="terms-section">
+                    <h3>1. 信息收集</h3>
+                    <p>我们收集以下用户信息：</p>
+                    <ul>
+                        <li>注册信息：用户名、邮箱、密码（加密存储）</li>
+                        <li>使用信息：登录记录、操作日志</li>
+                        <li>内容信息：发布的任务、留言等</li>
+                    </ul>
+                    
+                    <h3>2. 信息使用</h3>
+                    <p>收集的信息用于：</p>
+                    <ul>
+                        <li>提供和改进网站服务</li>
+                        <li>用户身份验证和安全保护</li>
+                        <li>防止违法行为和垃圾信息</li>
+                        <li>统计分析和功能优化</li>
+                    </ul>
+                    
+                    <h3>3. 信息保护</h3>
+                    <ul>
+                        <li>密码采用加密技术存储</li>
+                        <li>用户信息仅限必要人员访问</li>
+                        <li>定期进行安全检查和更新</li>
+                        <li>不会向第三方出售用户信息</li>
+                    </ul>
+                    
+                    <h3>4. 信息共享</h3>
+                    <p>以下情况可能共享信息：</p>
+                    <ul>
+                        <li>获得用户明确同意</li>
+                        <li>法律法规要求</li>
+                        <li>保护网站或用户安全</li>
+                        <li>防止欺诈或违法行为</li>
+                    </ul>
+                    
+                    <h3>5. Cookie使用</h3>
+                    <ul>
+                        <li>Cookie用于维持登录状态</li>
+                        <li>Cookie用于记住用户偏好</li>
+                        <li>用户可在浏览器中禁用Cookie</li>
+                    </ul>
+                    
+                    <h3>6. 用户权利</h3>
+                    <ul>
+                        <li>用户可查看和修改个人信息</li>
+                        <li>用户可要求删除个人数据</li>
+                        <li>用户可注销账号并清除数据</li>
+                    </ul>
+                    
+                    <h3>7. 信息保存</h3>
+                    <ul>
+                        <li>账号注销后保存基础信息用于安全记录</li>
+                        <li>违规记录可能长期保存用于防滥用</li>
+                        <li>其他用户信息保存不超过法律要求时间</li>
+                    </ul>
+                    
+                    <h3>8. 联系方式</h3>
+                    <p>如有隐私相关问题，请联系管理员或通过网站留言功能反馈。</p>
+                </div>
+            </div>
+            
+            <div class="terms-footer">
+                <p class="disclaimer">一切解释权归STC团队</p>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 获取URL参数
+        const urlParams = new URLSearchParams(window.location.search);
+        const type = urlParams.get('type') || 'service';
+        
+        // 显示对应的section
+        function showSection(section) {
+            document.querySelectorAll('.terms-section').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.terms-nav button').forEach(el => el.classList.remove('active'));
+            
+            document.getElementById(section + '-section').classList.add('active');
+            document.getElementById('btn-' + section).classList.add('active');
+        }
+        
+        // 关闭弹窗
+        function closeTerms() {
+            window.close();
+            // 如果无法关闭窗口（被浏览器阻止），则跳转到上一页
+            if (!window.closed) {
+                window.history.back();
+            }
+        }
+        
+        // 根据URL参数显示对应的内容
+        showSection(type);
+        
+        // ESC键关闭
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeTerms();
+            }
+        });
+    </script>
+</body>
+</html>
