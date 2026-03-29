@@ -1,0 +1,1 @@
+{"framework": null, "buildCommand": "npm install", "devCommand": "npm start", "installCommand": "npm install", "outputDirectory": ".", "functions": {"server.js": {"maxDuration": 60}}}
