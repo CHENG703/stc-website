@@ -51,8 +51,9 @@ app.use(session({
     }
 }));
 
-// 数据库初始化
-const adapter = new JSONFile('database.json');
+// 数据库初始化 - 支持Vercel环境
+const dbPath = process.env.VERCEL ? '/tmp/database.json' : 'database.json';
+const adapter = new JSONFile(dbPath);
 const defaultData = {
     users: [],
     inviteCodes: [],
@@ -61,6 +62,28 @@ const defaultData = {
     messages: []
 };
 const db = new Low(adapter, defaultData);
+
+// 初始化上传目录
+const uploadsDir = process.env.VERCEL ? '/tmp/uploads' : 'uploads';
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// 修改multer配置使用正确的上传目录
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, uploadsDir);
+    },
+    filename: function (req, file, cb) {
+        // 处理文件名编码问题
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const extname = path.extname(file.originalname);
+        // 使用Buffer正确处理文件名
+        const originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        const basename = path.basename(originalname, extname);
+        cb(null, uniqueSuffix + '-' + basename + extname);
+    }
+});
 
 // 初始化数据库结构
 async function initDatabase() {
