@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户中心 - STC网站</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <a href="/">STC网站</a>
+            </div>
+            <ul class="nav-menu" id="navMenu">
+                <li><a href="/">首页</a></li>
+                <li id="nav-user"><a href="/user">用户中心</a></li>
+                <li><a href="#" onclick="logout()">登出</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <div class="container">
+            <div class="user-center">
+                <div class="user-info">
+                    <h2>用户中心</h2>
+                    <div class="user-details">
+                        <p><strong>用户名：</strong><span id="user-username">加载中...</span></p>
+                        <p><strong>邮箱：</strong><span id="user-email">加载中...</span></p>
+                        <p><strong>注册时间：</strong><span id="user-created">加载中...</span></p>
+                        <p><strong>角色：</strong><span id="user-role">加载中...</span></p>
+                    </div>
+                </div>
+
+                <div class="user-actions">
+                    <div class="action-card">
+                        <h3>修改密码</h3>
+                        <form id="password-form" onsubmit="handleChangePassword(event)">
+                            <div class="form-group">
+                                <label for="old-password">旧密码</label>
+                                <input type="password" id="old-password" name="old-password" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="new-password">新密码</label>
+                                <input type="password" id="new-password" name="new-password" required placeholder="至少6位">
+                            </div>
+                            <div class="form-group">
+                                <label for="confirm-new-password">确认新密码</label>
+                                <input type="password" id="confirm-new-password" name="confirm-new-password" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">修改密码</button>
+                        </form>
+                    </div>
+
+                    <div class="action-card" id="invite-code-card">
+                        <h3>生成邀请码</h3>
+                        <p class="card-description">生成新的邀请码供其他人注册使用</p>
+                        <button onclick="generateInviteCode()" class="btn btn-primary">生成邀请码</button>
+                        <div id="invite-code-result" class="invite-code-result"></div>
+                    </div>
+
+                    <div class="action-card" id="publish-task-card">
+                        <h3>发布任务</h3>
+                        <p class="card-description">管理员可以发布新任务</p>
+                        <form id="task-form" onsubmit="handlePublishTask(event)" enctype="multipart/form-data">
+                            <div class="form-group">
+                                <label for="task-title">任务标题</label>
+                                <input type="text" id="task-title" name="task-title" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="task-content">任务内容</label>
+                                <textarea id="task-content" name="task-content" required placeholder="输入任务详细内容..." style="min-height: 120px;"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="task-status">任务状态</label>
+                                <select id="task-status" name="task-status">
+                                    <option value="备货">备货</option>
+                                    <option value="正在建">正在建</option>
+                                    <option value="已完成">已完成</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="task-file">上传文件（可选，最大1.5GB）</label>
+                                <input type="file" id="task-file" name="file" accept="*/*">
+                                <small style="color: var(--text-secondary);">支持任意格式文件，最大1.5GB</small>
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="task-pinned" name="task-pinned">
+                                    置顶任务
+                                </label>
+                            </div>
+                            <button type="submit" class="btn btn-primary">发布任务</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/user.js"></script>
+</body>
+</html>

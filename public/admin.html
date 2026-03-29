@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理面板 - STC网站</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <a href="/">STC网站</a>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="/">首页</a></li>
+                <li><a href="/user">用户中心</a></li>
+                <li><a href="/admin" class="active">管理面板</a></li>
+                <li><a href="#" onclick="logout()">登出</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <div class="container">
+            <div class="admin-panel">
+                <h2>管理面板</h2>
+                
+                <div class="admin-section">
+                    <h3>邀请码管理</h3>
+                    <button onclick="generateInviteCode()" class="btn btn-primary">生成新邀请码</button>
+                    <button onclick="loadInviteCodes()" class="btn btn-secondary">刷新列表</button>
+                    
+                    <div id="invite-codes-table" class="data-table">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+
+                <div class="admin-section" id="members-section">
+                    <h3>成员管理</h3>
+                    <button onclick="loadMembers()" class="btn btn-secondary">刷新成员列表</button>
+                    
+                    <div id="members-table" class="data-table">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+
+                <div class="admin-section" id="tasks-section">
+                    <h3>任务管理</h3>
+                    <button onclick="loadTasks()" class="btn btn-secondary">刷新任务列表</button>
+                    
+                    <div id="tasks-table" class="data-table">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+
+                <div class="admin-section" id="messages-section">
+                    <h3>留言管理</h3>
+                    <button onclick="loadMessages()" class="btn btn-secondary">刷新留言列表</button>
+                    
+                    <div id="messages-table" class="data-table">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+
+                <div class="admin-section" id="accounts-section">
+                    <h3>账号管理</h3>
+                    <button onclick="loadAccounts()" class="btn btn-secondary">刷新账号列表</button>
+                    
+                    <div id="accounts-table" class="data-table">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/admin.js"></script>
+</body>
+</html>
