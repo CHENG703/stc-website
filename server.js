@@ -752,7 +752,14 @@ app.delete('/api/accounts/:id', requireLogin, requireSuperAdmin, async (req, res
 // 启动服务器
 (async () => {
     await initDatabase();
-    app.listen(PORT, () => {
-        console.log(`服务器运行在 http://localhost:${PORT}`);
-    });
+    
+    // Vercel环境不直接启动服务器，而是导出app
+    if (!process.env.VERCEL) {
+        app.listen(PORT, () => {
+            console.log(`服务器运行在 http://localhost:${PORT}`);
+        });
+    }
 })();
+
+// Vercel导出
+module.exports = app;
