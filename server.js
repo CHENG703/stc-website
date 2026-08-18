@@ -128,62 +128,186 @@ const defaults = {
     bannedIPs: []
 };
 
+const ARRAY_MUTATING_METHODS = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin'];
+
 class SimpleJSONDB {
     constructor(filePath, defaults) {
         this.filePath = filePath;
         this._data = null;
         this._defaults = defaults;
-        this._load();
+        this._kv = null;
+        this._kvEnabled = false;
+        this._pendingKvSave = Promise.resolve();
+
+        if (IS_VERCEL && process.env.KV_REST_API_URL) {
+            try {
+                const { kv } = require('@vercel/kv');
+                this._kv = kv;
+                this._kvEnabled = true;
+                console.log('[DB] Vercel KV 持久化已启用');
+            } catch (e) {
+                console.warn('[DB] @vercel/kv 加载失败，将使用临时文件存储（数据可能丢失）');
+            }
+        }
+
+        this._loadFileSync();
     }
-    _load() {
+
+    _loadFileSync() {
         try {
             if (fs.existsSync(this.filePath)) {
                 this._data = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
             }
         } catch (e) {
-            console.warn('[DB] 读取数据库失败，使用默认值:', e.message);
+            console.warn('[DB] 本地文件读取失败:', e.message);
         }
         if (!this._data || typeof this._data !== 'object') {
             this._data = {};
         }
+        this._ensureDefaults();
+    }
+
+    _ensureDefaults() {
         for (const key of Object.keys(this._defaults)) {
             if (this._data[key] === undefined) {
                 this._data[key] = Array.isArray(this._defaults[key]) ? [] : this._defaults[key];
             }
         }
-        this._save();
     }
-    _save() {
+
+    _saveFile() {
         try {
             fs.writeFileSync(this.filePath, JSON.stringify(this._data, null, 2));
         } catch (e) {
-            console.error('[DB] 保存数据库失败:', e.message);
+            console.error('[DB] 写入本地文件失败:', e.message);
         }
     }
-    get data() {
-        return new Proxy(this._data, {
-            get: (target, prop) => {
+
+    _saveKv() {
+        if (!this._kvEnabled) return;
+        const json = JSON.stringify(this._data);
+        this._pendingKvSave = this._pendingKvSave
+            .then(() => this._kv.set('stc-website:database', json))
+            .catch(e => console.warn('[DB] KV保存失败:', e.message));
+    }
+
+    _onMutate() {
+        this._saveFile();
+        this._saveKv();
+    }
+
+    _wrapArray(arr) {
+        const self = this;
+        return new Proxy(arr, {
+            get(target, prop) {
+                if (ARRAY_MUTATING_METHODS.includes(prop)) {
+                    return function (...args) {
+                        const result = target[prop].apply(target, args);
+                        self._onMutate();
+                        return result;
+                    };
+                }
                 const val = target[prop];
                 if (Array.isArray(val)) {
-                    return new Proxy(val, {
-                        set: (arr, idx, value) => {
-                            arr[idx] = value;
-                            this._save();
-                            return true;
-                        }
-                    });
+                    return self._wrapArray(val);
+                }
+                if (val && typeof val === 'object') {
+                    return self._wrapObject(val);
                 }
                 return val;
             },
-            set: (target, prop, val) => {
-                target[prop] = val;
-                this._save();
+            set(target, prop, value) {
+                target[prop] = value;
+                self._onMutate();
+                return true;
+            },
+            deleteProperty(target, prop) {
+                delete target[prop];
+                self._onMutate();
                 return true;
             }
         });
     }
-    async read() { this._load(); return this; }
-    async write() { this._save(); }
+
+    _wrapObject(obj) {
+        const self = this;
+        return new Proxy(obj, {
+            get(target, prop) {
+                const val = target[prop];
+                if (Array.isArray(val)) {
+                    return self._wrapArray(val);
+                }
+                if (val && typeof val === 'object' && val.constructor === Object) {
+                    return self._wrapObject(val);
+                }
+                return val;
+            },
+            set(target, prop, val) {
+                target[prop] = val;
+                self._onMutate();
+                return true;
+            },
+            deleteProperty(target, prop) {
+                delete target[prop];
+                self._onMutate();
+                return true;
+            }
+        });
+    }
+
+    get data() {
+        const self = this;
+        return new Proxy(this._data, {
+            get(target, prop) {
+                const val = target[prop];
+                if (Array.isArray(val)) {
+                    return self._wrapArray(val);
+                }
+                if (val && typeof val === 'object' && val.constructor === Object) {
+                    return self._wrapObject(val);
+                }
+                return val;
+            },
+            set(target, prop, val) {
+                target[prop] = val;
+                self._onMutate();
+                return true;
+            },
+            deleteProperty(target, prop) {
+                delete target[prop];
+                self._onMutate();
+                return true;
+            }
+        });
+    }
+
+    async read() {
+        if (this._kvEnabled) {
+            try {
+                const saved = await this._kv.get('stc-website:database');
+                if (saved) {
+                    this._data = JSON.parse(saved);
+                    this._ensureDefaults();
+                    console.log('[DB] 从 Vercel KV 加载数据成功');
+                    return this;
+                }
+                console.log('[DB] KV中无数据，使用默认值');
+            } catch (e) {
+                console.warn('[DB] 从 KV 加载失败，使用本地缓存:', e.message);
+            }
+        }
+        this._loadFileSync();
+        return this;
+    }
+
+    async write() {
+        this._saveFile();
+        this._saveKv();
+    }
+
+    async flush() {
+        await this._pendingKvSave;
+    }
 }
 
 const db = new SimpleJSONDB(dbPath, defaults);
