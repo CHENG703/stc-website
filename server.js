@@ -1715,10 +1715,11 @@ app.post('/api/send-code', async (req, res) => {
             console.error('[SEND-CODE FAIL] 邮件服务未配置');
             return res.status(500).json({ success: false, message: '邮件服务未配置，请联系管理员设置 EMAIL_USER 和 EMAIL_PASS 环境变量' });
         }
-        const info = await transporter.sendMail({
+        const mailPayload = {
             from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: '【STC】您的验证码',
+            text: `您正在${type === 'login' ? '登录' : '注册'}STC任务网站，您的验证码是：${code}，有效期5分钟，请勿泄露给他人。`,
             html: `
                 <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
                     <div style="background: linear-gradient(135deg, #0ea5e9, #38bdf8); padding: 30px; border-radius: 16px 16px 0 0;">
@@ -1735,8 +1736,9 @@ app.post('/api/send-code', async (req, res) => {
                     <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
                 </div>
             `
-        });
-        console.log(`[SEND-CODE OK] ${email} -> code=${code}, accepted=${info.accepted || '-'}, rejected=${info.rejected || '-'}, msgId=${info.messageId || '-'}`);
+        };
+        const info = await transporter.sendMail(mailPayload);
+        console.log(`[SEND-CODE OK] email=${email} code=${code} accepted=${JSON.stringify(info.accepted)} rejected=${JSON.stringify(info.rejected)} msgId=${info.messageId}`);
     } catch (error) {
         const detail = JSON.stringify({ message: error.message, code: error.code, response: error.response, command: error.command });
         console.error(`[SEND-CODE FAIL] ${email}: ${detail}`);
