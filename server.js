@@ -21,6 +21,7 @@ require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
+const cookieSession = require('cookie-session');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const multer = require('multer');
@@ -35,19 +36,33 @@ const LOGTO_CONFIG = {
     baseUrl: process.env.LOGTO_BASE_URL || 'https://stcwork.top',
 };
 
-// 动态加载 Logto SDK (ESM 模块)
+// 动态加载 Logto SDK (ESM 模块) - 使用 Promise 确保加载完成
+let logtoReadyPromise = null;
 let logtoHandleAuthRoutes = null;
 let logtoWithLogto = null;
-(async () => {
-    try {
-        const logto = await import('@logto/express');
-        logtoHandleAuthRoutes = logto.handleAuthRoutes(LOGTO_CONFIG);
-        logtoWithLogto = logto.withLogto(LOGTO_CONFIG);
-        console.log('[LOGTO] SDK 加载成功');
-    } catch (e) {
-        console.warn('[LOGTO] SDK 加载失败:', e.message);
-    }
-})();
+
+async function initLogto() {
+    if (logtoHandleAuthRoutes) return { logtoHandleAuthRoutes, logtoWithLogto };
+    if (logtoReadyPromise) return logtoReadyPromise;
+    
+    logtoReadyPromise = (async () => {
+        try {
+            const logto = await import('@logto/express');
+            logtoHandleAuthRoutes = logto.handleAuthRoutes(LOGTO_CONFIG);
+            logtoWithLogto = logto.withLogto(LOGTO_CONFIG);
+            console.log('[LOGTO] SDK 加载成功');
+            return { logtoHandleAuthRoutes, logtoWithLogto };
+        } catch (e) {
+            console.warn('[LOGTO] SDK 加载失败:', e.message);
+            throw e;
+        }
+    })();
+    
+    return logtoReadyPromise;
+}
+
+// 立即开始加载（不阻塞启动）
+initLogto().catch(() => {});
 
 // Vercel Serverless 限制：只读文件系统、无 child_process
 const IS_VERCEL = !!process.env.VERCEL;
@@ -575,9 +590,177 @@ if (!fs.existsSync(sessionDir)) {
 
 const SESSION_SECRET = process.env.SESSION_SECRET || 'STC_SECRET_KEY_2025';
 
+// 自定义 Session Store：将 session 数据加密后存储在客户端 cookie 中
+// 解决 Vercel Serverless 跨实例 session 不共享的问题
+// 数据量较大时自动分片存储
+class CookieStore extends session.Store {
+    constructor(options = {}) {
+        super(options);
+        this.secret = options.secret || 'default-secret';
+    }
+
+    async get(sid, callback) {
+        try {
+            const data = await this._readFromCookie(sid);
+            callback(null, data || null);
+        } catch (e) {
+            callback(e);
+        }
+    }
+
+    async set(sid, sessionData, callback) {
+        try {
+            await this._writeToCookie(sid, sessionData);
+            callback && callback(null);
+        } catch (e) {
+            callback && callback(e);
+        }
+    }
+
+    async destroy(sid, callback) {
+        try {
+            await this._clearCookie(sid);
+            callback && callback(null);
+        } catch (e) {
+            callback && callback(e);
+        }
+    }
+
+    // 需要在请求上下文中使用 req/res
+    _getRequestContext() {
+        return CookieStore._currentContext;
+    }
+
+    async _readFromCookie(sid) {
+        const ctx = this._getRequestContext();
+        if (!ctx || !ctx.req) return null;
+        
+        const chunks = [];
+        const prefix = 'sess_';
+        const pattern = new RegExp('^' + prefix + sid + '_(\\d+)$');
+        
+        for (const [name, value] of Object.entries(ctx.req.cookies || {})) {
+            const match = name.match(pattern);
+            if (match) {
+                chunks.push({ index: parseInt(match[1]), value });
+            }
+        }
+        
+        if (chunks.length === 0) return null;
+        
+        chunks.sort((a, b) => a.index - b.index);
+        const dataStr = chunks.map(c => c.value).join('');
+        
+        try {
+            // 解密并解析
+            const decipher = crypto.createDecipher('aes-256-cbc', this.secret);
+            let decrypted = decipher.update(dataStr, 'hex', 'utf8');
+            decrypted += decipher.final('utf8');
+            return JSON.parse(decrypted);
+        } catch (e) {
+            // 可能未加密
+            try {
+                return JSON.parse(dataStr);
+            } catch (e2) {
+                return null;
+            }
+        }
+    }
+
+    async _writeToCookie(sid, sessionData) {
+        const ctx = this._getRequestContext();
+        if (!ctx || !ctx.res) return;
+
+        // 序列化并加密
+        let dataStr = JSON.stringify(sessionData);
+        try {
+            const cipher = crypto.createCipher('aes-256-cbc', this.secret);
+            dataStr = cipher.update(dataStr, 'utf8', 'hex') + cipher.final('hex');
+        } catch (e) {
+            // 加密失败则明文存储（仅开发环境）
+        }
+
+        const prefix = 'sess_';
+        const cookieName = prefix + sid;
+        const maxAge = 24 * 60 * 60 * 1000; // 24小时
+
+        // 如果数据较短，直接存储
+        if (dataStr.length <= 3500) {
+            ctx.res.cookie(cookieName, dataStr, {
+                maxAge,
+                httpOnly: false,
+                secure: true,
+                sameSite: 'none',
+                path: '/'
+            });
+            // 清除旧分片
+            Object.keys(ctx.req.cookies || {}).forEach(name => {
+                if (name.startsWith(cookieName + '_')) {
+                    ctx.res.clearCookie(name, { path: '/' });
+                }
+            });
+            return;
+        }
+
+        // 分片存储（每片约3000字符）
+        const chunkSize = 3000;
+        const chunks = [];
+        for (let i = 0; i < dataStr.length; i += chunkSize) {
+            chunks.push(dataStr.substring(i, i + chunkSize));
+        }
+
+        chunks.forEach((chunk, index) => {
+            ctx.res.cookie(`${cookieName}_${index}`, chunk, {
+                maxAge,
+                httpOnly: false,
+                secure: true,
+                sameSite: 'none',
+                path: '/'
+            });
+        });
+
+        // 清除旧数据
+        Object.keys(ctx.req.cookies || {}).forEach(name => {
+            if (name.startsWith(cookieName + '_') && !name.match(new RegExp('^' + cookieName + '_\\d+$'))) {
+                ctx.res.clearCookie(name, { path: '/' });
+            }
+        });
+    }
+
+    async _clearCookie(sid) {
+        const ctx = this._getRequestContext();
+        if (!ctx || !ctx.res) return;
+
+        const prefix = 'sess_';
+        const cookieName = prefix + sid;
+        ctx.res.clearCookie(cookieName, { path: '/' });
+
+        Object.keys(ctx.req.cookies || {}).forEach(name => {
+            if (name.startsWith(cookieName + '_')) {
+                ctx.res.clearCookie(name, { path: '/' });
+            }
+        });
+    }
+
+    // 中间件用于设置请求上下文
+    static contextMiddleware(req, res, next) {
+        CookieStore._currentContext = { req, res };
+        // 清除旧上下文
+        res.on('finish', () => {
+            if (CookieStore._currentContext && CookieStore._currentContext.req === req) {
+                CookieStore._currentContext = null;
+            }
+        });
+        next();
+    }
+}
+
+CookieStore._currentContext = null;
+
+// 统一的 session 配置
 const sessionConfig = {
     secret: SESSION_SECRET,
-    resave: false,
+    resave: true, // 强制保存以确保 cookie 更新
     saveUninitialized: true,
     cookie: {
         secure: IS_VERCEL || isProduction,
@@ -588,35 +771,37 @@ const sessionConfig = {
     }
 };
 
-// Vercel Serverless: 使用 cookie 存储 session 数据（跨实例共享）
-// 其他环境: 使用文件存储
-if (!IS_VERCEL && FileStore) {
+if (IS_VERCEL) {
+    // Vercel 环境：使用自定义 CookieStore 存储 session（跨实例共享）
+    const cookieStore = new CookieStore({ secret: SESSION_SECRET });
+    sessionConfig.store = cookieStore;
+    app.use(CookieStore.contextMiddleware);
+    console.log('[SESSION] Vercel 环境：使用 CookieStore');
+} else if (FileStore) {
+    // 本地环境：使用文件存储
     sessionConfig.store = FileStore;
+    console.log('[SESSION] 本地环境：使用文件存储');
+} else {
+    console.log('[SESSION] 默认内存存储');
 }
 
-// 统一的认证中间件：无论什么环境，都解析 Authorization header 并生成 token
 app.use(session(sessionConfig));
 
-// Logto 认证路由（延迟加载，等 SDK 初始化完成）
-app.use('/logto', (req, res, next) => {
-    if (logtoHandleAuthRoutes) {
+// Logto 认证路由（等待 SDK 初始化完成）
+app.use('/logto', async (req, res, next) => {
+    try {
+        await initLogto();
         return logtoHandleAuthRoutes(req, res, next);
+    } catch (e) {
+        console.error('[LOGTO] 路由错误:', e.message);
+        return res.status(500).send('Logto SDK 加载失败');
     }
-    // SDK 尚未加载完成，稍后重试
-    setTimeout(() => {
-        if (logtoHandleAuthRoutes) {
-            return logtoHandleAuthRoutes(req, res, next);
-        }
-        res.status(503).json({ error: 'Logto SDK 正在加载，请稍后重试' });
-    }, 500);
 });
 
 // Logto 登录回调成功后，通过 API 检查认证状态并生成 token
 app.get('/api/auth/logto/check', async (req, res) => {
     try {
-        if (!logtoWithLogto) {
-            return res.json({ authenticated: false, error: 'logto_not_ready' });
-        }
+        await initLogto();
         // 使用 withLogto 中间件获取用户信息
         logtoWithLogto(LOGTO_CONFIG, req, res, async () => {
             try {
@@ -1098,7 +1283,10 @@ app.get('/api/debug', async (req, res) => {
                 userId: req.session.userId,
                 username: req.session.username,
                 isAdmin: req.session.isAdmin,
-                isSuperAdmin: req.session.isSuperAdmin
+                isSuperAdmin: req.session.isSuperAdmin,
+                id: req.sessionID,
+                storeType: IS_VERCEL ? 'CookieStore' : (FileStore ? 'FileStore' : 'MemoryStore'),
+                cookieKeys: Object.keys(req.cookies || {}).filter(k => k.startsWith('sess_'))
             },
             authUser: req.authUser ? {
                 id: req.authUser.id,
