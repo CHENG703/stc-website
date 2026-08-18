@@ -34,6 +34,7 @@ const LOGTO_CONFIG = {
     appId: process.env.LOGTO_APP_ID || '4rffjd8k4tvznc89u8ja9',
     appSecret: process.env.LOGTO_APP_SECRET || 'aaK7xTKFM9HlfM2FZd8mOya07EFYf1PD',
     baseUrl: process.env.LOGTO_BASE_URL || 'https://stcwork.top',
+    authRoutesPrefix: 'logto',
 };
 
 // 动态加载 Logto SDK (ESM 模块) - 使用 Promise 确保加载完成
@@ -788,7 +789,11 @@ if (IS_VERCEL) {
 app.use(session(sessionConfig));
 
 // Logto 认证路由（等待 SDK 初始化完成）
-app.use('/logto', async (req, res, next) => {
+// 注意：Logto Router 内部已经处理了 /logto/ 前缀，所以直接挂在根路径下
+app.use(async (req, res, next) => {
+    // 只处理 /logto/ 开头的请求
+    if (!req.path.startsWith('/logto')) return next();
+    
     try {
         await initLogto();
         return logtoHandleAuthRoutes(req, res, next);
