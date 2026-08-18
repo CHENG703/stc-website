@@ -1103,6 +1103,7 @@ const requireLogin = async (req, res, next) => {
             }
         });
     }
+    req.currentUser = user;
     next();
 };
 
@@ -1128,6 +1129,7 @@ const requireAdmin = async (req, res, next) => {
         console.log('[AUTH] requireAdmin 权限不足，用户:', user.username, 'is_admin:', user.is_admin, 'is_super_admin:', user.is_super_admin);
         return res.status(403).json({ error: '权限不足' });
     }
+    req.currentUser = user;
     next();
 };
 
@@ -1139,6 +1141,7 @@ const requireSuperAdmin = async (req, res, next) => {
     if (!user.is_super_admin) {
         return res.status(403).json({ error: '权限不足' });
     }
+    req.currentUser = user;
     next();
 };
 
@@ -1643,9 +1646,22 @@ app.put('/api/user/password', requireLogin, async (req, res) => {
             return res.status(400).json({ error: '新密码长度至少6位' });
         }
 
-        const user = db.data.users.find(u => u.id === req.session.userId);
+        // 先尝试从数据库找用户
+        let user = db.data.users.find(u => u.id === req.currentUser.id);
+        // 如果用户不在数据库里（Vercel 环境 token 构建的虚拟用户），先注册到数据库
         if (!user) {
-            return res.status(404).json({ error: '用户不存在' });
+            user = {
+                id: req.currentUser.id,
+                username: req.currentUser.username,
+                email: req.currentUser.email || '',
+                password: '',
+                is_admin: !!req.currentUser.is_admin,
+                is_super_admin: !!req.currentUser.is_super_admin,
+                status: 'active',
+                created_at: new Date().toISOString()
+            };
+            db.data.users.push(user);
+            console.log(`[USER-PWD] 用户 ${user.username} 不在数据库，自动补录`);
         }
 
         if (!bcrypt.compareSync(oldPassword, user.password)) {
@@ -1780,11 +1796,8 @@ app.get('/api/tasks', async (req, res) => {
 });
 
 app.get('/api/tasks/daily-limit', requireLogin, async (req, res) => {
-    const user = db.data.users.find(u => u.id === req.session.userId);
-    if (!user) {
-        return res.status(404).json({ success: false, message: '用户不存在' });
-    }
-    
+    const user = req.currentUser;
+    const userId = user.id;
     const isAdmin = user.is_admin || user.is_super_admin;
     const DAILY_LIMIT = 5;
     
@@ -1803,7 +1816,7 @@ app.get('/api/tasks/daily-limit', requireLogin, async (req, res) => {
     const today = new Date();
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
     const todayTasks = (db.data.tasks || []).filter(t => {
-        return t.author_id === req.session.userId && t.created_at >= todayStart;
+        return t.author_id === userId && t.created_at >= todayStart;
     });
     
     res.json({ 
@@ -1873,10 +1886,13 @@ app.post('/api/messages', requireLogin, async (req, res) => {
         return res.status(400).json({ success: false, message: '留言内容不能为空' });
     }
     
+    const user = req.currentUser;
+    const userId = user.id;
+    
     const message = {
         id: Date.now(),
         content: content.trim(),
-        user_id: req.session.userId,
+        user_id: userId,
         created_at: new Date().toISOString()
     };
     
@@ -1884,12 +1900,11 @@ app.post('/api/messages', requireLogin, async (req, res) => {
     db.data.messages.push(message);
     await db.write();
     
-    const user = db.data.users.find(u => u.id === req.session.userId);
     res.json({ 
         success: true, 
         data: {
             ...message,
-            user: user ? { id: user.id, username: user.username } : null
+            user: { id: user.id, username: user.username }
         }
     });
 });
@@ -1901,14 +1916,8 @@ app.post('/api/tasks', requireLogin, upload.single('file'), async (req, res) => 
         return res.status(400).json({ success: false, message: '请填写标题和描述' });
     }
     
-    if (!req.session.userId) {
-        return res.status(403).json({ error: '请先登录' });
-    }
-    
-    const user = db.data.users.find(u => u.id === req.session.userId);
-    if (!user) {
-        return res.status(400).json({ success: false, message: '用户不存在' });
-    }
+    const user = req.currentUser;
+    const userId = user.id;
     
     const isAdmin = user.is_admin || user.is_super_admin;
     const DAILY_LIMIT = 5;
@@ -1917,7 +1926,7 @@ app.post('/api/tasks', requireLogin, upload.single('file'), async (req, res) => 
         const today = new Date();
         const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
         const todayTasks = (db.data.tasks || []).filter(t => {
-            return t.author_id === req.session.userId && t.created_at >= todayStart;
+            return t.author_id === userId && t.created_at >= todayStart;
         });
         
         if (todayTasks.length >= DAILY_LIMIT) {
@@ -1945,7 +1954,7 @@ app.post('/api/tasks', requireLogin, upload.single('file'), async (req, res) => 
             'completed': '已完成',
             'idle': '一笔未动'
         }[taskStatus],
-        author_id: req.session.userId,
+        author_id: userId,
         is_pinned: false,
         // 处理中文文件名
         file_name: req.file ? (() => {
@@ -1969,7 +1978,8 @@ app.put('/api/tasks/:id', requireLogin, async (req, res) => {
         return res.status(404).json({ success: false, message: '任务不存在' });
     }
     
-    if (task.author_id !== req.session.userId) {
+    const userId = req.currentUser.id;
+    if (task.author_id !== userId) {
         return res.status(403).json({ success: false, message: '无权修改此任务' });
     }
     
@@ -1993,11 +2003,12 @@ app.put('/api/tasks/:id/status', requireLogin, async (req, res) => {
         return res.status(404).json({ success: false, message: '任务不存在' });
     }
     
-    const user = db.data.users.find(u => u.id === req.session.userId);
-    const isAdmin = user && (user.is_admin || user.is_super_admin);
+    const user = req.currentUser;
+    const userId = user.id;
+    const isAdmin = user.is_admin || user.is_super_admin;
     
     // 只有任务作者或管理员可以修改状态
-    if (task.author_id !== req.session.userId && !isAdmin) {
+    if (task.author_id !== userId && !isAdmin) {
         return res.status(403).json({ success: false, message: '无权修改此任务状态' });
     }
     
@@ -2030,10 +2041,11 @@ app.delete('/api/tasks/:id', requireLogin, async (req, res) => {
         return res.status(404).json({ success: false, message: '任务不存在' });
     }
     
-    const user = db.data.users.find(u => u.id === req.session.userId);
-    const isAdmin = user && (user.is_admin || user.is_super_admin);
+    const user = req.currentUser;
+    const userId = user.id;
+    const isAdmin = user.is_admin || user.is_super_admin;
     
-    if (task.author_id !== req.session.userId && !isAdmin) {
+    if (task.author_id !== userId && !isAdmin) {
         return res.status(403).json({ success: false, message: '无权删除此任务' });
     }
     
@@ -2503,7 +2515,7 @@ app.get('/api/members', requireAdmin, async (req, res) => {
 // 管理员重置用户密码
 app.put('/api/members/:id/reset-password', requireAdmin, async (req, res) => {
     try {
-        const currentUser = db.data.users.find(u => u.id === req.session.userId);
+        const currentUser = req.currentUser;
         const user = db.data.users.find(u => u.id === parseInt(req.params.id));
 
         if (!user) {
@@ -2530,7 +2542,7 @@ app.put('/api/members/:id/reset-password', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/members/:id/ban', requireAdmin, async (req, res) => {
-    const currentUser = db.data.users.find(u => u.id === req.session.userId);
+    const currentUser = req.currentUser;
     const user = db.data.users.find(u => u.id === parseInt(req.params.id));
     
     if (!user) {
@@ -2549,7 +2561,7 @@ app.post('/api/members/:id/ban', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/members/:id/unban', requireAdmin, async (req, res) => {
-    const currentUser = db.data.users.find(u => u.id === req.session.userId);
+    const currentUser = req.currentUser;
     const user = db.data.users.find(u => u.id === parseInt(req.params.id));
     
     if (!user) {
@@ -2568,7 +2580,7 @@ app.post('/api/members/:id/unban', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/members/:id/set_admin', requireAdmin, async (req, res) => {
-    const currentUser = db.data.users.find(u => u.id === req.session.userId);
+    const currentUser = req.currentUser;
     const user = db.data.users.find(u => u.id === parseInt(req.params.id));
     
     if (!user) {
@@ -2587,7 +2599,7 @@ app.post('/api/members/:id/set_admin', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/members/:id/unset_admin', requireAdmin, async (req, res) => {
-    const currentUser = db.data.users.find(u => u.id === req.session.userId);
+    const currentUser = req.currentUser;
     const user = db.data.users.find(u => u.id === parseInt(req.params.id));
     
     if (!user) {
@@ -2606,7 +2618,7 @@ app.post('/api/members/:id/unset_admin', requireAdmin, async (req, res) => {
 });
 
 app.delete('/api/members/:id', requireAdmin, async (req, res) => {
-    const currentUser = db.data.users.find(u => u.id === req.session.userId);
+    const currentUser = req.currentUser;
     const user = db.data.users.find(u => u.id === parseInt(req.params.id));
     
     if (!user) {
@@ -2642,7 +2654,7 @@ app.post('/api/invite-codes', requireAdmin, async (req, res) => {
         id: Date.now(),
         code: code,
         is_used: false,
-        created_by: req.session.userId,
+        created_by: req.currentUser.id,
         created_at: new Date().toISOString()
     };
     if (!db.data.inviteCodes) db.data.inviteCodes = [];
@@ -3082,11 +3094,11 @@ app.post('/api/admin/db-unlock', requireSuperAdmin, async (req, res) => {
 // 网站锁定API - 管理员可用
 app.post('/api/admin/site-lock', requireAdmin, async (req, res) => {
     const { reason } = req.body;
-    const user = db.data.users.find(u => u.id === req.session.userId);
+    const currentUser = req.currentUser;
     
     siteLocked = true;
     siteLockReason = reason || '维护中';
-    siteLockBy = user ? user.username : '未知';
+    siteLockBy = currentUser ? currentUser.username : '未知';
     siteLockTime = new Date().toISOString();
     
     // 广播锁定事件给所有连接的客户端（先通知，再清除session）
@@ -3144,8 +3156,8 @@ app.post('/api/admin/site-unlock', requireAdmin, async (req, res) => {
         return res.json({ success: false, message: '网站未被锁定' });
     }
     
-    const user = db.data.users.find(u => u.id === req.session.userId);
-    const unlockedBy = user ? user.username : '未知';
+    const currentUser = req.currentUser;
+    const unlockedBy = currentUser ? currentUser.username : '未知';
     
     siteLocked = false;
     siteLockReason = '';
@@ -3187,7 +3199,7 @@ app.post('/api/ban-ip', requireSuperAdmin, async (req, res) => {
         db.data.banned_ip_info.push({
             ip: ip,
             reason: reason || '违规操作',
-            banned_by: req.session.userId,
+            banned_by: req.currentUser.id,
             banned_at: new Date().toISOString()
         });
         await db.write();
