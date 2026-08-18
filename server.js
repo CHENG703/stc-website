@@ -19,6 +19,7 @@
 
 require('dotenv').config();
 const express = require('express');
+const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
@@ -516,6 +517,7 @@ app.use((req, res, next) => {
     next();
 });
 
+app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -530,25 +532,77 @@ if (!fs.existsSync(sessionDir)) {
     try { fs.mkdirSync(sessionDir, { recursive: true }); } catch (e) {}
 }
 
+const SESSION_SECRET = process.env.SESSION_SECRET || 'STC_SECRET_KEY_2025';
+
 const sessionConfig = {
-    secret: 'STC_SECRET_KEY_2025',
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: true,
     cookie: {
-        secure: isProduction,
+        secure: IS_VERCEL || isProduction,
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: false,
-        sameSite: isProduction ? 'none' : 'lax',
+        sameSite: IS_VERCEL || isProduction ? 'none' : 'lax',
         path: '/'
     }
 };
 
-// Vercel Serverless 用内存 session（无持久化），其他环境用文件 session
+// Vercel Serverless: 使用 cookie 存储 session 数据（跨实例共享）
+// 其他环境: 使用文件存储
 if (!IS_VERCEL && FileStore) {
     sessionConfig.store = FileStore;
 }
 
 app.use(session(sessionConfig));
+
+// Vercel 环境: 自定义中间件，确保 session 数据存在 cookie 中
+if (IS_VERCEL) {
+    app.use((req, res, next) => {
+        if (req.cookies && req.cookies.stc_session_data) {
+            try {
+                const data = JSON.parse(decodeURIComponent(req.cookies.stc_session_data));
+                if (data.userId) req.session.userId = data.userId;
+                if (data.username) req.session.username = data.username;
+                if (data.isAdmin) req.session.isAdmin = data.isAdmin;
+                if (data.isSuperAdmin) req.session.isSuperAdmin = data.isSuperAdmin;
+            } catch (e) {}
+        }
+        
+        const originalSave = req.session.save.bind(req.session);
+        req.session.save = function(callback) {
+            if (this.userId) {
+                const data = {
+                    userId: this.userId,
+                    username: this.username,
+                    isAdmin: this.isAdmin,
+                    isSuperAdmin: this.isSuperAdmin
+                };
+                res.cookie('stc_session_data', encodeURIComponent(JSON.stringify(data)), {
+                    secure: true,
+                    maxAge: 24 * 60 * 60 * 1000,
+                    httpOnly: false,
+                    sameSite: 'none',
+                    path: '/'
+                });
+            }
+            return originalSave(callback);
+        };
+        
+        next();
+    });
+    
+    // 登出时清除 cookie
+    app.use((req, res, next) => {
+        const originalDestroy = req.session.destroy?.bind(req.session);
+        if (originalDestroy) {
+            req.session.destroy = function(callback) {
+                res.clearCookie('stc_session_data', { path: '/' });
+                return originalDestroy(callback);
+            };
+        }
+        next();
+    });
+}
 
 app.use(express.static(path.join(__dirname, 'public'), {
     extensions: ['html', 'htm'],
@@ -803,6 +857,9 @@ app.post('/api/login', async (req, res) => {
     }
     
     req.session.userId = user.id;
+    req.session.username = user.username;
+    req.session.isAdmin = user.is_admin;
+    req.session.isSuperAdmin = user.is_super_admin;
     req.session.loginIP = getClientIP(req);
     
     // 更新用户最后登录IP和时间
@@ -810,7 +867,11 @@ app.post('/api/login', async (req, res) => {
     user.lastLoginTime = new Date().toISOString();
     await db.write();
     
-    res.json({ success: true, message: '登录成功', user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin } });
+    // 确保 session 保存到 cookie
+    req.session.save((err) => {
+        if (err) console.error('[LOGIN] Session 保存失败:', err);
+        res.json({ success: true, message: '登录成功', user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin } });
+    });
 });
 
 // IP检查中间件 - 检测异地登录
@@ -942,8 +1003,11 @@ app.post('/api/register', async (req, res) => {
 });
 
 app.post('/api/logout', (req, res) => {
-    req.session.destroy();
-    res.json({ success: true, message: '登出成功' });
+    res.clearCookie('stc_session_data', { path: '/' });
+    req.session.destroy((err) => {
+        if (err) console.error('[LOGOUT] Session 销毁失败:', err);
+        res.json({ success: true, message: '登出成功' });
+    });
 });
 
 app.get('/api/csrf-token', (req, res) => {
