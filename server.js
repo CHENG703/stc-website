@@ -26,11 +26,16 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+
+// Vercel Serverless 限制：只读文件系统、无 child_process
+const IS_VERCEL = !!process.env.VERCEL;
+const canSpawn = !IS_VERCEL;
+const fsRoot = IS_VERCEL ? '/tmp' : __dirname;
 const nodemailer = require('nodemailer');
 
 const { Low } = require('lowdb');
 const { JSONFile } = require('lowdb/node');
-const FileStore = require('session-file-store')(session);
+const FileStore = IS_VERCEL ? null : require('session-file-store')(session);
 
 // 数据库锁定状态
 let dbLocked = false;
@@ -96,8 +101,8 @@ app.use((req, res, next) => {
     next();
 });
 
-const runtimeDir = isVercel ? '/tmp/stc-runtime' : (isZeabur ? '/data/stc-runtime' : __dirname);
-if ((isVercel || isZeabur) && !fs.existsSync(runtimeDir)) {
+const runtimeDir = IS_VERCEL ? '/tmp/stc-runtime' : (isZeabur ? '/data/stc-runtime' : __dirname);
+if ((IS_VERCEL || isZeabur) && !fs.existsSync(runtimeDir)) {
     try { fs.mkdirSync(runtimeDir, { recursive: true }); } catch (e) {}
 }
 
@@ -365,16 +370,10 @@ if (!fs.existsSync(sessionDir)) {
     try { fs.mkdirSync(sessionDir, { recursive: true }); } catch (e) {}
 }
 
-app.use(session({
+const sessionConfig = {
     secret: 'STC_SECRET_KEY_2025',
     resave: false,
     saveUninitialized: true,
-    store: new FileStore({
-        path: sessionDir,
-        secret: 'STC_SECRET_KEY_2025',
-        ttl: 86400 * 7,
-        retries: 0
-    }),
     cookie: {
         secure: isProduction,
         maxAge: 24 * 60 * 60 * 1000,
@@ -382,7 +381,19 @@ app.use(session({
         sameSite: isProduction ? 'none' : 'lax',
         path: '/'
     }
-}));
+};
+
+// Vercel Serverless 用内存 session（无持久化），其他环境用文件 session
+if (!IS_VERCEL) {
+    sessionConfig.store = new FileStore({
+        path: sessionDir,
+        secret: 'STC_SECRET_KEY_2025',
+        ttl: 86400 * 7,
+        retries: 0
+    });
+}
+
+app.use(session(sessionConfig));
 
 app.use(express.static(path.join(__dirname, 'public'), {
     extensions: ['html', 'htm'],
@@ -1856,6 +1867,10 @@ if (isLocalDev) {
         res.json({ success: true, message: '服务器正在重启...' });
         
         setTimeout(() => {
+            if (IS_VERCEL) {
+                console.log('Vercel Serverless 环境不支持重启');
+                return;
+            }
             const restartScript = 'node';
             const args = ['server.js'];
             const options = {
