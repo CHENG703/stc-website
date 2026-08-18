@@ -138,6 +138,7 @@ class SimpleJSONDB {
         this._defaults = defaults;
         this._kvEnabled = false;
         this._pendingKvSave = Promise.resolve();
+        this._lastModified = null;
 
         this._loadFileSync();
     }
@@ -146,6 +147,8 @@ class SimpleJSONDB {
         try {
             if (fs.existsSync(this.filePath)) {
                 this._data = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
+                const stats = fs.statSync(this.filePath);
+                this._lastModified = stats.mtimeMs;
             }
         } catch (e) {
             console.warn('[DB] 本地文件读取失败:', e.message);
@@ -167,6 +170,8 @@ class SimpleJSONDB {
     _saveFile() {
         try {
             fs.writeFileSync(this.filePath, JSON.stringify(this._data, null, 2));
+            const stats = fs.statSync(this.filePath);
+            this._lastModified = stats.mtimeMs;
         } catch (e) {
             console.error('[DB] 写入本地文件失败:', e.message);
         }
@@ -262,6 +267,19 @@ class SimpleJSONDB {
     }
 
     async read() {
+        // 检查文件是否被修改，避免不必要的重新加载
+        try {
+            if (fs.existsSync(this.filePath)) {
+                const stats = fs.statSync(this.filePath);
+                if (this._lastModified && stats.mtimeMs <= this._lastModified) {
+                    // 文件没有被修改，跳过重新加载
+                    return this;
+                }
+                this._lastModified = stats.mtimeMs;
+            }
+        } catch (e) {
+            // 忽略 stat 错误，继续加载
+        }
         this._loadFileSync();
         return this;
     }
@@ -558,8 +576,8 @@ if (IS_VERCEL) {
     // 先加载 session
     app.use(session({
         secret: SESSION_SECRET,
-        resave: false,
-        saveUninitialized: false,
+        resave: true,  // 强制保存 session
+        saveUninitialized: true,  // 保存新创建的 session
         cookie: {
             secure: true,
             maxAge: 24 * 60 * 60 * 1000,
@@ -597,11 +615,25 @@ if (IS_VERCEL) {
         req.authUser = authUser;
         req.isAuthenticated = !!authUser;
         
-        if (authUser && !req.session.userId) {
-            req.session.userId = authUser.id;
-            req.session.username = authUser.username;
-            req.session.isAdmin = authUser.is_admin;
-            req.session.isSuperAdmin = authUser.is_super_admin;
+        // 总是从 authUser 同步 session（确保跨实例兼容）
+        if (authUser) {
+            const sessionChanged = !req.session.userId || 
+                req.session.userId !== authUser.id ||
+                req.session.username !== authUser.username ||
+                req.session.isAdmin !== authUser.is_admin ||
+                req.session.isSuperAdmin !== authUser.is_super_admin;
+            
+            if (sessionChanged) {
+                req.session.userId = authUser.id;
+                req.session.username = authUser.username;
+                req.session.isAdmin = authUser.is_admin;
+                req.session.isSuperAdmin = authUser.is_super_admin;
+                // 立即保存 session
+                req.session.save((err) => {
+                    if (err) console.warn('[AUTH] session 保存失败:', err.message);
+                    else if (!req.path.startsWith('/static')) console.log('[AUTH] session 已同步:', authUser.username);
+                });
+            }
         }
         
         // 生成 token 的辅助函数
@@ -726,38 +758,75 @@ function isSafePath(filePath, allowedDir) {
 }
 
 // 统一的用户获取函数（支持 session 和 authUser 两种方式）
-function getCurrentUser(req) {
+async function getCurrentUser(req) {
+    // Vercel 环境：每次尝试重新加载数据库，确保数据最新
+    if (IS_VERCEL) {
+        try {
+            await db.read();
+        } catch (e) {
+            console.warn('[AUTH] 数据库重新加载失败:', e.message);
+        }
+    }
+    
     if (req.session.userId) {
-        return db.data.users.find(u => u.id === req.session.userId);
+        let user = db.data.users.find(u => u.id === req.session.userId);
+        if (user) return user;
+        // Vercel 环境：如果 session.userId 找不到，尝试用 authUser
+        if (IS_VERCEL && req.authUser && req.authUser.id) {
+            user = db.data.users.find(u => u.id === req.authUser.id);
+            if (user) {
+                // 同步 session
+                req.session.userId = user.id;
+                req.session.username = user.username;
+                req.session.isAdmin = user.is_admin;
+                req.session.isSuperAdmin = user.is_super_admin;
+            }
+            return user;
+        }
+        return null;
     }
     if (req.authUser && req.authUser.id) {
-        return db.data.users.find(u => u.id === req.authUser.id);
+        let user = db.data.users.find(u => u.id === req.authUser.id);
+        if (user) {
+            // 同步 session
+            if (!req.session.userId) {
+                req.session.userId = user.id;
+                req.session.username = user.username;
+                req.session.isAdmin = user.is_admin;
+                req.session.isSuperAdmin = user.is_super_admin;
+            }
+        }
+        return user;
     }
     return null;
 }
 
-const requireLogin = (req, res, next) => {
-    const user = getCurrentUser(req);
+const requireLogin = async (req, res, next) => {
+    const user = await getCurrentUser(req);
     if (!user) {
         console.log('[AUTH] requireLogin 失败，session.userId:', req.session.userId, 'authUser:', req.authUser?.id);
+        console.log('[AUTH] 数据库用户数:', db.data.users?.length || 0);
         return res.status(403).json({ error: '请先登录' });
     }
     next();
 };
 
-const requireAdmin = (req, res, next) => {
-    const user = getCurrentUser(req);
+const requireAdmin = async (req, res, next) => {
+    const user = await getCurrentUser(req);
     if (!user) {
+        console.log('[AUTH] requireAdmin 失败，session.userId:', req.session.userId, 'authUser:', req.authUser?.id);
+        console.log('[AUTH] 数据库用户数:', db.data.users?.length || 0);
         return res.status(403).json({ error: '请先登录' });
     }
     if (!user.is_admin && !user.is_super_admin) {
+        console.log('[AUTH] requireAdmin 权限不足，用户:', user.username, 'is_admin:', user.is_admin, 'is_super_admin:', user.is_super_admin);
         return res.status(403).json({ error: '权限不足' });
     }
     next();
 };
 
-const requireSuperAdmin = (req, res, next) => {
-    const user = getCurrentUser(req);
+const requireSuperAdmin = async (req, res, next) => {
+    const user = await getCurrentUser(req);
     if (!user) {
         return res.status(403).json({ error: '请先登录' });
     }
@@ -1068,9 +1137,9 @@ app.get('/api/csrf-token', (req, res) => {
     res.json({ success: true, csrfToken: token });
 });
 
-app.get('/api/user', (req, res) => {
-    const user = getCurrentUser(req);
-    console.log('[USER API] session.userId:', req.session.userId, 'authUser:', req.authUser?.username, 'found:', !!user);
+app.get('/api/user', async (req, res) => {
+    const user = await getCurrentUser(req);
+    console.log('[USER API] session.userId:', req.session.userId, 'authUser:', req.authUser?.username, 'found:', !!user, 'dbUsers:', db.data.users?.length || 0);
     if (!user) {
         return res.status(401).json({ error: '未登录' });
     }
