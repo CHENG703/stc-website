@@ -135,20 +135,8 @@ class SimpleJSONDB {
         this.filePath = filePath;
         this._data = null;
         this._defaults = defaults;
-        this._kv = null;
         this._kvEnabled = false;
         this._pendingKvSave = Promise.resolve();
-
-        if (IS_VERCEL && process.env.KV_REST_API_URL) {
-            try {
-                const { kv } = require('@vercel/kv');
-                this._kv = kv;
-                this._kvEnabled = true;
-                console.log('[DB] Vercel KV 持久化已启用');
-            } catch (e) {
-                console.warn('[DB] @vercel/kv 加载失败，将使用临时文件存储（数据可能丢失）');
-            }
-        }
 
         this._loadFileSync();
     }
@@ -183,17 +171,8 @@ class SimpleJSONDB {
         }
     }
 
-    _saveKv() {
-        if (!this._kvEnabled) return;
-        const json = JSON.stringify(this._data);
-        this._pendingKvSave = this._pendingKvSave
-            .then(() => this._kv.set('stc-website:database', json))
-            .catch(e => console.warn('[DB] KV保存失败:', e.message));
-    }
-
     _onMutate() {
         this._saveFile();
-        this._saveKv();
     }
 
     _wrapArray(arr) {
@@ -282,27 +261,12 @@ class SimpleJSONDB {
     }
 
     async read() {
-        if (this._kvEnabled) {
-            try {
-                const saved = await this._kv.get('stc-website:database');
-                if (saved) {
-                    this._data = JSON.parse(saved);
-                    this._ensureDefaults();
-                    console.log('[DB] 从 Vercel KV 加载数据成功');
-                    return this;
-                }
-                console.log('[DB] KV中无数据，使用默认值');
-            } catch (e) {
-                console.warn('[DB] 从 KV 加载失败，使用本地缓存:', e.message);
-            }
-        }
         this._loadFileSync();
         return this;
     }
 
     async write() {
         this._saveFile();
-        this._saveKv();
     }
 
     async flush() {
@@ -2687,6 +2651,34 @@ async function ensureReady() {
     console.log('[Vercel] Server ready, app listening');
     return app;
 }
+
+// 数据库导出/导入API（用于Vercel等Serverless环境的数据持久化）
+app.get('/api/db/export', requireSuperAdmin, async (req, res) => {
+    try {
+        const data = db._data;
+        const json = JSON.stringify(data, null, 2);
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', 'attachment; filename="database.json"');
+        res.send(json);
+    } catch (error) {
+        res.status(500).json({ success: false, message: '导出失败: ' + error.message });
+    }
+});
+
+app.post('/api/db/import', requireSuperAdmin, express.json({ limit: '10mb' }), async (req, res) => {
+    try {
+        const newData = req.body;
+        if (!newData || typeof newData !== 'object') {
+            return res.status(400).json({ success: false, message: '无效的数据库文件' });
+        }
+        db._data = newData;
+        db._ensureDefaults();
+        db._saveFile();
+        res.json({ success: true, message: '数据库导入成功' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: '导入失败: ' + error.message });
+    }
+});
 
 module.exports = app;
 module.exports.default = app;
