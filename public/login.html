@@ -627,6 +627,11 @@
                 }
                 
                 if (data.success) {
+                    // 存储 token 到 localStorage
+                    if (data.token) {
+                        localStorage.setItem('stc_auth_token', data.token);
+                        console.log('[LOGIN] token 已存储到 localStorage');
+                    }
                     showSuccess('登录成功！正在跳转...');
                     setTimeout(() => {
                         window.location.href = '/home';
