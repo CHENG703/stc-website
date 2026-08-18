@@ -600,6 +600,7 @@ if (IS_VERCEL) {
                     authUser = {
                         id: decoded.userId,
                         username: decoded.username,
+                        email: decoded.email || '',
                         is_admin: decoded.isAdmin,
                         is_super_admin: decoded.isSuperAdmin
                     };
@@ -641,6 +642,7 @@ if (IS_VERCEL) {
             const tokenData = {
                 userId: user.id,
                 username: user.username,
+                email: user.email || '',
                 isAdmin: user.is_admin,
                 isSuperAdmin: user.is_super_admin,
                 ts: Date.now()
@@ -758,6 +760,7 @@ function isSafePath(filePath, allowedDir) {
 }
 
 // 统一的用户获取函数（支持 session 和 authUser 两种方式）
+// 核心策略：token 已经验证了用户身份和权限，直接使用 authUser 作为用户对象
 async function getCurrentUser(req) {
     // Vercel 环境：每次尝试重新加载数据库，确保数据最新
     if (IS_VERCEL) {
@@ -768,89 +771,48 @@ async function getCurrentUser(req) {
         }
     }
     
-    // Vercel 回退机制：如果有 authUser 但数据库中找不到用户
-    // 使用环境变量创建虚拟管理员
-    if (IS_VERCEL && req.authUser && req.authUser.id) {
+    // 优先使用 authUser（从 token 解析，最可靠）
+    if (req.authUser && req.authUser.id) {
+        // 先尝试从数据库查找完整用户信息
         let user = db.data.users.find(u => u.id === req.authUser.id);
         if (user) {
             // 同步 session
-            if (!req.session.userId) {
-                req.session.userId = user.id;
-                req.session.username = user.username;
-                req.session.isAdmin = user.is_admin;
-                req.session.isSuperAdmin = user.is_super_admin;
-            }
+            req.session.userId = user.id;
+            req.session.username = user.username;
+            req.session.isAdmin = user.is_admin;
+            req.session.isSuperAdmin = user.is_super_admin;
             return user;
         }
         
-        // 数据库中找不到用户，使用环境变量回退
-        if (process.env.ADMIN_USERNAME && req.authUser.username === process.env.ADMIN_USERNAME) {
-            console.log('[AUTH] Vercel回退：使用环境变量创建虚拟管理员');
-            const virtualUser = {
-                id: req.authUser.id,
-                username: req.authUser.username,
-                email: process.env.ADMIN_EMAIL || req.authUser.username,
-                is_admin: true,
-                is_super_admin: true,
-                status: 'active',
-                password: ''  // 虚拟用户不需要密码
-            };
-            
-            // 同步 session
-            req.session.userId = virtualUser.id;
-            req.session.username = virtualUser.username;
-            req.session.isAdmin = virtualUser.is_admin;
-            req.session.isSuperAdmin = virtualUser.is_super_admin;
-            
-            // 尝试将虚拟用户持久化到数据库
-            try {
-                await ensureAdminUser();
-                await db.read();
-                const persistedUser = db.data.users.find(u => u.username === req.authUser.username);
-                if (persistedUser) {
-                    console.log('[AUTH] 虚拟用户已持久化到数据库');
-                    return persistedUser;
-                }
-            } catch (e) {
-                console.warn('[AUTH] 持久化虚拟用户失败:', e.message);
-            }
-            
-            return virtualUser;
-        }
+        // 数据库中找不到用户，直接从 token 构建用户对象
+        // token 已经验证了用户身份，不需要依赖数据库
+        console.log('[AUTH] 数据库中未找到用户，使用 token 信息构建用户:', req.authUser.username);
+        const tokenUser = {
+            id: req.authUser.id,
+            username: req.authUser.username,
+            email: req.authUser.email || '',
+            is_admin: req.authUser.is_admin,
+            is_super_admin: req.authUser.is_super_admin,
+            status: 'active',
+            password: ''
+        };
         
-        return null;
+        // 同步 session
+        req.session.userId = tokenUser.id;
+        req.session.username = tokenUser.username;
+        req.session.isAdmin = tokenUser.is_admin;
+        req.session.isSuperAdmin = tokenUser.is_super_admin;
+        
+        return tokenUser;
     }
     
+    // 如果没有 authUser，尝试用 session
     if (req.session.userId) {
         let user = db.data.users.find(u => u.id === req.session.userId);
         if (user) return user;
-        // Vercel 环境：如果 session.userId 找不到，尝试用 authUser
-        if (IS_VERCEL && req.authUser && req.authUser.id) {
-            user = db.data.users.find(u => u.id === req.authUser.id);
-            if (user) {
-                // 同步 session
-                req.session.userId = user.id;
-                req.session.username = user.username;
-                req.session.isAdmin = user.is_admin;
-                req.session.isSuperAdmin = user.is_super_admin;
-            }
-            return user;
-        }
         return null;
     }
-    if (req.authUser && req.authUser.id) {
-        let user = db.data.users.find(u => u.id === req.authUser.id);
-        if (user) {
-            // 同步 session
-            if (!req.session.userId) {
-                req.session.userId = user.id;
-                req.session.username = user.username;
-                req.session.isAdmin = user.is_admin;
-                req.session.isSuperAdmin = user.is_super_admin;
-            }
-        }
-        return user;
-    }
+    
     return null;
 }
 
