@@ -393,6 +393,7 @@ function validatePassword(password) {
 
 function getClientIP(req) {
     return req.headers['cf-connecting-ip'] || 
+           req.headers['x-vercel-forwarded-for'] ||
            req.headers['x-real-ip'] ||
            req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
            req.connection?.remoteAddress || 
@@ -2161,7 +2162,7 @@ app.get('/api/members', requireAdmin, async (req, res) => {
         is_super_admin: u.is_super_admin,
         is_banned: u.is_banned,
         created_at: u.created_at,
-        lastLoginIp: u.lastLoginIp || '无',
+        last_login_ip: u.lastLoginIp || '无',
         lastLoginTime: u.lastLoginTime || null
     }));
     res.json({ success: true, data: members });
