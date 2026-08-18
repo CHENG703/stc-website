@@ -989,6 +989,8 @@ async function fetchWithAuth(url, options = {}) {
     const token = localStorage.getItem('stc_auth_token');
     if (token) {
         options.headers['Authorization'] = 'Bearer ' + token;
+    } else {
+        console.warn('[fetchWithAuth] No token in localStorage for:', url);
     }
 
     const response = await fetch(url, options);
@@ -996,9 +998,13 @@ async function fetchWithAuth(url, options = {}) {
         throw new Error('Unauthorized');
     }
     if (response.status === 403) {
-        const error = await response.json();
-        const errorMsg = error.error || '';
-        throw new Error('PermissionDenied');
+        let debugInfo = '';
+        try {
+            const error = await response.clone().json();
+            debugInfo = JSON.stringify(error.debug || error);
+            console.error('[fetchWithAuth] 403 for', url, 'debug:', debugInfo);
+        } catch(e) {}
+        throw new Error('PermissionDenied: ' + debugInfo);
     }
     return response;
 }

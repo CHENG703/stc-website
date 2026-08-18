@@ -821,7 +821,17 @@ const requireLogin = async (req, res, next) => {
     if (!user) {
         console.log('[AUTH] requireLogin 失败，session.userId:', req.session.userId, 'authUser:', req.authUser?.id);
         console.log('[AUTH] 数据库用户数:', db.data.users?.length || 0);
-        return res.status(403).json({ error: '请先登录' });
+        console.log('[AUTH] Authorization header:', req.headers.authorization ? 'present' : 'missing');
+        return res.status(403).json({ 
+            error: '请先登录',
+            debug: {
+                hasAuthHeader: !!req.headers.authorization,
+                hasAuthUser: !!req.authUser,
+                authUserId: req.authUser?.id || null,
+                sessionUserId: req.session.userId || null,
+                dbUserCount: db.data.users?.length || 0
+            }
+        });
     }
     next();
 };
@@ -831,7 +841,18 @@ const requireAdmin = async (req, res, next) => {
     if (!user) {
         console.log('[AUTH] requireAdmin 失败，session.userId:', req.session.userId, 'authUser:', req.authUser?.id);
         console.log('[AUTH] 数据库用户数:', db.data.users?.length || 0);
-        return res.status(403).json({ error: '请先登录' });
+        console.log('[AUTH] Authorization header:', req.headers.authorization ? 'present' : 'missing');
+        return res.status(403).json({ 
+            error: '请先登录',
+            debug: {
+                hasAuthHeader: !!req.headers.authorization,
+                hasAuthUser: !!req.authUser,
+                authUserId: req.authUser?.id || null,
+                authUsername: req.authUser?.username || null,
+                sessionUserId: req.session.userId || null,
+                dbUserCount: db.data.users?.length || 0
+            }
+        });
     }
     if (!user.is_admin && !user.is_super_admin) {
         console.log('[AUTH] requireAdmin 权限不足，用户:', user.username, 'is_admin:', user.is_admin, 'is_super_admin:', user.is_super_admin);
@@ -1025,6 +1046,29 @@ app.get('/api/debug', async (req, res) => {
             stack: IS_VERCEL ? 'hidden' : e.stack
         });
     }
+});
+
+// 认证测试端点（通过 fetchWithAuth 调用，测试 token 是否有效）
+app.get('/api/auth-test', async (req, res) => {
+    const user = await getCurrentUser(req);
+    res.json({
+        authenticated: !!user,
+        user: user ? {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            is_admin: user.is_admin,
+            is_super_admin: user.is_super_admin
+        } : null,
+        authUser: req.authUser ? {
+            id: req.authUser.id,
+            username: req.authUser.username,
+            is_admin: req.authUser.is_admin,
+            is_super_admin: req.authUser.is_super_admin
+        } : null,
+        hasAuthHeader: !!req.headers.authorization,
+        sessionUserId: req.session.userId || null
+    });
 });
 
 app.post('/api/login', async (req, res) => {

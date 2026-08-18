@@ -86,7 +86,7 @@ async function handleLogin(event) {
                 'Content-Type': 'application/json'
             },
             credentials: 'include',
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ username, password, loginType: 'password' })
         });
 
         if (response.ok) {
