@@ -768,6 +768,59 @@ async function getCurrentUser(req) {
         }
     }
     
+    // Vercel 回退机制：如果有 authUser 但数据库中找不到用户
+    // 使用环境变量创建虚拟管理员
+    if (IS_VERCEL && req.authUser && req.authUser.id) {
+        let user = db.data.users.find(u => u.id === req.authUser.id);
+        if (user) {
+            // 同步 session
+            if (!req.session.userId) {
+                req.session.userId = user.id;
+                req.session.username = user.username;
+                req.session.isAdmin = user.is_admin;
+                req.session.isSuperAdmin = user.is_super_admin;
+            }
+            return user;
+        }
+        
+        // 数据库中找不到用户，使用环境变量回退
+        if (process.env.ADMIN_USERNAME && req.authUser.username === process.env.ADMIN_USERNAME) {
+            console.log('[AUTH] Vercel回退：使用环境变量创建虚拟管理员');
+            const virtualUser = {
+                id: req.authUser.id,
+                username: req.authUser.username,
+                email: process.env.ADMIN_EMAIL || req.authUser.username,
+                is_admin: true,
+                is_super_admin: true,
+                status: 'active',
+                password: ''  // 虚拟用户不需要密码
+            };
+            
+            // 同步 session
+            req.session.userId = virtualUser.id;
+            req.session.username = virtualUser.username;
+            req.session.isAdmin = virtualUser.is_admin;
+            req.session.isSuperAdmin = virtualUser.is_super_admin;
+            
+            // 尝试将虚拟用户持久化到数据库
+            try {
+                await ensureAdminUser();
+                await db.read();
+                const persistedUser = db.data.users.find(u => u.username === req.authUser.username);
+                if (persistedUser) {
+                    console.log('[AUTH] 虚拟用户已持久化到数据库');
+                    return persistedUser;
+                }
+            } catch (e) {
+                console.warn('[AUTH] 持久化虚拟用户失败:', e.message);
+            }
+            
+            return virtualUser;
+        }
+        
+        return null;
+    }
+    
     if (req.session.userId) {
         let user = db.data.users.find(u => u.id === req.session.userId);
         if (user) return user;
@@ -900,6 +953,118 @@ app.use((req, res, next) => {
     next();
 });
 
+// ============== 超级管理员回退机制 ==============
+// 确保数据库中始终存在超级管理员用户（Vercel环境数据库可能为空）
+async function ensureAdminUser() {
+    if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
+        return;
+    }
+    
+    await db.read();
+    
+    // 检查是否已存在超级管理员
+    const existingAdmin = db.data.users.find(u => u.is_super_admin);
+    if (existingAdmin) {
+        // 确保管理员存在于所有Vercel实例
+        // 如果存在但密码不对，不修改（用户可能已改过密码）
+        return;
+    }
+    
+    // 从环境变量创建超级管理员
+    const adminUsername = process.env.ADMIN_USERNAME;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+    const adminEmail = process.env.ADMIN_EMAIL || adminUsername;
+    
+    // 检查用户名是否已存在（不是超级管理员的话升级）
+    let user = db.data.users.find(u => u.username === adminUsername);
+    
+    if (user) {
+        // 升级为超级管理员
+        user.is_admin = true;
+        user.is_super_admin = true;
+        if (adminEmail && !user.email) {
+            user.email = adminEmail;
+        }
+        console.log('[ADMIN] 用户 ' + adminUsername + ' 已升级为超级管理员');
+    } else {
+        // 创建新的超级管理员
+        const bcrypt = require('bcryptjs');
+        const hashedPassword = await bcrypt.hash(adminPassword, 10);
+        
+        user = {
+            id: crypto.randomUUID(),
+            username: adminUsername,
+            email: adminEmail,
+            password: hashedPassword,
+            is_admin: true,
+            is_super_admin: true,
+            status: 'active',
+            created_at: new Date().toISOString()
+        };
+        
+        db.data.users.push(user);
+        console.log('[ADMIN] 已创建超级管理员: ' + adminUsername);
+    }
+    
+    await db.write();
+}
+
+// 启动时初始化管理员
+ensureAdminUser().catch(err => console.error('[ADMIN] 初始化管理员失败:', err));
+
+// 调试端点（无需认证，用于诊断Vercel环境问题）
+app.get('/api/debug', async (req, res) => {
+    try {
+        await db.read();
+        
+        const users = db.data.users || [];
+        const hasAdmin = users.some(u => u.is_super_admin);
+        const hasAdminUsername = users.some(u => u.username === process.env.ADMIN_USERNAME);
+        
+        res.json({
+            status: 'ok',
+            vercel: IS_VERCEL,
+            dbFileExists: require('fs').existsSync(dbPath),
+            dbFilePath: dbPath,
+            userCount: users.length,
+            hasSuperAdmin: hasAdmin,
+            hasAdminUsername: hasAdminUsername,
+            adminUsername: process.env.ADMIN_USERNAME || 'not-set',
+            users: users.map(u => ({
+                username: u.username,
+                is_admin: u.is_admin,
+                is_super_admin: u.is_super_admin,
+                status: u.status
+            })),
+            envVars: {
+                VERCEL: process.env.VERCEL,
+                VERCEL_URL: process.env.VERCEL_URL,
+                SITE_URL: process.env.SITE_URL,
+                hasAdminEnv: !!(process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD)
+            },
+            session: {
+                userId: req.session.userId,
+                username: req.session.username,
+                isAdmin: req.session.isAdmin,
+                isSuperAdmin: req.session.isSuperAdmin
+            },
+            authUser: req.authUser ? {
+                id: req.authUser.id,
+                username: req.authUser.username,
+                is_admin: req.authUser.is_admin,
+                is_super_admin: req.authUser.is_super_admin
+            } : null,
+            timestamp: new Date().toISOString()
+        });
+    } catch (e) {
+        res.status(500).json({
+            status: 'error',
+            message: e.message,
+            stack: IS_VERCEL ? 'hidden' : e.stack
+        });
+    }
+});
+
 app.post('/api/login', async (req, res) => {
     const { username, password, code, loginType } = req.body;
     
@@ -934,6 +1099,45 @@ app.post('/api/login', async (req, res) => {
         db.data.verification_codes = db.data.verification_codes.filter(c => c.email !== user.email);
     } else {
         user = db.data.users.find(u => u.username === username || u.email === username);
+    }
+    
+    // Vercel 回退机制：如果用户不存在且是密码登录，检查环境变量中的管理员凭据
+    if (!user && loginType === 'password' && process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD) {
+        const adminUsername = process.env.ADMIN_USERNAME;
+        const adminPassword = process.env.ADMIN_PASSWORD;
+        
+        // 检查用户名是否匹配
+        if (username === adminUsername) {
+            // 验证密码
+            if (password === adminPassword) {
+                console.log('[LOGIN] 使用环境变量回退凭据登录:', username);
+                
+                // 确保管理员用户存在于数据库（即时创建）
+                await ensureAdminUser();
+                
+                // 重新加载数据库获取用户
+                await db.read();
+                user = db.data.users.find(u => u.username === adminUsername);
+                
+                if (!user) {
+                    // 如果ensureAdminUser没有成功创建，直接创建
+                    user = {
+                        id: crypto.randomUUID(),
+                        username: adminUsername,
+                        email: process.env.ADMIN_EMAIL || adminUsername,
+                        password: bcrypt.hashSync(adminPassword, 10),
+                        is_admin: true,
+                        is_super_admin: true,
+                        status: 'active',
+                        login_attempts: 0,
+                        created_at: new Date().toISOString()
+                    };
+                    db.data.users.push(user);
+                    await db.write();
+                    console.log('[LOGIN] 即时创建管理员用户:', adminUsername);
+                }
+            }
+        }
     }
     
     if (!user) {
