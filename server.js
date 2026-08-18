@@ -31,16 +31,8 @@ const IS_VERCEL = !!process.env.VERCEL;
 const canSpawn = !IS_VERCEL;
 const fsRoot = IS_VERCEL ? '/tmp' : __dirname;
 
-let spawn = () => { throw new Error('child_process not available'); };
-if (!IS_VERCEL) {
-    try {
-        spawn = require('child_process').spawn;
-    } catch (e) {}
-}
+const { spawn } = require('child_process');
 const nodemailer = require('nodemailer');
-
-const { Low } = require('lowdb');
-const { JSONFile } = require('lowdb/node');
 let FileStore = null;
 if (!IS_VERCEL) {
     try {
@@ -120,14 +112,81 @@ if ((IS_VERCEL || isZeabur) && !fs.existsSync(runtimeDir)) {
 }
 
 const dbPath = path.join(runtimeDir, 'database.json');
-const db = new Low(new JSONFile(dbPath), {
+const defaults = {
     users: [],
     tasks: [],
     invite_codes: [],
     invite_requests: [],
     banned_ips: [],
-    verification_codes: []
-});
+    verification_codes: [],
+    messages: [],
+    emails: [],
+    emailAttachments: [],
+    emailFolders: [],
+    inviteApplications: [],
+    inviteCodes: [],
+    bannedIPs: []
+};
+
+class SimpleJSONDB {
+    constructor(filePath, defaults) {
+        this.filePath = filePath;
+        this._data = null;
+        this._defaults = defaults;
+        this._load();
+    }
+    _load() {
+        try {
+            if (fs.existsSync(this.filePath)) {
+                this._data = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
+            }
+        } catch (e) {
+            console.warn('[DB] 读取数据库失败，使用默认值:', e.message);
+        }
+        if (!this._data || typeof this._data !== 'object') {
+            this._data = {};
+        }
+        for (const key of Object.keys(this._defaults)) {
+            if (this._data[key] === undefined) {
+                this._data[key] = Array.isArray(this._defaults[key]) ? [] : this._defaults[key];
+            }
+        }
+        this._save();
+    }
+    _save() {
+        try {
+            fs.writeFileSync(this.filePath, JSON.stringify(this._data, null, 2));
+        } catch (e) {
+            console.error('[DB] 保存数据库失败:', e.message);
+        }
+    }
+    get data() {
+        return new Proxy(this._data, {
+            get: (target, prop) => {
+                const val = target[prop];
+                if (Array.isArray(val)) {
+                    return new Proxy(val, {
+                        set: (arr, idx, value) => {
+                            arr[idx] = value;
+                            this._save();
+                            return true;
+                        }
+                    });
+                }
+                return val;
+            },
+            set: (target, prop, val) => {
+                target[prop] = val;
+                this._save();
+                return true;
+            }
+        });
+    }
+    async read() { this._load(); return this; }
+    async write() { this._save(); }
+}
+
+const db = new SimpleJSONDB(dbPath, defaults);
 
 let bannedIPs = new Set();
 
