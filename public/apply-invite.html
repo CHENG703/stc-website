@@ -389,7 +389,7 @@
             const btn = document.getElementById('apply-btn');
             
             try {
-                const response = await fetch('/api/apply-invite', {
+                const response = await fetch('/api/invite/request', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'

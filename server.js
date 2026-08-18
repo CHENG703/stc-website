@@ -208,8 +208,9 @@ function validatePassword(password) {
 }
 
 function getClientIP(req) {
-    return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
-           req.headers['x-real-ip'] || 
+    return req.headers['cf-connecting-ip'] || 
+           req.headers['x-real-ip'] ||
+           req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
            req.connection?.remoteAddress || 
            req.socket?.remoteAddress ||
            '127.0.0.1';
@@ -383,7 +384,26 @@ app.use(session({
     }
 }));
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+    extensions: ['html', 'htm'],
+    index: 'index.html'
+}));
+
+// 处理无扩展名的HTML页面访问
+app.use((req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD') {
+        let pathname = decodeURIComponent(req.path);
+        if (pathname.endsWith('/')) pathname = pathname.slice(0, -1);
+        
+        if (pathname && !pathname.includes('.') && !pathname.startsWith('/api/') && !pathname.startsWith('/css/') && !pathname.startsWith('/js/') && !pathname.startsWith('/avatars/') && !pathname.startsWith('/uploads/')) {
+            const filePath = path.join(__dirname, 'public', pathname + '.html');
+            if (fs.existsSync(filePath)) {
+                return res.sendFile(filePath);
+            }
+        }
+    }
+    next();
+});
 
 async function initDatabase() {
     await db.read();
@@ -399,6 +419,16 @@ async function initDatabase() {
         };
         await db.write();
     }
+    
+    // 确保所有必需的字段都存在
+    if (!Array.isArray(db.data.users)) db.data.users = [];
+    if (!Array.isArray(db.data.tasks)) db.data.tasks = [];
+    if (!Array.isArray(db.data.invite_codes)) db.data.invite_codes = [];
+    if (!Array.isArray(db.data.invite_requests)) db.data.invite_requests = [];
+    if (!Array.isArray(db.data.banned_ips)) db.data.banned_ips = [];
+    if (!Array.isArray(db.data.verification_codes)) db.data.verification_codes = [];
+    if (!Array.isArray(db.data.inviteCodes)) db.data.inviteCodes = [];
+    await db.write();
     
     if (!db.data.users.find(u => u.username === 'REDACTED_USER')) {
         const hash = bcrypt.hashSync('REDACTED_USER', 10);
@@ -600,6 +630,12 @@ app.post('/api/login', async (req, res) => {
     
     req.session.userId = user.id;
     req.session.loginIP = getClientIP(req);
+    
+    // 更新用户最后登录IP和时间
+    user.lastLoginIp = getClientIP(req);
+    user.lastLoginTime = new Date().toISOString();
+    await db.write();
+    
     res.json({ success: true, message: '登录成功', user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin } });
 });
 
@@ -804,6 +840,8 @@ app.post('/api/send-code', async (req, res) => {
             return res.status(400).json({ success: false, message: '该邮箱未注册' });
         }
     }
+
+    if (!Array.isArray(db.data.verification_codes)) db.data.verification_codes = [];
     
     const existingCode = db.data.verification_codes.find(c => c.email === email);
     if (existingCode && Date.now() - existingCode.created_at < 60000) {
@@ -830,7 +868,7 @@ app.post('/api/send-code', async (req, res) => {
     
     // 发送邮件
     try {
-        await emailTransporter.sendMail({
+        const info = await emailTransporter.sendMail({
             from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: '【STC】您的验证码',
@@ -851,9 +889,10 @@ app.post('/api/send-code', async (req, res) => {
                 </div>
             `
         });
-        console.log(`邮箱验证码已发送: ${email} -> ${code}`);
+        console.log(`[SEND-CODE OK] ${email} -> code=${code}, accepted=${info.accepted || '-'}, rejected=${info.rejected || '-'}, msgId=${info.messageId || '-'}`);
     } catch (error) {
-        console.error('邮件发送失败:', error);
+        const detail = JSON.stringify({ message: error.message, code: error.code, response: error.response, command: error.command });
+        console.error(`[SEND-CODE FAIL] ${email}: ${detail}`);
         return res.status(500).json({ success: false, message: '邮件发送失败，请稍后重试' });
     }
     
@@ -1179,11 +1218,9 @@ app.post('/api/invite/request', async (req, res) => {
         return res.status(400).json({ success: false, message: '邮箱格式不正确' });
     }
     
-    if (db.data.users.find(u => u.email === email)) {
-        return res.status(400).json({ success: false, message: '该邮箱已注册' });
-    }
+    if (!Array.isArray(db.data.invite_requests)) db.data.invite_requests = [];
     
-    const existingRequest = db.data.invite_requests.find(r => r.email === email && r.status === 'pending');
+    const existingRequest = (db.data.invite_requests || []).find(r => r.email === email && r.status === 'pending');
     if (existingRequest) {
         return res.status(400).json({ success: false, message: '已有待处理的申请，请等待审批' });
     }
@@ -1192,12 +1229,274 @@ app.post('/api/invite/request', async (req, res) => {
         id: Date.now(),
         email: email,
         status: 'pending',
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        approval_token: crypto.randomBytes(24).toString('hex'),
+        reject_token: crypto.randomBytes(24).toString('hex')
     });
     
     await db.write();
+
+    // 邮件里的审批链接域名优先使用环境变量 SITE_URL，没有就检测部署环境，没有就回落到请求 host
+    function getPublicSiteUrl(req) {
+        if (process.env.SITE_URL) {
+            const url = process.env.SITE_URL.replace(/\/$/, '');
+            console.log(`[DEBUG-SITEURL] 使用 SITE_URL 环境变量: ${url}`);
+            return url;
+        }
+        if (process.env.VERCEL && process.env.VERCEL_URL) {
+            const url = `https://${process.env.VERCEL_URL}`;
+            console.log(`[DEBUG-SITEURL] 使用 VERCEL_URL: ${url}`);
+            return url;
+        }
+        if (process.env.VERCEL_BRANCH_URL) {
+            const url = `https://${process.env.VERCEL_BRANCH_URL}`;
+            console.log(`[DEBUG-SITEURL] 使用 VERCEL_BRANCH_URL: ${url}`);
+            return url;
+        }
+        if (process.env.ZEABUR && process.env.ZEABUR_DOMAIN) {
+            const url = `https://${process.env.ZEABUR_DOMAIN}`;
+            console.log(`[DEBUG-SITEURL] 使用 ZEABUR_DOMAIN: ${url}`);
+            return url;
+        }
+        if (process.env.ZEABUR && process.env.RAILWAY_STATIC_URL) {
+            const url = process.env.RAILWAY_STATIC_URL.replace(/\/$/, '');
+            console.log(`[DEBUG-SITEURL] 使用 RAILWAY_STATIC_URL: ${url}`);
+            return url;
+        }
+        const fallback = `${req.protocol}://${req.get('host')}`;
+        console.log(`[DEBUG-SITEURL] ⚠️  未配置 SITE_URL，回落至请求 host: ${fallback} （仅本机可用！）`);
+        if (fallback.includes('localhost') || fallback.includes('127.0.0.1')) {
+            console.log(`[DEBUG-SITEURL] ⚠️  警告：链接使用 localhost/127.0.0.1，在邮件中点击将无法访问服务器！请在 .env 中配置 SITE_URL 为你的公网IP或域名`);
+        }
+        return fallback;
+    }
+    const host = getPublicSiteUrl(req);
+    const reqEntry = db.data.invite_requests.find(r => r.email === email && r.status === 'pending');
+    const approveUrl = `${host}/api/invite/approve/${reqEntry.approval_token}`;
+    const rejectUrl = `${host}/api/invite/reject/${reqEntry.reject_token}`;
+    console.log(`[DEBUG-EMAIL-LINK] 申请邮箱: ${email}`);
+    console.log(`[DEBUG-EMAIL-LINK] 批准链接: ${approveUrl}`);
+    console.log(`[DEBUG-EMAIL-LINK] 拒绝链接: ${rejectUrl}`);
+
+    // 1. 发通知邮件给管理员（3422187328@qq.com），包含批准/拒绝按钮
+    try {
+        await emailTransporter.sendMail({
+            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            to: process.env.EMAIL_USER,
+            subject: '【STC】新的邀请码申请',
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #8b5cf6, #a78bfa); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">新邀请码申请</h1>
+                    </div>
+                    <div style="background: #faf5ff; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #ddd6fe;">
+                        <p style="color: #475569; font-size: 16px;">管理员您好，</p>
+                        <p style="color: #475569; font-size: 16px;">以下用户申请了邀请码：</p>
+                        <div style="background: white; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #e9d5ff;">
+                            <p style="margin: 0 0 10px;"><strong>申请邮箱：</strong> ${email}</p>
+                            <p style="margin: 0;"><strong>申请时间：</strong> ${new Date().toLocaleString('zh-CN')}</p>
+                        </div>
+                        <p style="color: #64748b; font-size: 14px; margin: 20px 0;">直接点击下方按钮审批，无需登录管理面板：</p>
+                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 10px 0 20px;">
+                            <tr>
+                                <td align="center" style="padding: 6px;">
+                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                                        <tr>
+                                            <td style="border-radius: 12px; background: #10b981;">
+                                                <a href="${approveUrl}" style="display:inline-block;padding:14px 32px;font-size:16px;font-weight:bold;color:white;text-decoration:none;border-radius:12px;background:#10b981;">✅ 批准并发送邀请码</a>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </td>
+                                <td align="center" style="padding: 6px;">
+                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                                        <tr>
+                                            <td style="border-radius: 12px; background: #ef4444;">
+                                                <a href="${rejectUrl}" style="display:inline-block;padding:14px 32px;font-size:16px;font-weight:bold;color:white;text-decoration:none;border-radius:12px;background:#ef4444;">❌ 拒绝该申请</a>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                        </table>
+                        <p style="color: #94a3b8; font-size: 12px;">如按钮无法点击，可复制链接在浏览器中打开：<br>批准：<span style="word-break:break-all;color:#64748b;">${approveUrl}</span><br>拒绝：<span style="word-break:break-all;color:#64748b;">${rejectUrl}</span></p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        });
+        console.log(`[INVITE-ADMIN] 邀请码申请通知邮件(含审批按钮)已发送: ${email}`);
+    } catch (error) {
+        console.error('[INVITE-ADMIN] 邀请码申请通知邮件发送失败:', error.message);
+    }
+
+    // 2. 发回执邮件给申请人（REDACTED@example.com 等）
+    try {
+        await emailTransporter.sendMail({
+            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: '【STC】您的邀请码申请已收到',
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #0ea5e9, #38bdf8); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">申请已收到 ✉</h1>
+                    </div>
+                    <div style="background: #f0f9ff; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #bae6fd;">
+                        <p style="color: #475569; font-size: 16px;">您好！</p>
+                        <p style="color: #475569; font-size: 16px;">感谢您对 STC任务网站 的关注。</p>
+                        <p style="color: #475569; font-size: 16px;">我们已收到您的邀请码申请，管理员会尽快审批。审批通过后，您的专属邀请码将通过邮件发送到此邮箱，请耐心等待。</p>
+                        <div style="background: white; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #e0f2fe;">
+                            <p style="margin: 0 0 10px;"><strong>申请邮箱：</strong> ${email}</p>
+                            <p style="margin: 0;"><strong>提交时间：</strong> ${new Date().toLocaleString('zh-CN')}</p>
+                        </div>
+                        <p style="color: #64748b; font-size: 14px;">如有疑问，请回复此邮件与管理员联系。</p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        });
+        console.log(`[INVITE-USER] 邀请码申请回执邮件已发送给申请人: ${email}`);
+    } catch (error) {
+        console.error('[INVITE-USER] 邀请码申请回执邮件发送失败:', error.message);
+    }
     
     res.json({ success: true, message: '申请已提交，请等待管理员审批' });
+});
+
+app.get('/api/invite/approve/:token', async (req, res) => {
+    const token = req.params.token;
+    const clientIP = getClientIP(req);
+    console.log(`[DEBUG-APPROVE] ⚡ 收到批准请求! token=${token.substring(0, 12)}... 来自IP=${clientIP}, UA=${req.headers['user-agent']?.substring(0, 80) || '-'}`);
+    if (!Array.isArray(db.data.invite_requests)) db.data.invite_requests = [];
+    console.log(`[DEBUG-APPROVE] 数据库中 invite_requests 总数: ${db.data.invite_requests.length}`);
+    db.data.invite_requests.forEach((r, i) => {
+        console.log(`[DEBUG-APPROVE] 记录#${i}: email=${r.email}, status=${r.status}, approval_token=${r.approval_token ? r.approval_token.substring(0,12)+'...' : 'MISSING!'}`);
+    });
+    const request = db.data.invite_requests.find(r => r.approval_token === token);
+    if (!request) {
+        console.log(`[DEBUG-APPROVE] ❌ token 不匹配任何记录！`);
+        return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+    }
+    console.log(`[DEBUG-APPROVE] ✅ 找到申请记录: email=${request.email}, status=${request.status}`);
+    if (request.status !== 'pending') {
+        console.log(`[DEBUG-APPROVE] ⚠️  状态不是 pending，已处理过: ${request.status}`);
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${request.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+    }
+    try {
+        const inviteCode = crypto.randomBytes(16).toString('hex');
+        if (!Array.isArray(db.data.invite_codes)) db.data.invite_codes = [];
+        if (!Array.isArray(db.data.inviteCodes)) db.data.inviteCodes = [];
+        db.data.invite_codes.push({ code: inviteCode, used: false, created_at: new Date().toISOString() });
+        db.data.inviteCodes.push(inviteCode);
+        request.status = 'approved';
+        request.approved_at = new Date().toISOString();
+        request.approved_by = 'email-link';
+        request.invite_code = inviteCode;
+        await db.write();
+        try {
+            await emailTransporter.sendMail({
+                from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+                to: request.email,
+                subject: '【STC】邀请码申请已通过',
+                html: `
+                    <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                        <div style="background: linear-gradient(135deg, #10b981, #34d399); padding: 30px; border-radius: 16px 16px 0 0;">
+                            <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">申请已通过 ✅</h1>
+                        </div>
+                        <div style="background: #ecfdf5; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #a7f3d0;">
+                            <p style="color: #475569; font-size: 16px;">您好！</p>
+                            <p style="color: #475569; font-size: 16px;">您的邀请码申请已通过审批，您的专属邀请码是：</p>
+                            <div style="background: white; padding: 20px; border-radius: 12px; text-align: center; margin: 20px 0; border: 2px dashed #10b981;">
+                                <span style="font-size: 28px; font-weight: bold; color: #047857; letter-spacing: 4px; word-break: break-all;">${inviteCode}</span>
+                            </div>
+                            <p style="color: #64748b; font-size: 14px;">请在注册页使用该邀请码完成注册，邀请码仅限一次使用。</p>
+                        </div>
+                        <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                    </div>
+                `
+            });
+            console.log(`[APPROVE-TOKEN] 邀请码邮件已通过邮件链接发送给 ${request.email}`);
+        } catch (err) {
+            console.error('[APPROVE-TOKEN] 邀请码邮件发送失败:', err.message);
+        }
+        res.send(`
+            <div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;">
+                <div style="background:linear-gradient(135deg,#10b981,#34d399);padding:30px;border-radius:16px 16px 0 0;">
+                    <h1 style="color:white;margin:0;font-size:24px;">✅ 已批准申请</h1>
+                </div>
+                <div style="background:#ecfdf5;padding:30px;border-radius:0 0 16px 16px;border:1px solid #a7f3d0;">
+                    <p style="color:#475569;font-size:16px;">已为邮箱 <strong>${request.email}</strong> 生成邀请码：</p>
+                    <div style="background:white;padding:20px;border-radius:12px;text-align:center;margin:20px 0;border:2px dashed #10b981;">
+                        <span style="font-size:26px;font-weight:bold;color:#047857;letter-spacing:3px;word-break:break-all;">${inviteCode}</span>
+                    </div>
+                    <p style="color:#64748b;font-size:14px;">邀请码已同步发送到申请人邮箱。</p>
+                    <p><a href="/admin.html" style="color:#047857;font-weight:bold;">返回管理面板</a></p>
+                </div>
+            </div>
+        `);
+    } catch (error) {
+        console.error('[APPROVE-TOKEN] 批准失败:', error.message);
+        res.status(500).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 服务器错误</h1><p>${error.message}</p></div>`);
+    }
+});
+
+app.get('/api/invite/reject/:token', async (req, res) => {
+    const token = req.params.token;
+    const clientIP = getClientIP(req);
+    console.log(`[DEBUG-REJECT] ⚡ 收到拒绝请求! token=${token.substring(0, 12)}... 来自IP=${clientIP}, UA=${req.headers['user-agent']?.substring(0, 80) || '-'}`);
+    if (!Array.isArray(db.data.invite_requests)) db.data.invite_requests = [];
+    console.log(`[DEBUG-REJECT] 数据库中 invite_requests 总数: ${db.data.invite_requests.length}`);
+    db.data.invite_requests.forEach((r, i) => {
+        console.log(`[DEBUG-REJECT] 记录#${i}: email=${r.email}, status=${r.status}, reject_token=${r.reject_token ? r.reject_token.substring(0,12)+'...' : 'MISSING!'}`);
+    });
+    const request = db.data.invite_requests.find(r => r.reject_token === token);
+    if (!request) {
+        console.log(`[DEBUG-REJECT] ❌ token 不匹配任何记录！`);
+        return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+    }
+    console.log(`[DEBUG-REJECT] ✅ 找到申请记录: email=${request.email}, status=${request.status}`);
+    if (request.status !== 'pending') {
+        console.log(`[DEBUG-REJECT] ⚠️  状态不是 pending，已处理过: ${request.status}`);
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${request.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+    }
+    request.status = 'rejected';
+    request.rejected_at = new Date().toISOString();
+    request.rejected_by = 'email-link';
+    await db.write();
+    try {
+        await emailTransporter.sendMail({
+            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            to: request.email,
+            subject: '【STC】邀请码申请未通过',
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #ef4444, #f87171); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">申请未通过</h1>
+                    </div>
+                    <div style="background: #fef2f2; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #fecaca;">
+                        <p style="color: #475569; font-size: 16px;">您好，</p>
+                        <p style="color: #475569; font-size: 16px;">很遗憾，您的邀请码申请未通过管理员审批。如有疑问，请与管理员联系。</p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        });
+        console.log(`[REJECT-TOKEN] 邀请码驳回通知邮件已发送: ${request.email}`);
+    } catch (err) {
+        console.error('[REJECT-TOKEN] 邀请码驳回通知邮件发送失败:', err.message);
+    }
+    res.send(`
+        <div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;">
+            <div style="background:linear-gradient(135deg,#ef4444,#f87171);padding:30px;border-radius:16px 16px 0 0;">
+                <h1 style="color:white;margin:0;font-size:24px;">❌ 已拒绝申请</h1>
+            </div>
+            <div style="background:#fef2f2;padding:30px;border-radius:0 0 16px 16px;border:1px solid #fecaca;">
+                <p style="color:#475569;font-size:16px;">已拒绝邮箱 <strong>${request.email}</strong> 的邀请码申请。</p>
+                <p style="color:#64748b;font-size:14px;">驳回通知邮件已发送给申请人。</p>
+                <p><a href="/admin.html" style="color:#b91c1c;font-weight:bold;">返回管理面板</a></p>
+            </div>
+        </div>
+    `);
 });
 
 app.get('/api/invite/requests', requireAdmin, async (req, res) => {
@@ -1223,6 +1522,34 @@ app.post('/api/invite/requests/:id/approve', requireAdmin, async (req, res) => {
     });
     
     await db.write();
+
+    // 发送邀请码给申请人
+    try {
+        await emailTransporter.sendMail({
+            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            to: request.email,
+            subject: '【STC】邀请码申请已通过',
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #10b981, #34d399); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">申请已通过 ✅</h1>
+                    </div>
+                    <div style="background: #ecfdf5; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #a7f3d0;">
+                        <p style="color: #475569; font-size: 16px;">您好！</p>
+                        <p style="color: #475569; font-size: 16px;">您的邀请码申请已通过审批，您的专属邀请码是：</p>
+                        <div style="background: white; padding: 20px; border-radius: 12px; text-align: center; margin: 20px 0; border: 2px dashed #10b981;">
+                            <span style="font-size: 28px; font-weight: bold; color: #047857; letter-spacing: 4px; word-break: break-all;">${inviteCode}</span>
+                        </div>
+                        <p style="color: #64748b; font-size: 14px;">请在注册页使用该邀请码完成注册，邀请码仅限一次使用。</p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        });
+        console.log(`邀请码邮件已发送给申请人: ${request.email}`);
+    } catch (error) {
+        console.error('邀请码邮件发送失败:', error.message);
+    }
     
     res.json({ success: true, message: '邀请码已生成并发送', invite_code: inviteCode });
 });
@@ -1236,7 +1563,34 @@ app.post('/api/invite/requests/:id/reject', requireAdmin, async (req, res) => {
     
     request.status = 'rejected';
     request.rejected_at = new Date().toISOString();
+    const { reason } = req.body || {};
     await db.write();
+
+    // 通知申请人被驳回
+    try {
+        await emailTransporter.sendMail({
+            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            to: request.email,
+            subject: '【STC】邀请码申请未通过',
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #ef4444, #f87171); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">申请未通过</h1>
+                    </div>
+                    <div style="background: #fef2f2; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #fecaca;">
+                        <p style="color: #475569; font-size: 16px;">您好，</p>
+                        <p style="color: #475569; font-size: 16px;">很遗憾，您的邀请码申请未通过管理员审批。</p>
+                        ${reason ? `<div style="background: white; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #fecaca;"><p style="margin: 0; color: #b91c1c;"><strong>驳回原因：</strong>${reason}</p></div>` : ''}
+                        <p style="color: #64748b; font-size: 14px;">如有疑问，请与管理员联系。</p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        });
+        console.log(`邀请码驳回通知邮件已发送: ${request.email}`);
+    } catch (error) {
+        console.error('邀请码驳回通知邮件发送失败:', error.message);
+    }
     
     res.json({ success: true, message: '申请已驳回' });
 });
@@ -1289,7 +1643,9 @@ app.get('/api/members', requireAdmin, async (req, res) => {
         is_admin: u.is_admin,
         is_super_admin: u.is_super_admin,
         is_banned: u.is_banned,
-        created_at: u.created_at
+        created_at: u.created_at,
+        lastLoginIp: u.lastLoginIp || '无',
+        lastLoginTime: u.lastLoginTime || null
     }));
     res.json({ success: true, data: members });
 });

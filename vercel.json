@@ -4,14 +4,15 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
-      "includeFiles": "server.js,public/**,public/*.html,public/css/**,public/js/**,public/avatars/**,public/js/config.js"
+      "includeFiles": "server.js,public/**,public/*.html,public/css/**,public/js/**,public/avatars/**,public/uploads/**"
     }
   },
   "routes": [
     { "src": "/css/(.*)", "dest": "/public/css/$1" },
     { "src": "/js/(.*)", "dest": "/public/js/$1" },
     { "src": "/avatars/(.*)", "dest": "/public/avatars/$1" },
-    { "src": "/(.*\\.(?:html|ico|png|jpg|jpeg|svg|gif|txt|webp))", "dest": "/public/$1" },
+    { "src": "/uploads/(.*)", "dest": "/public/uploads/$1" },
+    { "src": "/(.*\\.(?:html|ico|png|jpg|jpeg|svg|gif|txt|webp|css|js))", "dest": "/public/$1" },
     { "src": "/(.*)", "dest": "/api/index.js" }
   ],
   "env": {

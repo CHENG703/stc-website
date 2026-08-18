@@ -7,3 +7,6 @@ database.json
 ngrok.exe
 ngrok.zip
 .env.example
+sessions/
+debug-*.md
+debug-*.js
