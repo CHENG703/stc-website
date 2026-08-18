@@ -571,104 +571,57 @@ if (!IS_VERCEL && FileStore) {
     sessionConfig.store = FileStore;
 }
 
-// Vercel 环境: 使用 Authorization header 认证（localStorage 存储）
-if (IS_VERCEL) {
-    // 先加载 session
-    app.use(session({
-        secret: SESSION_SECRET,
-        resave: true,  // 强制保存 session
-        saveUninitialized: true,  // 保存新创建的 session
-        cookie: {
-            secure: true,
-            maxAge: 24 * 60 * 60 * 1000,
-            httpOnly: false,
-            sameSite: 'none',
-            path: '/'
-        }
-    }));
+// 统一的认证中间件：无论什么环境，都解析 Authorization header 并生成 token
+app.use(session(sessionConfig));
+
+app.use((req, res, next) => {
+    const authHeader = req.headers.authorization || req.headers['x-auth-token'];
+    let authUser = null;
     
-    // 然后从 Authorization header 读取 token，并设置到 session
-    app.use((req, res, next) => {
-        const authHeader = req.headers.authorization || req.headers['x-auth-token'];
-        let authUser = null;
-        
-        if (authHeader) {
-            const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-            try {
-                const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
-                if (decoded.userId && decoded.ts && (Date.now() - decoded.ts < 24 * 60 * 60 * 1000)) {
-                    authUser = {
-                        id: decoded.userId,
-                        username: decoded.username,
-                        email: decoded.email || '',
-                        is_admin: decoded.isAdmin,
-                        is_super_admin: decoded.isSuperAdmin
-                    };
-                    if (!req.path.startsWith('/static') && !req.path.startsWith('/favicon')) {
-                        console.log('[AUTH] token 验证成功:', decoded.username, 'path:', req.path);
-                    }
-                }
-            } catch (e) {
-                console.warn('[AUTH] token 解析失败:', e.message);
+    if (authHeader) {
+        const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+        try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
+            if (decoded.userId && decoded.ts && (Date.now() - decoded.ts < 24 * 60 * 60 * 1000)) {
+                authUser = {
+                    id: decoded.userId,
+                    username: decoded.username,
+                    email: decoded.email || '',
+                    is_admin: decoded.isAdmin,
+                    is_super_admin: decoded.isSuperAdmin
+                };
             }
+        } catch (e) {
+            console.warn('[AUTH] token 解析失败:', e.message);
         }
-        
-        req.authUser = authUser;
-        req.isAuthenticated = !!authUser;
-        
-        // 总是从 authUser 同步 session（确保跨实例兼容）
-        if (authUser) {
-            const sessionChanged = !req.session.userId || 
-                req.session.userId !== authUser.id ||
-                req.session.username !== authUser.username ||
-                req.session.isAdmin !== authUser.is_admin ||
-                req.session.isSuperAdmin !== authUser.is_super_admin;
-            
-            if (sessionChanged) {
-                req.session.userId = authUser.id;
-                req.session.username = authUser.username;
-                req.session.isAdmin = authUser.is_admin;
-                req.session.isSuperAdmin = authUser.is_super_admin;
-                // 立即保存 session
-                req.session.save((err) => {
-                    if (err) console.warn('[AUTH] session 保存失败:', err.message);
-                    else if (!req.path.startsWith('/static')) console.log('[AUTH] session 已同步:', authUser.username);
-                });
-            }
-        }
-        
-        // 生成 token 的辅助函数
-        req.generateAuthToken = (user) => {
-            const tokenData = {
-                userId: user.id,
-                username: user.username,
-                email: user.email || '',
-                isAdmin: user.is_admin,
-                isSuperAdmin: user.is_super_admin,
-                ts: Date.now()
-            };
-            return Buffer.from(JSON.stringify(tokenData)).toString('base64');
-        };
-        
-        next();
-    });
-} else {
-    app.use(session(sessionConfig));
+    }
     
-    app.use((req, res, next) => {
-        req.generateAuthToken = (user) => {
-            const tokenData = {
-                userId: user.id,
-                username: user.username,
-                isAdmin: user.is_admin,
-                isSuperAdmin: user.is_super_admin,
-                ts: Date.now()
-            };
-            return Buffer.from(JSON.stringify(tokenData)).toString('base64');
+    req.authUser = authUser;
+    req.isAuthenticated = !!authUser;
+    
+    // 如果有 authUser，同步 session
+    if (authUser) {
+        req.session.userId = authUser.id;
+        req.session.username = authUser.username;
+        req.session.isAdmin = authUser.is_admin;
+        req.session.isSuperAdmin = authUser.is_super_admin;
+    }
+    
+    // 生成 token 的辅助函数
+    req.generateAuthToken = (user) => {
+        const tokenData = {
+            userId: user.id,
+            username: user.username,
+            email: user.email || '',
+            isAdmin: user.is_admin,
+            isSuperAdmin: user.is_super_admin,
+            ts: Date.now()
         };
-        next();
-    });
-}
+        return Buffer.from(JSON.stringify(tokenData)).toString('base64');
+    };
+    
+    next();
+});
 
 app.use(express.static(path.join(__dirname, 'public'), {
     extensions: ['html', 'htm'],
@@ -1191,19 +1144,15 @@ app.post('/api/login', async (req, res) => {
     user.lastLoginTime = new Date().toISOString();
     await db.write();
     
-    // Vercel 环境返回 token（前端存储到 localStorage）
-    if (IS_VERCEL) {
-        const token = req.generateAuthToken(user);
-        console.log('[LOGIN] 生成 token 给用户:', user.username);
-        res.json({ 
-            success: true, 
-            message: '登录成功', 
-            token: token,
-            user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin } 
-        });
-    } else {
-        res.json({ success: true, message: '登录成功', user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin } });
-    }
+    // 始终生成并返回 token（前端存储到 localStorage）
+    const token = req.generateAuthToken(user);
+    console.log('[LOGIN] 生成 token 给用户:', user.username, 'IS_VERCEL:', IS_VERCEL);
+    res.json({ 
+        success: true, 
+        message: '登录成功', 
+        token: token,
+        user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin } 
+    });
 });
 
 // IP检查中间件 - 检测异地登录
