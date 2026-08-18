@@ -459,17 +459,6 @@
                 <button type="submit" class="login-btn" id="login-btn">登 录</button>
             </form>
 
-            <div class="divider"><span>或</span></div>
-
-            <div class="social-login">
-                <div class="social-buttons">
-                    <button type="button" class="social-btn github" onclick="bindGitHub()">
-                        <span style="font-size:18px;">🐙</span>
-                        <span>GitHub</span>
-                    </button>
-                </div>
-            </div>
-
             <div class="register-link">
                 还没有账号？ <a href="/register">立即注册</a>
             </div>
@@ -688,10 +677,6 @@
         function hideMessages() {
             document.getElementById('error-message').classList.remove('show');
             document.getElementById('success-message').classList.remove('show');
-        }
-
-        function bindGitHub() {
-            window.location.href = '/auth/github?mode=bind';
         }
     </script>
     
