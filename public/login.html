@@ -536,8 +536,17 @@
                 },
                 body: JSON.stringify({ email, type: 'login' })
             })
-            .then(response => response.json())
-            .then(data => {
+            .then(response => {
+                // 先检查是否是 JSON 响应
+                const ct = response.headers.get('content-type') || '';
+                if (!ct.includes('application/json')) {
+                    return response.text().then(text => {
+                        throw new Error('服务器返回非JSON响应 (HTTP ' + response.status + '): ' + text.substring(0, 200));
+                    });
+                }
+                return response.json().then(data => ({ data, status: response.status }));
+            })
+            .then(({ data, status }) => {
                 if (data.success) {
                     showSuccess('验证码已发送到您的邮箱');
                     let countdown = 60;
@@ -559,7 +568,7 @@
                 }
             })
             .catch(error => {
-                showError('网络错误，请重试');
+                showError('网络错误: ' + error.message);
                 btn.disabled = false;
                 btn.textContent = '发送验证码';
             });

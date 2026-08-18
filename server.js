@@ -86,15 +86,26 @@ let dbLocked = false;
 let dbLockReason = '';
 
 // 邮件发送配置
-const emailTransporter = nodemailer.createTransport({
-    host: 'smtp.qq.com',
-    port: 465,
-    secure: true,
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+let emailTransporter = null;
+function getEmailTransporter() {
+    if (emailTransporter) return emailTransporter;
+    const emailUser = process.env.EMAIL_USER;
+    const emailPass = process.env.EMAIL_PASS;
+    if (!emailUser || !emailPass) {
+        console.error('[EMAIL] EMAIL_USER 或 EMAIL_PASS 环境变量未配置！');
+        return null;
     }
-});
+    emailTransporter = nodemailer.createTransport({
+        host: 'smtp.qq.com',
+        port: 465,
+        secure: true,
+        auth: {
+            user: emailUser,
+            pass: emailPass
+        }
+    });
+    return emailTransporter;
+}
 let dbLockTime = null;
 let lastBackupTime = null;
 let lastBackupInfo = null;
@@ -1699,7 +1710,12 @@ app.post('/api/send-code', async (req, res) => {
     
     // 发送邮件
     try {
-        const info = await emailTransporter.sendMail({
+        const transporter = getEmailTransporter();
+        if (!transporter) {
+            console.error('[SEND-CODE FAIL] 邮件服务未配置');
+            return res.status(500).json({ success: false, message: '邮件服务未配置，请联系管理员设置 EMAIL_USER 和 EMAIL_PASS 环境变量' });
+        }
+        const info = await transporter.sendMail({
             from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: '【STC】您的验证码',
@@ -2111,7 +2127,7 @@ app.post('/api/invite/request', async (req, res) => {
 
     // 1. 发通知邮件给管理员（3422187328@qq.com），包含批准/拒绝按钮
     try {
-        await emailTransporter.sendMail({
+        const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
             from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
             to: process.env.EMAIL_USER,
             subject: '【STC】新的邀请码申请',
@@ -2163,7 +2179,7 @@ app.post('/api/invite/request', async (req, res) => {
 
     // 2. 发回执邮件给申请人（REDACTED@example.com 等）
     try {
-        await emailTransporter.sendMail({
+        const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
             from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: '【STC】您的邀请码申请已收到',
@@ -2225,7 +2241,7 @@ app.get('/api/invite/approve/:token', async (req, res) => {
         request.invite_code = inviteCode;
         await db.write();
         try {
-            await emailTransporter.sendMail({
+            const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
                 from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
                 to: request.email,
                 subject: '【STC】邀请码申请已通过',
@@ -2295,7 +2311,7 @@ app.get('/api/invite/reject/:token', async (req, res) => {
     request.rejected_by = 'email-link';
     await db.write();
     try {
-        await emailTransporter.sendMail({
+        const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
             from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
             to: request.email,
             subject: '【STC】邀请码申请未通过',
@@ -2356,7 +2372,7 @@ app.post('/api/invite/requests/:id/approve', requireAdmin, async (req, res) => {
 
     // 发送邀请码给申请人
     try {
-        await emailTransporter.sendMail({
+        const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
             from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
             to: request.email,
             subject: '【STC】邀请码申请已通过',
@@ -2399,7 +2415,7 @@ app.post('/api/invite/requests/:id/reject', requireAdmin, async (req, res) => {
 
     // 通知申请人被驳回
     try {
-        await emailTransporter.sendMail({
+        const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
             from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
             to: request.email,
             subject: '【STC】邀请码申请未通过',
