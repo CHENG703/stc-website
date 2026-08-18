@@ -2127,11 +2127,12 @@ app.post('/api/invite/request', async (req, res) => {
     console.log(`[DEBUG-EMAIL-LINK] 批准链接: ${approveUrl}`);
     console.log(`[DEBUG-EMAIL-LINK] 拒绝链接: ${rejectUrl}`);
 
-    // 1. 发通知邮件给管理员（3422187328@qq.com），包含批准/拒绝按钮
+    // 1. 发通知邮件给管理员，包含批准/拒绝按钮
     try {
+        const adminNotifyEmail = process.env.ADMIN_NOTIFY_EMAIL || process.env.ADMIN_EMAIL || process.env.EMAIL_USER;
         const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
             from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
-            to: process.env.EMAIL_USER,
+            to: adminNotifyEmail,
             subject: '【STC】新的邀请码申请',
             html: `
                 <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
@@ -2174,7 +2175,7 @@ app.post('/api/invite/request', async (req, res) => {
                 </div>
             `
         });
-        console.log(`[INVITE-ADMIN] 邀请码申请通知邮件(含审批按钮)已发送: ${email}`);
+        console.log(`[INVITE-ADMIN] 邀请码申请通知邮件(含审批按钮)已发送至管理员: ${adminNotifyEmail}, 申请人邮箱: ${email}`);
     } catch (error) {
         console.error('[INVITE-ADMIN] 邀请码申请通知邮件发送失败:', error.message);
     }
