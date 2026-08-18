@@ -553,27 +553,33 @@ if (!IS_VERCEL && FileStore) {
     sessionConfig.store = FileStore;
 }
 
-app.use(session(sessionConfig));
-
-// Vercel 环境: 简单 token cookie 认证（替代 session）
+// Vercel 环境: 使用自定义 cookie 认证（不依赖 express-session）
 if (IS_VERCEL) {
+    // 在 session 之前添加自定义认证中间件
     app.use((req, res, next) => {
-        // 从 cookie 读取 token
         const token = req.cookies && req.cookies.stc_auth_token;
         if (token) {
             try {
-                // token 格式: userId:username:timestamp (base64)
                 const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
                 if (decoded.userId && decoded.ts && (Date.now() - decoded.ts < 24 * 60 * 60 * 1000)) {
-                    req.session.userId = decoded.userId;
-                    req.session.username = decoded.username;
-                    req.session.isAdmin = decoded.isAdmin;
-                    req.session.isSuperAdmin = decoded.isSuperAdmin;
+                    req.authUser = {
+                        id: decoded.userId,
+                        username: decoded.username,
+                        is_admin: decoded.isAdmin,
+                        is_super_admin: decoded.isSuperAdmin
+                    };
+                    req.isAuthenticated = true;
+                    if (!req.path.startsWith('/static')) {
+                        console.log('[AUTH] cookie 验证成功:', decoded.username, 'path:', req.path);
+                    }
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.warn('[AUTH] cookie 解析失败:', e.message);
+            }
+        } else if (!req.path.startsWith('/static') && !req.path.startsWith('/favicon')) {
+            // console.log('[AUTH] 无 auth cookie, path:', req.path);
         }
         
-        // 辅助函数: 设置 auth cookie
         req.setAuthCookie = (user) => {
             const tokenData = {
                 userId: user.id,
@@ -583,24 +589,54 @@ if (IS_VERCEL) {
                 ts: Date.now()
             };
             const token = Buffer.from(JSON.stringify(tokenData)).toString('base64');
+            console.log('[AUTH] 设置 cookie token:', tokenData.username, 'expires in 24h');
             res.cookie('stc_auth_token', token, {
                 secure: true,
                 maxAge: 24 * 60 * 60 * 1000,
-                httpOnly: true,
+                httpOnly: false,
                 sameSite: 'none',
                 path: '/'
             });
         };
         
-        // 辅助函数: 清除 auth cookie
         req.clearAuthCookie = () => {
-            res.clearCookie('stc_auth_token', { path: '/' });
+            res.clearCookie('stc_auth_token', { 
+                path: '/',
+                secure: true,
+                sameSite: 'none'
+            });
         };
         
         next();
     });
+    
+    // 覆盖 express-session，使其与 cookie 认证同步
+    app.use(session({
+        secret: SESSION_SECRET,
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            secure: true,
+            maxAge: 24 * 60 * 60 * 1000,
+            httpOnly: false,
+            sameSite: 'none',
+            path: '/'
+        }
+    }));
+    
+    // 把 authUser 同步到 session（兼容现有代码）
+    app.use((req, res, next) => {
+        if (req.authUser && !req.session.userId) {
+            req.session.userId = req.authUser.id;
+            req.session.username = req.authUser.username;
+            req.session.isAdmin = req.authUser.is_admin;
+            req.session.isSuperAdmin = req.authUser.is_super_admin;
+        }
+        next();
+    });
 } else {
-    // 非 Vercel 环境也提供辅助函数
+    app.use(session(sessionConfig));
+    
     app.use((req, res, next) => {
         req.setAuthCookie = (user) => {};
         req.clearAuthCookie = () => {};
@@ -1019,6 +1055,7 @@ app.get('/api/csrf-token', (req, res) => {
 });
 
 app.get('/api/user', (req, res) => {
+    console.log('[USER API] session.userId:', req.session.userId, 'authUser:', req.authUser?.username);
     if (!req.session.userId) {
         return res.status(401).json({ error: '未登录' });
     }
