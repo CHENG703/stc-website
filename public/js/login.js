@@ -91,6 +91,11 @@ async function handleLogin(event) {
 
         if (response.ok) {
             const data = await response.json();
+            // 存储 token 到 localStorage（Vercel 环境）
+            if (data.token) {
+                localStorage.setItem('stc_auth_token', data.token);
+                console.log('[LOGIN] token 已存储到 localStorage');
+            }
             showMessage(data.message);
             setTimeout(() => {
                 window.location.href = '/';
@@ -117,7 +122,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 检查是否已登录
-    fetch('/api/user', { credentials: 'include' })
+    const token = localStorage.getItem('stc_auth_token');
+    const headers = {};
+    if (token) {
+        headers['Authorization'] = 'Bearer ' + token;
+    }
+    
+    fetch('/api/user', { credentials: 'include', headers })
         .then(response => {
             if (response.ok) {
                 window.location.href = '/';

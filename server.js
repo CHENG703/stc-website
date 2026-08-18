@@ -553,34 +553,45 @@ if (!IS_VERCEL && FileStore) {
     sessionConfig.store = FileStore;
 }
 
-// Vercel 环境: 使用自定义 cookie 认证（不依赖 express-session）
+// Vercel 环境: 使用 Authorization header 认证（localStorage 存储）
 if (IS_VERCEL) {
-    // 在 session 之前添加自定义认证中间件
+    // 从 Authorization header 读取 token
     app.use((req, res, next) => {
-        const token = req.cookies && req.cookies.stc_auth_token;
-        if (token) {
+        const authHeader = req.headers.authorization || req.headers['x-auth-token'];
+        let authUser = null;
+        
+        if (authHeader) {
+            const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
             try {
                 const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
                 if (decoded.userId && decoded.ts && (Date.now() - decoded.ts < 24 * 60 * 60 * 1000)) {
-                    req.authUser = {
+                    authUser = {
                         id: decoded.userId,
                         username: decoded.username,
                         is_admin: decoded.isAdmin,
                         is_super_admin: decoded.isSuperAdmin
                     };
-                    req.isAuthenticated = true;
-                    if (!req.path.startsWith('/static')) {
-                        console.log('[AUTH] cookie 验证成功:', decoded.username, 'path:', req.path);
+                    if (!req.path.startsWith('/static') && !req.path.startsWith('/favicon')) {
+                        console.log('[AUTH] token 验证成功:', decoded.username, 'path:', req.path);
                     }
                 }
             } catch (e) {
-                console.warn('[AUTH] cookie 解析失败:', e.message);
+                console.warn('[AUTH] token 解析失败:', e.message);
             }
-        } else if (!req.path.startsWith('/static') && !req.path.startsWith('/favicon')) {
-            // console.log('[AUTH] 无 auth cookie, path:', req.path);
         }
         
-        req.setAuthCookie = (user) => {
+        req.authUser = authUser;
+        req.isAuthenticated = !!authUser;
+        
+        if (authUser) {
+            req.session.userId = authUser.id;
+            req.session.username = authUser.username;
+            req.session.isAdmin = authUser.is_admin;
+            req.session.isSuperAdmin = authUser.is_super_admin;
+        }
+        
+        // 生成 token 的辅助函数
+        req.generateAuthToken = (user) => {
             const tokenData = {
                 userId: user.id,
                 username: user.username,
@@ -588,29 +599,12 @@ if (IS_VERCEL) {
                 isSuperAdmin: user.is_super_admin,
                 ts: Date.now()
             };
-            const token = Buffer.from(JSON.stringify(tokenData)).toString('base64');
-            console.log('[AUTH] 设置 cookie token:', tokenData.username, 'expires in 24h');
-            res.cookie('stc_auth_token', token, {
-                secure: true,
-                maxAge: 24 * 60 * 60 * 1000,
-                httpOnly: false,
-                sameSite: 'none',
-                path: '/'
-            });
-        };
-        
-        req.clearAuthCookie = () => {
-            res.clearCookie('stc_auth_token', { 
-                path: '/',
-                secure: true,
-                sameSite: 'none'
-            });
+            return Buffer.from(JSON.stringify(tokenData)).toString('base64');
         };
         
         next();
     });
     
-    // 覆盖 express-session，使其与 cookie 认证同步
     app.use(session({
         secret: SESSION_SECRET,
         resave: false,
@@ -623,23 +617,20 @@ if (IS_VERCEL) {
             path: '/'
         }
     }));
-    
-    // 把 authUser 同步到 session（兼容现有代码）
-    app.use((req, res, next) => {
-        if (req.authUser && !req.session.userId) {
-            req.session.userId = req.authUser.id;
-            req.session.username = req.authUser.username;
-            req.session.isAdmin = req.authUser.is_admin;
-            req.session.isSuperAdmin = req.authUser.is_super_admin;
-        }
-        next();
-    });
 } else {
     app.use(session(sessionConfig));
     
     app.use((req, res, next) => {
-        req.setAuthCookie = (user) => {};
-        req.clearAuthCookie = () => {};
+        req.generateAuthToken = (user) => {
+            const tokenData = {
+                userId: user.id,
+                username: user.username,
+                isAdmin: user.is_admin,
+                isSuperAdmin: user.is_super_admin,
+                ts: Date.now()
+            };
+            return Buffer.from(JSON.stringify(tokenData)).toString('base64');
+        };
         next();
     });
 }
@@ -902,15 +893,24 @@ app.post('/api/login', async (req, res) => {
     req.session.isSuperAdmin = user.is_super_admin;
     req.session.loginIP = getClientIP(req);
     
-    // 设置 auth cookie（Vercel 用）
-    req.setAuthCookie(user);
-    
     // 更新用户最后登录IP和时间
     user.lastLoginIp = getClientIP(req);
     user.lastLoginTime = new Date().toISOString();
     await db.write();
     
-    res.json({ success: true, message: '登录成功', user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin } });
+    // Vercel 环境返回 token（前端存储到 localStorage）
+    if (IS_VERCEL) {
+        const token = req.generateAuthToken(user);
+        console.log('[LOGIN] 生成 token 给用户:', user.username);
+        res.json({ 
+            success: true, 
+            message: '登录成功', 
+            token: token,
+            user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin } 
+        });
+    } else {
+        res.json({ success: true, message: '登录成功', user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin } });
+    }
 });
 
 // IP检查中间件 - 检测异地登录

@@ -15,6 +15,14 @@ function showMessage(message, type = 'success') {
 async function fetchWithAuth(url, options = {}) {
     console.log('fetchWithAuth:', url);
     options.credentials = 'include';
+    
+    // Vercel 环境: 从 localStorage 读取 token 添加到 header
+    const token = localStorage.getItem('stc_auth_token');
+    if (token) {
+        options.headers = options.headers || {};
+        options.headers['Authorization'] = 'Bearer ' + token;
+    }
+    
     const response = await fetch(url, options);
     console.log('Response status:', response.status);
     if (response.status === 401) {

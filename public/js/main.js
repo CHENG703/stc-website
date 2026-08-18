@@ -241,6 +241,13 @@ async function fetchWithAuth(url, options = {}) {
     // 确保发送cookies以维持session
     options.credentials = 'include';
     
+    // Vercel 环境: 从 localStorage 读取 token 添加到 header
+    const token = localStorage.getItem('stc_auth_token');
+    if (token) {
+        options.headers = options.headers || {};
+        options.headers['Authorization'] = 'Bearer ' + token;
+    }
+    
     // 对于POST、PUT、DELETE请求，添加CSRF token
     if (options.method && ['POST', 'PUT', 'DELETE'].includes(options.method.toUpperCase())) {
         if (!csrfToken) {

@@ -984,11 +984,18 @@ async function fetchWithAuth(url, options = {}) {
     options.credentials = 'include';
     options.headers = options.headers || {};
     options.headers['Accept'] = 'application/json';
+    
+    // 从 localStorage 读取 token（Vercel 环境）
+    const token = localStorage.getItem('stc_auth_token');
+    if (token) {
+        options.headers['Authorization'] = 'Bearer ' + token;
+    }
 
     const response = await fetch(url, options);
     if (response.status === 401) {
         showMessage('请先登录', 'error');
         localStorage.removeItem('user');
+        localStorage.removeItem('stc_auth_token');
         setTimeout(() => window.location.href = '/login', 2000);
         throw new Error('Unauthorized');
     }
@@ -998,6 +1005,7 @@ async function fetchWithAuth(url, options = {}) {
         if (errorMsg.includes('请先登录') || errorMsg.includes('未登录')) {
             showMessage('登录已过期，请重新登录', 'error');
             localStorage.removeItem('user');
+            localStorage.removeItem('stc_auth_token');
             setTimeout(() => window.location.href = '/login', 2000);
             throw new Error('Unauthorized');
         } else {
@@ -1010,6 +1018,7 @@ async function fetchWithAuth(url, options = {}) {
 
 // 登出
 async function logout() {
+    localStorage.removeItem('stc_auth_token');
     const response = await fetchWithAuth('/api/logout', { method: 'POST' });
     if (response.ok) {
         showMessage('登出成功');
