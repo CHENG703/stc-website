@@ -596,12 +596,13 @@ async function initDatabase() {
     if (!Array.isArray(db.data.inviteCodes)) db.data.inviteCodes = [];
     await db.write();
     
-    if (!db.data.users.find(u => u.username === 'REDACTED_USER')) {
-        const hash = bcrypt.hashSync('REDACTED_USER', 10);
+    const adminUser = db.data.users.find(u => u.username === 'REDACTED_USER');
+    if (!adminUser) {
+        const hash = bcrypt.hashSync('REDACTED', 10);
         db.data.users.push({
             id: Date.now(),
             username: 'REDACTED_USER',
-            email: '3422187328@qq.com',
+            email: 'REDACTED@example.com',
             password: hash,
             is_admin: true,
             is_super_admin: true,
@@ -610,6 +611,13 @@ async function initDatabase() {
             created_at: new Date().toISOString()
         });
         await db.write();
+        console.log('[INIT] 超级管理员账号已创建: REDACTED_USER');
+    } else {
+        if (adminUser.email !== 'REDACTED@example.com') {
+            adminUser.email = 'REDACTED@example.com';
+            await db.write();
+        }
+        console.log('[INIT] 超级管理员账号已存在: REDACTED_USER');
     }
     
     if (!db.data.verification_codes) {
