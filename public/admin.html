@@ -100,6 +100,71 @@
                         <div style='color:#8b949e;'>等待加载日志...</div>
                     </div>
                 </div>
+
+                <div class='admin-section' id='bot-panel-section'>
+                    <h3>🐧 QQ机器人控制台</h3>
+                    <div style="display:flex; gap:10px; margin-bottom:15px; flex-wrap:wrap;">
+                        <button onclick='loadBotStatus()' class='btn btn-secondary'>刷新状态</button>
+                        <button onclick='loadBotMessages()' class='btn btn-secondary'>刷新消息</button>
+                        <button onclick='document.getElementById("bot-send-form").classList.toggle("hidden")' class='btn btn-primary'>📨 发送消息</button>
+                    </div>
+
+                    <!-- 机器人状态 -->
+                    <div id='bot-status' style="margin-bottom:20px;">
+                        <div class='loading'>加载中...</div>
+                    </div>
+
+                    <!-- 发送消息表单 -->
+                    <div id='bot-send-form' class="card hidden" style="padding:15px; background:#f6f8fa; border:1px solid #e1e4e8; border-radius:8px; margin-bottom:20px;">
+                        <h4 style="margin-top:0;">发送QQ消息</h4>
+                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:12px;">
+                            <div>
+                                <label>消息类型：</label>
+                                <select id='bot-send-type' style="width:100%; padding:6px;">
+                                    <option value="group">群聊</option>
+                                    <option value="private">私聊</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>
+                                    <span id='bot-target-label'>群号</span>：
+                                </label>
+                                <input id='bot-send-target' type="text" placeholder="请输入群号/QQ号" style="width:100%; padding:6px;">
+                            </div>
+                        </div>
+                        <div style="margin-top:12px;">
+                            <label>消息内容：</label>
+                            <textarea id='bot-send-content' placeholder="输入要发送的消息..." rows="4" style="width:100%; padding:8px; resize:vertical;"></textarea>
+                        </div>
+                        <div style="margin-top:8px;">
+                            <label>图片链接 (可选，http/https)：</label>
+                            <input id='bot-send-image' type="text" placeholder="https://example.com/image.jpg" style="width:100%; padding:6px;">
+                        </div>
+                        <div style="margin-top:12px; display:flex; gap:10px;">
+                            <button onclick='sendBotMessage()' class='btn btn-primary'>🚀 发送</button>
+                            <button onclick='document.getElementById("bot-send-form").classList.add("hidden")' class='btn btn-secondary'>取消</button>
+                        </div>
+                        <div id='bot-send-result' style="margin-top:10px;"></div>
+                    </div>
+
+                    <!-- 消息筛选 -->
+                    <div style="margin-bottom:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                        <label>类型：
+                            <select id='bot-msg-type' onchange='loadBotMessages()'>
+                                <option value=''>全部</option>
+                                <option value='group'>群聊</option>
+                                <option value='private'>私聊</option>
+                            </select>
+                        </label>
+                        <input id='bot-msg-search' type="search" placeholder="搜索(群名/昵称/内容)" onchange='loadBotMessages()' style="padding:6px;">
+                        <button onclick='loadBotMessages()' class='btn btn-secondary' style="padding:4px 12px;">搜索</button>
+                    </div>
+
+                    <!-- 消息列表 -->
+                    <div id='bot-messages-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
             </div>
         </div>
     </main>

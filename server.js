@@ -3345,6 +3345,292 @@ app.post('/api/db/import', requireSuperAdmin, express.json({ limit: '10mb' }), a
     }
 });
 
+// ============================================================
+// AstrBot 机器人集成 API
+// ============================================================
+const BOT_API_KEY = process.env.BOT_API_KEY || 'stc_bot_secret_key_change_me';
+
+// 机器人状态缓存（跨Vercel实例通过数据库共享）
+async function ensureBotCollections() {
+    await db.read();
+    if (!db.data.bot_instances) db.data.bot_instances = [];       // 机器人在线状态
+    if (!db.data.bot_messages) db.data.bot_messages = [];        // 收到的消息
+    if (!db.data.bot_send_queue) db.data.bot_send_queue = [];    // 待发送队列
+    if (!db.data.bot_send_results) db.data.bot_send_results = []; // 发送结果
+}
+
+// 验证机器人 API Key
+function verifyBotKey(req) {
+    const headerKey = req.headers['x-bot-key'] || req.headers['authorization']?.replace('Bearer ', '');
+    return headerKey === BOT_API_KEY;
+}
+
+// 机器人连接/长轮询（获取待发送消息）
+app.post('/api/bot/connect', async (req, res) => {
+    if (!verifyBotKey(req)) {
+        return res.status(401).json({ success: false, message: '无效的 API Key' });
+    }
+
+    try {
+        await ensureBotCollections();
+        const { platform, bot_id, nickname, session_count = 0, sessions = [] } = req.body || {};
+        const now = Date.now();
+
+        // 更新/注册机器人实例状态
+        const existingIdx = db.data.bot_instances.findIndex(b => b.bot_id === bot_id && b.platform === platform);
+        const instanceData = {
+            platform: platform || 'unknown',
+            bot_id: bot_id || '',
+            nickname: nickname || '',
+            session_count: session_count,
+            sessions: sessions || [],
+            last_seen: now,
+            first_seen: existingIdx >= 0 ? db.data.bot_instances[existingIdx].first_seen : now,
+        };
+
+        if (existingIdx >= 0) {
+            db.data.bot_instances[existingIdx] = { ...db.data.bot_instances[existingIdx], ...instanceData };
+        } else {
+            db.data.bot_instances.push(instanceData);
+        }
+
+        // 清理超过5分钟未在线的机器人
+        db.data.bot_instances = db.data.bot_instances.filter(b => now - b.last_seen < 5 * 60 * 1000);
+
+        // 获取待发送的消息（取出并从队列删除）
+        const toSend = db.data.bot_send_queue.slice(0, 20); // 最多20条
+        db.data.bot_send_queue = db.data.bot_send_queue.slice(20);
+
+        await db.write();
+
+        res.json({
+            success: true,
+            bot_instances: db.data.bot_instances,
+            messages: toSend, // 待发送的消息
+            poll_interval: 2000, // 建议轮询间隔 (ms)
+            server_time: now,
+        });
+    } catch (e) {
+        console.error('[BOT] Connect error:', e);
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// 机器人上报消息发送结果
+app.post('/api/bot/report-send-result', async (req, res) => {
+    if (!verifyBotKey(req)) {
+        return res.status(401).json({ success: false, message: '无效的 API Key' });
+    }
+
+    try {
+        await ensureBotCollections();
+        const { request_id, success, message } = req.body || {};
+        const result = {
+            request_id,
+            success: !!success,
+            message: message || '',
+            reported_at: Date.now(),
+        };
+
+        db.data.bot_send_results.push(result);
+        // 限制结果数量
+        if (db.data.bot_send_results.length > 500) {
+            db.data.bot_send_results = db.data.bot_send_results.slice(-500);
+        }
+
+        await db.write();
+        res.json({ success: true });
+    } catch (e) {
+        console.error('[BOT] Report send result error:', e);
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// 机器人上报收到的消息
+app.post('/api/bot/report-message', async (req, res) => {
+    if (!verifyBotKey(req)) {
+        return res.status(401).json({ success: false, message: '无效的 API Key' });
+    }
+
+    try {
+        await ensureBotCollections();
+        const msg = req.body || {};
+
+        const record = {
+            id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+            session_key: msg.session_key,
+            message_type: msg.message_type,  // group / private
+            group_id: msg.group_id,
+            group_name: msg.group_name,
+            sender_id: msg.sender_id,
+            sender_name: msg.sender_name,
+            message_text: msg.message_text,
+            images: msg.images || [],
+            umo: msg.umo,
+            session_id: msg.session_id,
+            timestamp: msg.timestamp || Date.now(),
+            platform: msg.platform || (req.body && req.body.platform) || 'unknown',
+            bot_id: msg.bot_id || (req.body && req.body.bot_id) || '',
+        };
+
+        db.data.bot_messages.push(record);
+        // 限制消息数量
+        if (db.data.bot_messages.length > 5000) {
+            db.data.bot_messages = db.data.bot_messages.slice(-5000);
+        }
+
+        await db.write();
+        res.json({ success: true, id: record.id });
+    } catch (e) {
+        console.error('[BOT] Report message error:', e);
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// 管理员：查看机器人状态
+app.get('/api/bot/status', requireAdmin, async (req, res) => {
+    try {
+        await ensureBotCollections();
+        const now = Date.now();
+        // 刷新在线状态：超过2分钟未上报视为离线
+        const instances = db.data.bot_instances.map(b => ({
+            ...b,
+            online: now - b.last_seen < 2 * 60 * 1000,
+            last_seen_str: new Date(b.last_seen).toLocaleString('zh-CN'),
+            first_seen_str: new Date(b.first_seen).toLocaleString('zh-CN'),
+        }));
+
+        res.json({
+            success: true,
+            instances,
+            send_queue_size: db.data.bot_send_queue.length,
+            received_messages_count: db.data.bot_messages.length,
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// 管理员：获取机器人收到的消息（分页）
+app.get('/api/bot/messages', requireAdmin, async (req, res) => {
+    try {
+        await ensureBotCollections();
+        const page = parseInt(req.query.page) || 1;
+        const pageSize = parseInt(req.query.pageSize) || 50;
+        const type = req.query.type;    // 'group' / 'private' 过滤
+        const q = req.query.q;          // 关键词搜索
+
+        let messages = [...db.data.bot_messages].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+        if (type) {
+            messages = messages.filter(m => m.message_type === type);
+        }
+        if (q) {
+            const lower = String(q).toLowerCase();
+            messages = messages.filter(m =>
+                (m.sender_name || '').toLowerCase().includes(lower) ||
+                (m.message_text || '').toLowerCase().includes(lower) ||
+                (m.group_name || '').toLowerCase().includes(lower) ||
+                String(m.sender_id || '').includes(lower) ||
+                String(m.group_id || '').includes(lower)
+            );
+        }
+
+        const total = messages.length;
+        const paged = messages.slice((page - 1) * pageSize, page * pageSize);
+
+        res.json({
+            success: true,
+            total,
+            page,
+            pageSize,
+            messages: paged,
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// 管理员：发送消息（加入发送队列）
+app.post('/api/bot/send', requireAdmin, async (req, res) => {
+    try {
+        await ensureBotCollections();
+        const { target_type, target_id, content, image_url, group_id, user_id } = req.body || {};
+
+        // 同时支持 target_type+target_id 或 group_id/user_id
+        const finalType = target_type || (group_id ? 'group' : (user_id ? 'private' : null));
+        const finalTargetId = target_id || group_id || user_id || '';
+
+        if (!finalType || !finalTargetId) {
+            return res.status(400).json({ success: false, message: '请指定目标类型和目标ID (group_id 或 user_id)' });
+        }
+        if (!content && !image_url) {
+            return res.status(400).json({ success: false, message: '请填写内容或图片' });
+        }
+
+        const request_id = 'req_' + Date.now().toString() + Math.random().toString(36).slice(2, 6);
+
+        const sendTask = {
+            request_id,
+            target_type: finalType,
+            target_id: String(finalTargetId),
+            content: content || '',
+            image_url: image_url || '',
+            created_by: (req.authUser?.username) || (req.session.username) || 'admin',
+            created_at: Date.now(),
+        };
+
+        db.data.bot_send_queue.push(sendTask);
+        await db.write();
+
+        res.json({
+            success: true,
+            request_id,
+            message: '消息已加入发送队列，请等待机器人下一次轮询',
+            queue_position: db.data.bot_send_queue.length,
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// 管理员：查询发送结果
+app.get('/api/bot/send-result/:request_id', requireAdmin, async (req, res) => {
+    try {
+        await ensureBotCollections();
+        const { request_id } = req.params;
+
+        // 先找发送结果
+        const result = db.data.bot_send_results.find(r => r.request_id === request_id);
+        if (result) {
+            return res.json({
+                success: true,
+                status: 'completed',
+                result,
+            });
+        }
+
+        // 再查队列
+        const inQueue = db.data.bot_send_queue.find(r => r.request_id === request_id);
+        if (inQueue) {
+            return res.json({
+                success: true,
+                status: 'queued',
+                queue_position: db.data.bot_send_queue.indexOf(inQueue) + 1,
+                queue_size: db.data.bot_send_queue.length,
+            });
+        }
+
+        res.json({
+            success: true,
+            status: 'not_found',
+            message: '未找到该请求',
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
 module.exports = app;
 module.exports.default = app;
 module.exports.ensureReady = ensureReady;

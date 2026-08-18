@@ -1478,6 +1478,10 @@ if (document.readyState === 'loading') {
             CMDLog.init();
             initAdminPanel();
             loadServerLogs();
+            // 初始化机器人控制台
+            setupBotPanel();
+            loadBotStatus().catch(e => CMDLog.log('机器人状态加载失败: ' + e.message, 'warn'));
+            loadBotMessages().catch(e => CMDLog.log('机器人消息加载失败: ' + e.message, 'warn'));
         }, 500);
     });
 } else {
@@ -1485,5 +1489,235 @@ if (document.readyState === 'loading') {
         CMDLog.init();
         initAdminPanel();
         loadServerLogs();
+        setupBotPanel();
+        loadBotStatus().catch(e => CMDLog.log('机器人状态加载失败: ' + e.message, 'warn'));
+        loadBotMessages().catch(e => CMDLog.log('机器人消息加载失败: ' + e.message, 'warn'));
     }, 500);
+}
+
+// ============================================================
+// QQ 机器人控制台
+// ============================================================
+
+function setupBotPanel() {
+    // 类型切换时标签跟着变
+    const typeSel = document.getElementById('bot-send-type');
+    const targetLabel = document.getElementById('bot-target-label');
+    if (typeSel && targetLabel) {
+        typeSel.addEventListener('change', () => {
+            targetLabel.textContent = typeSel.value === 'group' ? '群号' : 'QQ号';
+            const target = document.getElementById('bot-send-target');
+            if (target) target.placeholder = typeSel.value === 'group' ? '请输入群号' : '请输入QQ号';
+        });
+    }
+}
+
+async function loadBotStatus() {
+    const box = document.getElementById('bot-status');
+    try {
+        const resp = await fetchWithAuth('/api/bot/status');
+        const data = await resp.json();
+        if (!data.success) {
+            box.innerHTML = `<div style="color:#ff6b6b;">加载失败: ${escapeHtml(data.message || '未知错误')}</div>`;
+            return;
+        }
+
+        const { instances, send_queue_size, received_messages_count } = data;
+        let html = `<div style="padding:12px; background:#f0f6ff; border-radius:8px; display:grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap:12px;">
+            <div><b>队列中消息：</b> ${send_queue_size}</div>
+            <div><b>已接收消息：</b> ${received_messages_count}</div>
+            <div><b>在线实例：</b> ${instances.filter(b => b.online).length} / ${instances.length}</div>
+        </div>`;
+
+        if (instances.length === 0) {
+            html += `<div style="margin-top:10px; padding:12px; background:#fff4e5; border-radius:8px; color:#b26a00;">
+                🔌 当前没有机器人在线，请确认 AstrBot 已启动并正确安装 stc_web_panel 插件，且配置了正确的 web_url 和 api_key。
+            </div>`;
+        } else {
+            html += `<div class="data-table" style="margin-top:12px;">
+                <div class="data-row data-header">
+                    <div>状态</div><div>平台</div><div>QQ号</div><div>昵称</div><div>会话数</div><div>最后心跳</div>
+                </div>`;
+            for (const b of instances) {
+                const badge = b.online
+                    ? '<span style="color:#2ea043;">● 在线</span>'
+                    : '<span style="color:#8b949e;">○ 离线</span>';
+                html += `<div class="data-row">
+                    <div>${badge}</div>
+                    <div>${escapeHtml(b.platform || '-')}</div>
+                    <div>${escapeHtml(b.bot_id || '-')}</div>
+                    <div>${escapeHtml(b.nickname || '-')}</div>
+                    <div>${b.session_count || 0}</div>
+                    <div>${escapeHtml(b.last_seen_str || '-')}</div>
+                </div>`;
+            }
+            html += `</div>`;
+        }
+
+        box.innerHTML = html;
+    } catch (e) {
+        box.innerHTML = `<div style="color:#ff6b6b;">加载失败: ${escapeHtml(e.message)}</div>`;
+        throw e;
+    }
+}
+
+async function loadBotMessages(page = 1) {
+    const table = document.getElementById('bot-messages-table');
+    const type = document.getElementById('bot-msg-type')?.value || '';
+    const q = document.getElementById('bot-msg-search')?.value || '';
+
+    try {
+        const params = new URLSearchParams({ page, pageSize: 50 });
+        if (type) params.set('type', type);
+        if (q) params.set('q', q);
+
+        const resp = await fetchWithAuth(`/api/bot/messages?${params.toString()}`);
+        const data = await resp.json();
+        if (!data.success) {
+            table.innerHTML = `<div style="color:#ff6b6b;">加载失败: ${escapeHtml(data.message || '未知错误')}</div>`;
+            return;
+        }
+
+        const { messages, total, page: curPage, pageSize } = data;
+
+        if (total === 0) {
+            table.innerHTML = `<div style="color:#8b949e; padding:20px; text-align:center;">暂无消息记录</div>`;
+            return;
+        }
+
+        let html = `<div style="margin-bottom:8px; color:#8b949e; font-size:13px;">共 ${total} 条消息</div>`;
+        html += `<div class="data-table">
+            <div class="data-row data-header">
+                <div>时间</div><div>类型</div><div>群</div><div>发送者</div><div>内容</div>
+            </div>`;
+
+        for (const m of messages) {
+            const typeLabel = m.message_type === 'group' ? '群聊' : '私聊';
+            const typeClass = m.message_type === 'group' ? 'label-blue' : 'label-green';
+            const groupCell = m.message_type === 'group'
+                ? `<div>${escapeHtml(m.group_name || m.group_id || '-')}<br><small style="color:#8b949e;">${escapeHtml(m.group_id || '')}</small></div>`
+                : '-';
+            const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleString('zh-CN') : '-';
+
+            let contentHtml = '';
+            if (m.message_text) {
+                contentHtml = `<div>${escapeHtml(m.message_text.substring(0, 300))}${m.message_text.length > 300 ? '...' : ''}</div>`;
+            }
+            if (m.images && m.images.length > 0) {
+                contentHtml += `<div style="margin-top:4px; display:flex; gap:4px; flex-wrap:wrap;">`;
+                for (const img of m.images.slice(0, 3)) {
+                    contentHtml += `<a href="${encodeURI(img)}" target="_blank"><img src="${encodeURI(img)}" style="max-width:100px; max-height:100px; border-radius:4px;"></a>`;
+                }
+                if (m.images.length > 3) contentHtml += `<span style="color:#8b949e;">+${m.images.length - 3} 张</span>`;
+                contentHtml += `</div>`;
+            }
+            if (!contentHtml) contentHtml = '<div style="color:#8b949e;">[空]</div>';
+
+            html += `<div class="data-row" style="vertical-align:top;">
+                <div style="min-width:140px;">${timeStr}</div>
+                <div><span class="badge ${typeClass}">${typeLabel}</span></div>
+                <div>${groupCell}</div>
+                <div>
+                    <div><b>${escapeHtml(m.sender_name || '-')}</b></div>
+                    <small style="color:#8b949e;">${escapeHtml(m.sender_id || '')}</small>
+                </div>
+                <div>${contentHtml}</div>
+            </div>`;
+        }
+        html += `</div>`;
+
+        // 分页
+        const totalPages = Math.ceil(total / pageSize);
+        if (totalPages > 1) {
+            html += `<div style="margin-top:10px; display:flex; gap:8px; justify-content:center;">`;
+            if (curPage > 1) html += `<button class="btn btn-secondary" onclick="loadBotMessages(${curPage - 1})">上一页</button>`;
+            html += `<span style="padding:6px 12px;">第 ${curPage} / ${totalPages} 页</span>`;
+            if (curPage < totalPages) html += `<button class="btn btn-secondary" onclick="loadBotMessages(${curPage + 1})">下一页</button>`;
+            html += `</div>`;
+        }
+
+        table.innerHTML = html;
+    } catch (e) {
+        table.innerHTML = `<div style="color:#ff6b6b;">加载失败: ${escapeHtml(e.message)}</div>`;
+        throw e;
+    }
+}
+
+async function sendBotMessage() {
+    const resultBox = document.getElementById('bot-send-result');
+    resultBox.innerHTML = '<div style="color:#8b949e;">发送中...</div>';
+
+    try {
+        const target_type = document.getElementById('bot-send-type').value;
+        const target_id = document.getElementById('bot-send-target').value.trim();
+        const content = document.getElementById('bot-send-content').value.trim();
+        const image_url = document.getElementById('bot-send-image').value.trim();
+
+        if (!target_id) {
+            resultBox.innerHTML = '<div style="color:#ff6b6b;">请填写目标ID (群号/QQ号)</div>';
+            return;
+        }
+        if (!content && !image_url) {
+            resultBox.innerHTML = '<div style="color:#ff6b6b;">请填写内容或图片</div>';
+            return;
+        }
+
+        const resp = await fetchWithAuth('/api/bot/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_type, target_id, content, image_url })
+        });
+        const data = await resp.json();
+        if (!data.success) {
+            resultBox.innerHTML = `<div style="color:#ff6b6b;">❌ ${escapeHtml(data.message || '发送失败')}</div>`;
+            return;
+        }
+
+        resultBox.innerHTML = `<div style="color:#2ea043;">✅ ${escapeHtml(data.message || '发送成功')} (请求ID: <code>${data.request_id}</code>, 队列位置: ${data.queue_position})</div>`;
+        CMDLog.log(`机器人消息已入队 [${data.request_id}]`, 'success');
+
+        // 清空表单（保留目标ID，方便连续发）
+        document.getElementById('bot-send-content').value = '';
+        document.getElementById('bot-send-image').value = '';
+
+        // 尝试轮询发送结果
+        pollSendResult(data.request_id);
+
+    } catch (e) {
+        resultBox.innerHTML = `<div style="color:#ff6b6b;">❌ 请求失败: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+async function pollSendResult(requestId) {
+    const resultBox = document.getElementById('bot-send-result');
+    let attempts = 0;
+    const maxAttempts = 30;  // 最多等30次 * 2s = 60s
+
+    const timer = setInterval(async () => {
+        attempts++;
+        if (attempts > maxAttempts) {
+            clearInterval(timer);
+            return;
+        }
+        try {
+            const resp = await fetchWithAuth(`/api/bot/send-result/${encodeURIComponent(requestId)}`);
+            const data = await resp.json();
+            if (!data.success) return;
+
+            if (data.status === 'completed') {
+                clearInterval(timer);
+                const r = data.result;
+                if (r.success) {
+                    resultBox.innerHTML = `<div style="color:#2ea043;">✅ 机器人发送成功！(报告时间: ${new Date(r.reported_at).toLocaleTimeString()})</div>`;
+                } else {
+                    resultBox.innerHTML = `<div style="color:#ff6b6b;">⚠️ 机器人发送失败: ${escapeHtml(r.message || '未知错误')}</div>`;
+                }
+                loadBotStatus();
+            } else if (data.status === 'queued') {
+                resultBox.innerHTML = `<div style="color:#8b949e;">⏳ 等待机器人取走消息 (队列位置: ${data.queue_position}/${data.queue_size})</div>`;
+            }
+        } catch (e) {
+            // ignore
+        }
+    }, 2000);
 }
