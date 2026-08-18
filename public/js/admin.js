@@ -899,12 +899,19 @@ const CMDLog = {
         
         const connect = async () => {
             try {
+                const headers = {
+                    'Accept': 'text/event-stream'
+                };
+                // 从 localStorage 读取 token
+                const token = localStorage.getItem('stc_auth_token');
+                if (token) {
+                    headers['Authorization'] = 'Bearer ' + token;
+                }
+                
                 const response = await fetch('/api/logs/sse', {
                     method: 'GET',
                     credentials: 'include',
-                    headers: {
-                        'Accept': 'text/event-stream'
-                    }
+                    headers: headers
                 });
                 
                 if (!response.ok) {
