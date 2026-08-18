@@ -379,7 +379,6 @@ function formatDate(dateString) {
 // 生成用户导航HTML
 function generateUserNavHtml(user) {
     let navHtml = `<a href="/user">${escapeHtml(user.username)}</a>`;
-    navHtml += ` | <a href="/emails">邮箱</a>`;
     if (user.is_admin) {
         navHtml += ` | <a href="/admin">管理面板</a>`;
     }
@@ -473,7 +472,25 @@ async function loadTasks() {
             const result = await response.json();
             const tasks = result.data || [];
             const tasksList = document.getElementById('tasks-list');
-            
+            const taskStats = document.getElementById('task-stats');
+
+            // 更新任务统计
+            if (taskStats) {
+                const total = result.total || tasks.length;
+                const statusCounts = {};
+                tasks.forEach(t => {
+                    const s = t.status || 'idle';
+                    statusCounts[s] = (statusCounts[s] || 0) + 1;
+                });
+                taskStats.innerHTML = `
+                    <div class="stat-card"><span class="stat-num">${total}</span><span class="stat-label">总任务</span></div>
+                    <div class="stat-card"><span class="stat-num">${statusCounts.pending || 0}</span><span class="stat-label">备货中</span></div>
+                    <div class="stat-card"><span class="stat-num">${statusCounts.planning || 0}</span><span class="stat-label">建设中</span></div>
+                    <div class="stat-card"><span class="stat-num">${statusCounts.in_progress || 0}</span><span class="stat-label">进行中</span></div>
+                    <div class="stat-card"><span class="stat-num">${statusCounts.completed || 0}</span><span class="stat-label">已完成</span></div>
+                `;
+            }
+
             if (tasks.length === 0) {
                 tasksList.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">暂无任务</p>';
                 return;
@@ -514,7 +531,7 @@ async function loadTasks() {
                             </div>
                         ` : ''}
                     </div>
-                    ${isAdmin ? `<button class="btn-delete-task" onclick="event.stopPropagation(); deleteTask(${task.id})" title="删除任务">🗑️</button>` : ''}
+                    ${(isAdmin || (currentUser && currentUser.id === task.author_id)) ? `<button class="btn-delete-task" onclick="event.stopPropagation(); deleteTask(${task.id})" title="删除任务">🗑️</button>` : ''}
                 </div>
             `}).join('');
         }

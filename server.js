@@ -20,7 +20,7 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
@@ -63,15 +63,48 @@ let siteLockTime = null;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isVercel = !!process.env.VERCEL;
 const isProduction = process.env.NODE_ENV === 'production';
 
-const db = new Low(new JSONFile('database.json'), {
+const CORS_ORIGINS = process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
+    : [];
+
+function isAllowedOrigin(origin) {
+    if (!origin) return false;
+    if (CORS_ORIGINS.includes(origin)) return true;
+    if (origin.endsWith('.github.io')) return true;
+    if (origin === 'github.io') return true;
+    return false;
+}
+
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && isAllowedOrigin(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-CSRF-Token,Authorization');
+        res.setHeader('Access-Control-Expose-Headers', 'Content-Length');
+    }
+    if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+    }
+    next();
+});
+
+const runtimeDir = isVercel ? '/tmp/stc-runtime' : __dirname;
+if (isVercel && !fs.existsSync(runtimeDir)) {
+    try { fs.mkdirSync(runtimeDir, { recursive: true }); } catch (e) {}
+}
+
+const dbPath = path.join(runtimeDir, 'database.json');
+const db = new Low(new JSONFile(dbPath), {
     users: [],
     tasks: [],
     invite_codes: [],
     invite_requests: [],
     banned_ips: [],
-    emails: [],
     verification_codes: []
 });
 
@@ -293,7 +326,7 @@ app.use((req, res, next) => {
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('X-XSS-Protection', '1; mode=block');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';");
+    res.setHeader('Content-Security-Policy', "default-src 'self' https:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; font-src 'self' https:; connect-src 'self' https: wss:;");
     next();
 });
 
@@ -323,21 +356,26 @@ const MAX_LOG_COUNT = 1000;
 var sseClients = [];
 var siteEventsClients = []; // 公开事件客户端（用于网站锁定通知）
 
+const sessionDir = path.join(runtimeDir, 'sessions');
+if (!fs.existsSync(sessionDir)) {
+    try { fs.mkdirSync(sessionDir, { recursive: true }); } catch (e) {}
+}
+
 app.use(session({
     secret: 'STC_SECRET_KEY_2025',
     resave: false,
     saveUninitialized: true,
     store: new FileStore({
-        path: path.join(__dirname, 'sessions'),
+        path: sessionDir,
         secret: 'STC_SECRET_KEY_2025',
-        ttl: 86400 * 7, // 7天
-        retries: 2
+        ttl: 86400 * 7,
+        retries: 0
     }),
     cookie: {
-        secure: false,
+        secure: isProduction,
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: false,
-        sameSite: 'lax',
+        sameSite: isProduction ? 'none' : 'lax',
         path: '/'
     }
 }));
@@ -354,7 +392,6 @@ async function initDatabase() {
             invite_codes: [],
             invite_requests: [],
             banned_ips: [],
-            emails: [],
             verification_codes: []
         };
         await db.write();
@@ -454,10 +491,6 @@ app.get('/user', (req, res) => {
 
 app.get('/admin', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
-
-app.get('/emails', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'emails.html'));
 });
 
 app.get('/reaction', (req, res) => {
@@ -714,6 +747,42 @@ app.get('/api/user', (req, res) => {
         return res.status(404).json({ error: '用户不存在' });
     }
     res.json({ id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin });
+});
+
+// 修改密码
+app.put('/api/user/password', requireLogin, async (req, res) => {
+    try {
+        const { oldPassword, newPassword } = req.body;
+
+        if (!oldPassword || !newPassword) {
+            return res.status(400).json({ error: '请填写旧密码和新密码' });
+        }
+
+        if (!validatePassword(newPassword)) {
+            return res.status(400).json({ error: '新密码长度至少6位' });
+        }
+
+        const user = db.data.users.find(u => u.id === req.session.userId);
+        if (!user) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        if (!bcrypt.compareSync(oldPassword, user.password)) {
+            return res.status(400).json({ error: '旧密码不正确' });
+        }
+
+        if (oldPassword === newPassword) {
+            return res.status(400).json({ error: '新密码不能与旧密码相同' });
+        }
+
+        user.password = bcrypt.hashSync(newPassword, 10);
+        await db.write();
+
+        res.json({ success: true, message: '密码修改成功，请重新登录' });
+    } catch (err) {
+        console.error('修改密码失败:', err);
+        res.status(500).json({ error: '服务器错误' });
+    }
 });
 
 app.post('/api/send-code', async (req, res) => {
@@ -1220,6 +1289,35 @@ app.get('/api/members', requireAdmin, async (req, res) => {
         created_at: u.created_at
     }));
     res.json({ success: true, data: members });
+});
+
+// 管理员重置用户密码
+app.put('/api/members/:id/reset-password', requireAdmin, async (req, res) => {
+    try {
+        const currentUser = db.data.users.find(u => u.id === req.session.userId);
+        const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: '用户不存在' });
+        }
+
+        const result = canModifyUser(currentUser, user, 'reset_password');
+        if (!result.allowed) {
+            return res.status(403).json({ success: false, message: result.reason });
+        }
+
+        const newPassword = req.body && req.body.newPassword ? req.body.newPassword : '123456';
+        if (!validatePassword(newPassword)) {
+            return res.status(400).json({ success: false, message: '密码长度至少6位' });
+        }
+        user.password = bcrypt.hashSync(newPassword, 10);
+        await db.write();
+
+        res.json({ success: true, message: `密码已重置为 ${newPassword}` });
+    } catch (err) {
+        console.error('重置密码失败:', err);
+        res.status(500).json({ success: false, message: '服务器错误' });
+    }
 });
 
 app.post('/api/members/:id/ban', requireAdmin, async (req, res) => {
@@ -1750,8 +1848,7 @@ app.get('/api/admin/db-status', requireSuperAdmin, (req, res) => {
             lockTime: dbLockTime ? dbLockTime.toISOString() : null,
             dataSize: JSON.stringify(db.data).length,
             usersCount: db.data.users.length,
-            tasksCount: db.data.tasks.length,
-            emailsCount: db.data.emails.length
+            tasksCount: db.data.tasks.length
         }
     });
 });
@@ -1856,325 +1953,6 @@ app.get('/api/admin/site-status', requireAdmin, async (req, res) => {
         lockBy: siteLockBy,
         lockTime: siteLockTime
     });
-});
-
-const MAX_STORAGE = 5 * 1024 * 1024 * 1024;
-
-function getUserStorageUsage(userId) {
-    let totalSize = 0;
-    db.data.emails.forEach(email => {
-        if (email.to_user_id === userId || email.from_user_id === userId) {
-            if (email.attachments) {
-                email.attachments.forEach(att => {
-                    if (att.size) totalSize += att.size;
-                });
-            }
-        }
-    });
-    return totalSize;
-}
-
-function enrichEmailWithUserInfo(email) {
-    const fromUser = db.data.users.find(u => u.id === email.from_user_id);
-    const toUser = db.data.users.find(u => u.id === email.to_user_id);
-    
-    email.from_user = fromUser ? { 
-        id: fromUser.id, 
-        username: fromUser.username, 
-        email: fromUser.email 
-    } : null;
-    
-    if (toUser) {
-        email.to_user = { 
-            id: toUser.id, 
-            username: toUser.username, 
-            email: toUser.email 
-        };
-    } else if (email.to_email) {
-        email.to_user = { 
-            id: null, 
-            username: email.to_username || email.to_email, 
-            email: email.to_email 
-        };
-    } else {
-        email.to_user = null;
-    }
-}
-
-app.get('/api/emails', requireLogin, async (req, res) => {
-    const { folder = 'inbox', page = 1, pageSize = 20, search = '' } = req.query;
-    const userId = req.session.userId;
-    
-    let emails = [];
-    switch (folder) {
-        case 'inbox':
-            emails = db.data.emails.filter(e => e.to_user_id === userId && !e.deleted && e.folder !== 'deleted');
-            break;
-        case 'sent':
-            emails = db.data.emails.filter(e => e.from_user_id === userId && !e.deleted);
-            break;
-        case 'drafts':
-            emails = db.data.emails.filter(e => e.to_user_id === userId && e.is_draft && !e.deleted);
-            break;
-        case 'deleted':
-            emails = db.data.emails.filter(e => e.to_user_id === userId && e.folder === 'deleted');
-            break;
-        default:
-            emails = db.data.emails.filter(e => e.to_user_id === userId && !e.deleted);
-    }
-    
-    if (search) {
-        const searchLower = search.toLowerCase();
-        emails = emails.filter(e => 
-            e.subject.toLowerCase().includes(searchLower) ||
-            e.content.toLowerCase().includes(searchLower) ||
-            (e.from_user && e.from_user.username.toLowerCase().includes(searchLower))
-        );
-    }
-    
-    emails.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    
-    const total = emails.length;
-    const start = (page - 1) * pageSize;
-    const paginatedEmails = emails.slice(start, start + parseInt(pageSize));
-    
-    paginatedEmails.forEach(enrichEmailWithUserInfo);
-    
-    res.json({ success: true, data: paginatedEmails, total, page: parseInt(page), pageSize: parseInt(pageSize) });
-});
-
-app.get('/api/emails/:id', requireLogin, async (req, res) => {
-    const emailId = parseInt(req.params.id);
-    const userId = req.session.userId;
-    
-    const email = db.data.emails.find(e => e.id === emailId);
-    
-    if (!email) {
-        return res.status(404).json({ success: false, message: '邮件不存在' });
-    }
-    
-    if (email.to_user_id !== userId && email.from_user_id !== userId) {
-        return res.status(403).json({ success: false, message: '无权访问此邮件' });
-    }
-    
-    if (!email.is_read && email.to_user_id === userId) {
-        email.is_read = true;
-        await db.write();
-    }
-    
-    enrichEmailWithUserInfo(email);
-    
-    res.json({ success: true, data: email });
-});
-
-app.post('/api/emails/send', requireLogin, upload.array('attachments', 10), async (req, res) => {
-    const { to, subject, content, is_draft } = req.body;
-    const userId = req.session.userId;
-    
-    if (!to && !is_draft) {
-        return res.status(400).json({ success: false, message: '请填写收件人' });
-    }
-    
-    if (!subject && !is_draft) {
-        return res.status(400).json({ success: false, message: '请填写主题' });
-    }
-    
-    if (!content && !is_draft) {
-        return res.status(400).json({ success: false, message: '请填写内容' });
-    }
-    
-    let toUserId = null;
-    let toEmail = to;
-    let toUsername = null;
-    if (to) {
-        const toUser = db.data.users.find(u => u.email === to || u.username === to);
-        if (toUser) {
-            toUserId = toUser.id;
-            toEmail = toUser.email;
-            toUsername = toUser.username;
-        }
-    }
-    
-    const attachments = [];
-    let totalAttachmentSize = 0;
-    
-    if (req.files && req.files.length > 0) {
-        req.files.forEach(file => {
-            const attachment = {
-                id: Date.now() + Math.random(),
-                filename: file.originalname,
-                path: file.path,
-                size: file.size,
-                content_type: file.mimetype
-            };
-            attachments.push(attachment);
-            totalAttachmentSize += file.size;
-        });
-    }
-    
-    const currentUsage = getUserStorageUsage(userId);
-    if (currentUsage + totalAttachmentSize > MAX_STORAGE) {
-        return res.status(400).json({ success: false, message: '存储空间不足（5GB限制）' });
-    }
-    
-    const email = {
-        id: Date.now(),
-        from_user_id: userId,
-        to_user_id: toUserId,
-        to_email: toEmail,
-        to_username: toUsername,
-        subject: subject || '',
-        content: content || '',
-        is_read: false,
-        is_draft: !!is_draft,
-        folder: 'inbox',
-        deleted: false,
-        attachments: attachments,
-        created_at: new Date().toISOString()
-    };
-    
-    db.data.emails.push(email);
-    await db.write();
-    
-    res.json({ success: true, message: is_draft ? '草稿已保存' : '邮件发送成功', data: email });
-});
-
-app.get('/api/users/list', requireLogin, async (req, res) => {
-    const users = db.data.users.map(u => ({
-        id: u.id,
-        username: u.username,
-        email: u.email
-    }));
-    res.json({ success: true, data: users });
-});
-
-app.delete('/api/emails/:id', requireLogin, async (req, res) => {
-    const emailId = parseInt(req.params.id);
-    const userId = req.session.userId;
-    
-    const email = db.data.emails.find(e => e.id === emailId);
-    
-    if (!email) {
-        return res.status(404).json({ success: false, message: '邮件不存在' });
-    }
-    
-    if (email.to_user_id !== userId && email.from_user_id !== userId) {
-        return res.status(403).json({ success: false, message: '无权删除此邮件' });
-    }
-    
-    if (email.folder === 'deleted') {
-        const emailIndex = db.data.emails.indexOf(email);
-        if (emailIndex > -1) {
-            db.data.emails.splice(emailIndex, 1);
-        }
-        await db.write();
-        return res.json({ success: true, message: '邮件已永久删除' });
-    }
-    
-    email.folder = 'deleted';
-    await db.write();
-    
-    res.json({ success: true, message: '邮件已移至回收站' });
-});
-
-app.post('/api/emails/:id/restore', requireLogin, async (req, res) => {
-    const emailId = parseInt(req.params.id);
-    const userId = req.session.userId;
-    
-    const email = db.data.emails.find(e => e.id === emailId);
-    
-    if (!email) {
-        return res.status(404).json({ success: false, message: '邮件不存在' });
-    }
-    
-    if (email.to_user_id !== userId) {
-        return res.status(403).json({ success: false, message: '无权恢复此邮件' });
-    }
-    
-    email.folder = 'inbox';
-    await db.write();
-    
-    res.json({ success: true, message: '邮件已恢复' });
-});
-
-app.put('/api/emails/:id/read', requireLogin, async (req, res) => {
-    const emailId = parseInt(req.params.id);
-    const userId = req.session.userId;
-    const { is_read } = req.body;
-    
-    const email = db.data.emails.find(e => e.id === emailId);
-    
-    if (!email) {
-        return res.status(404).json({ success: false, message: '邮件不存在' });
-    }
-    
-    if (email.to_user_id !== userId) {
-        return res.status(403).json({ success: false, message: '无权修改此邮件状态' });
-    }
-    
-    email.is_read = !!is_read;
-    await db.write();
-    
-    res.json({ success: true, message: '邮件状态已更新' });
-});
-
-app.get('/api/emails/stats', requireLogin, async (req, res) => {
-    const userId = req.session.userId;
-    
-    const inboxCount = db.data.emails.filter(e => e.to_user_id === userId && !e.deleted && e.folder !== 'deleted' && !e.is_read).length;
-    const sentCount = db.data.emails.filter(e => e.from_user_id === userId && !e.deleted).length;
-    const draftCount = db.data.emails.filter(e => e.to_user_id === userId && e.is_draft && !e.deleted).length;
-    const deletedCount = db.data.emails.filter(e => e.to_user_id === userId && e.folder === 'deleted').length;
-    const storageUsed = getUserStorageUsage(userId);
-    
-    res.json({
-        success: true,
-        data: {
-            inbox: inboxCount,
-            sent: sentCount,
-            drafts: draftCount,
-            deleted: deletedCount,
-            storageUsed,
-            storageLimit: MAX_STORAGE
-        }
-    });
-});
-
-app.get('/api/emails/attachments/:id/download', requireLogin, async (req, res) => {
-    const attachmentId = parseFloat(req.params.id);
-    const userId = req.session.userId;
-    
-    let foundAttachment = null;
-    let foundEmail = null;
-    
-    for (const email of db.data.emails) {
-        if (email.to_user_id !== userId && email.from_user_id !== userId) continue;
-        
-        if (email.attachments) {
-            const att = email.attachments.find(a => a.id === attachmentId);
-            if (att) {
-                foundAttachment = att;
-                foundEmail = email;
-                break;
-            }
-        }
-    }
-    
-    if (!foundAttachment || !foundEmail) {
-        return res.status(404).json({ success: false, message: '附件不存在' });
-    }
-    
-    const filePath = path.resolve(foundAttachment.path);
-    
-    if (!isSafePath(filePath, uploadsDir)) {
-        return res.status(403).json({ success: false, message: '非法文件路径' });
-    }
-    
-    if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ success: false, message: '附件文件不存在' });
-    }
-    
-    res.download(filePath, foundAttachment.filename || 'download');
 });
 
 app.post('/api/ban-ip', requireSuperAdmin, async (req, res) => {
@@ -2317,7 +2095,7 @@ app.use((req, res, next) => {
     next();
 });
 
-(async () => {
+const startPromise = (async () => {
     await initDatabase();
     await loadBannedIPs();
     
@@ -2329,3 +2107,12 @@ app.use((req, res, next) => {
 })();
 
 const isDevelopment = !process.env.VERCEL && !process.env.RAILWAY;
+
+async function ensureReady() {
+    await startPromise;
+    return app;
+}
+
+module.exports = app;
+module.exports.default = app;
+module.exports.ensureReady = ensureReady;

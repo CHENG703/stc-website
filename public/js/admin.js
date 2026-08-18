@@ -544,7 +544,6 @@ const CMDLog = {
                         this.log('数据大小: ' + Math.round(s.dataSize / 1024) + ' KB', 'info');
                         this.log('用户数: ' + s.usersCount, 'info');
                         this.log('任务数: ' + s.tasksCount, 'info');
-                        this.log('邮件数: ' + s.emailsCount, 'info');
                         this.log('==================', 'system');
                     } else {
                         this.log('获取状态失败: ' + d.message, 'error');
@@ -817,15 +816,25 @@ const CMDLog = {
                 const rpUsername = rpParts[0];
                 const rpNewPw = rpParts[1];
                 this.log('正在重置密码: ' + rpUsername, 'warn');
-                fetch('/api/members').then(r=>r.json()).then(result=>{
+                fetchWithAuth('/api/members').then(r=>r.json()).then(result=>{
                     const members = result.data || [];
                     const target = members.find(u => u.username === rpUsername || u.id === parseInt(rpUsername));
                     if (!target) {
                         this.log('未找到用户: ' + rpUsername, 'error');
                         return;
                     }
-                    this.log('密码重置功能暂未实现，请手动修改数据库', 'warn');
-                }).catch(e=>this.log('查找失败: '+e.message,'error'));
+                    return fetchWithAuth('/api/members/' + target.id + '/reset-password', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ newPassword: rpNewPw })
+                    }).then(r=>r.json()).then(d=>{
+                        if (d.success) {
+                            this.log(`用户 ${target.username} 的密码已重置为 ${rpNewPw}`, 'info');
+                        } else {
+                            this.log('重置失败: ' + (d.error || d.message || '未知错误'), 'error');
+                        }
+                    });
+                }).catch(e=>this.log('操作失败: '+e.message,'error'));
                 break;
             default:
                 this.log('未知命令: '+cmd+' (输入help查看)', 'error');
