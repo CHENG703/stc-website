@@ -993,25 +993,12 @@ async function fetchWithAuth(url, options = {}) {
 
     const response = await fetch(url, options);
     if (response.status === 401) {
-        showMessage('请先登录', 'error');
-        localStorage.removeItem('user');
-        localStorage.removeItem('stc_auth_token');
-        setTimeout(() => window.location.href = '/login', 2000);
         throw new Error('Unauthorized');
     }
     if (response.status === 403) {
         const error = await response.json();
         const errorMsg = error.error || '';
-        if (errorMsg.includes('请先登录') || errorMsg.includes('未登录')) {
-            showMessage('登录已过期，请重新登录', 'error');
-            localStorage.removeItem('user');
-            localStorage.removeItem('stc_auth_token');
-            setTimeout(() => window.location.href = '/login', 2000);
-            throw new Error('Unauthorized');
-        } else {
-            showMessage(errorMsg || '权限不足', 'error');
-            throw new Error('PermissionDenied');
-        }
+        throw new Error('PermissionDenied');
     }
     return response;
 }

@@ -276,22 +276,16 @@ async function fetchWithAuth(url, options = {}) {
         }
     }
     
+    if (response.status === 401) {
+        console.log('[AUTH] 收到 401 未授权响应');
+        throw new Error('Unauthorized');
+    }
+    
     if (response.status === 403) {
         const error = await response.json();
         const errorMsg = error.error || '';
-        // 只有当提示"请先登录"时才跳转登录页
-        if (errorMsg.includes('请先登录') || errorMsg.includes('未登录')) {
-            showMessage('登录已过期，请重新登录', 'error');
-            localStorage.removeItem('user');
-            setTimeout(() => {
-                window.location.href = '/login';
-            }, 2000);
-            throw new Error('AccessDenied');
-        } else {
-            // 其他权限错误（如无权删除）仅显示消息，不跳转
-            showMessage(errorMsg || '权限不足', 'error');
-            throw new Error('PermissionDenied');
-        }
+        // 不强制跳转，让调用者决定如何处理
+        throw new Error('PermissionDenied');
     }
     
     return response;
@@ -417,9 +411,8 @@ async function checkLoginStatus() {
             return currentUser;
         }
     } catch (error) {
-        if (error.message !== 'AccessDenied') {
-            console.error('检查登录状态失败:', error);
-        }
+        // checkLoginStatus 不应该强制跳转，只是返回 null
+        console.log('[AUTH] checkLoginStatus:', error.message);
     }
     return null;
 }
