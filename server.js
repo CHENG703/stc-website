@@ -27,6 +27,28 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
+// Logto 配置
+const LOGTO_CONFIG = {
+    endpoint: process.env.LOGTO_ENDPOINT || 'https://auth.manymice.cn',
+    appId: process.env.LOGTO_APP_ID || '4rffjd8k4tvznc89u8ja9',
+    appSecret: process.env.LOGTO_APP_SECRET || 'aaK7xTKFM9HlfM2FZd8mOya07EFYf1PD',
+    baseUrl: process.env.LOGTO_BASE_URL || 'https://stcwork.top',
+};
+
+// 动态加载 Logto SDK (ESM 模块)
+let logtoHandleAuthRoutes = null;
+let logtoWithLogto = null;
+(async () => {
+    try {
+        const logto = await import('@logto/express');
+        logtoHandleAuthRoutes = logto.handleAuthRoutes(LOGTO_CONFIG);
+        logtoWithLogto = logto.withLogto(LOGTO_CONFIG);
+        console.log('[LOGTO] SDK 加载成功');
+    } catch (e) {
+        console.warn('[LOGTO] SDK 加载失败:', e.message);
+    }
+})();
+
 // Vercel Serverless 限制：只读文件系统、无 child_process
 const IS_VERCEL = !!process.env.VERCEL;
 const canSpawn = !IS_VERCEL;
@@ -574,6 +596,99 @@ if (!IS_VERCEL && FileStore) {
 
 // 统一的认证中间件：无论什么环境，都解析 Authorization header 并生成 token
 app.use(session(sessionConfig));
+
+// Logto 认证路由（延迟加载，等 SDK 初始化完成）
+app.use('/logto', (req, res, next) => {
+    if (logtoHandleAuthRoutes) {
+        return logtoHandleAuthRoutes(req, res, next);
+    }
+    // SDK 尚未加载完成，稍后重试
+    setTimeout(() => {
+        if (logtoHandleAuthRoutes) {
+            return logtoHandleAuthRoutes(req, res, next);
+        }
+        res.status(503).json({ error: 'Logto SDK 正在加载，请稍后重试' });
+    }, 500);
+});
+
+// Logto 登录回调成功后，通过 API 检查认证状态并生成 token
+app.get('/api/auth/logto/check', async (req, res) => {
+    try {
+        if (!logtoWithLogto) {
+            return res.json({ authenticated: false, error: 'logto_not_ready' });
+        }
+        // 使用 withLogto 中间件获取用户信息
+        logtoWithLogto(LOGTO_CONFIG, req, res, async () => {
+            try {
+                if (!req.user || !req.user.isAuthenticated) {
+                    return res.json({ authenticated: false });
+                }
+                
+                const claims = req.user.claims;
+                const logtoSub = claims.sub;
+                const logtoUsername = claims.username || claims.email || logtoSub;
+                const logtoEmail = claims.email || '';
+                
+                // 查找或创建用户
+                await db.read();
+                let user = db.data.users.find(u => u.logto_sub === logtoSub);
+                
+                if (!user) {
+                    // 检查邮箱是否已注册
+                    if (logtoEmail) {
+                        user = db.data.users.find(u => u.email === logtoEmail);
+                        if (user) {
+                            // 关联已有账号
+                            user.logto_sub = logtoSub;
+                            await db.write();
+                        }
+                    }
+                }
+                
+                if (!user) {
+                    // 创建新用户
+                    user = {
+                        id: Date.now().toString(),
+                        username: logtoUsername,
+                        email: logtoEmail,
+                        password_hash: '',
+                        is_admin: false,
+                        is_super_admin: false,
+                        logto_sub: logtoSub,
+                        created_at: new Date().toISOString(),
+                        last_login: new Date().toISOString(),
+                        last_login_ip: getClientIP(req)
+                    };
+                    db.data.users.push(user);
+                    await db.write();
+                } else {
+                    // 更新登录信息
+                    user.last_login = new Date().toISOString();
+                    user.last_login_ip = getClientIP(req);
+                    await db.write();
+                }
+                
+                // 生成 token
+                const token = Buffer.from(JSON.stringify({
+                    userId: user.id,
+                    username: user.username,
+                    email: user.email || '',
+                    isAdmin: user.is_admin,
+                    isSuperAdmin: user.is_super_admin,
+                    ts: Date.now()
+                })).toString('base64');
+                
+                res.json({ authenticated: true, token: token, username: user.username });
+            } catch (e) {
+                console.error('[LOGTO] 检查认证失败:', e);
+                res.json({ authenticated: false, error: 'logto_check_error' });
+            }
+        });
+    } catch (e) {
+        console.error('[LOGTO] 检查错误:', e);
+        res.json({ authenticated: false, error: 'logto_error' });
+    }
+});
 
 app.use((req, res, next) => {
     const authHeader = req.headers.authorization || req.headers['x-auth-token'];

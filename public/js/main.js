@@ -985,7 +985,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     calculateUnionDays();
     
     // 检查登录状态
-    const user = await checkLoginStatus();
+    let user = await checkLoginStatus();
+    
+    // 如果未登录，尝试检查 Logto 认证
+    if (!user) {
+        try {
+            const response = await fetch('/api/auth/logto/check');
+            const data = await response.json();
+            if (data.authenticated && data.token) {
+                localStorage.setItem('stc_auth_token', data.token);
+                console.log('[LOGTO] 通过 Logto 登录成功:', data.username);
+                // 重新检查登录状态
+                user = await checkLoginStatus();
+            }
+        } catch (e) {
+            // Logto 检查失败，静默忽略
+        }
+    }
     
     // 如果已登录，显示留言表单
     if (user) {
