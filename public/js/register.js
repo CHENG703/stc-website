@@ -55,11 +55,11 @@ async function sendEmailCode() {
         sendBtn.disabled = true;
         sendBtn.textContent = '发送中...';
         
-        const response = await fetch('/api/send-email-code', {
+        const response = await fetch('/api/send-code', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ email })
+            body: JSON.stringify({ email, type: 'register' })
         });
         
         const result = await response.json();
@@ -185,7 +185,7 @@ async function handleRegister(event) {
                 'Content-Type': 'application/json'
             },
             credentials: 'include',
-            body: JSON.stringify({ username, email, password, inviteCode, emailCode })
+            body: JSON.stringify({ username, email, password, invite_code: inviteCode, verify_code: emailCode })
         });
 
         if (response.ok) {

@@ -425,16 +425,24 @@
             btn.disabled = true;
             btn.textContent = '发送中...';
             
-            fetch('/api/send-verification', {
+            fetch('/api/send-code', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ email })
+                body: JSON.stringify({ email: email, type: 'register' })
             })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
+            .then(response => {
+                const ct = response.headers.get('content-type') || '';
+                if (!ct.includes('application/json')) {
+                    return response.text().then(text => {
+                        throw new Error('服务器返回非JSON (HTTP ' + response.status + '): ' + text.substring(0, 200));
+                    });
+                }
+                return response.json().then(data => ({ data, status: response.status }));
+            })
+            .then(({ data, status }) => {
+                if (status === 200 && data.success) {
                     showSuccess('验证码已发送到您的邮箱');
                     let countdown = 60;
                     btn.textContent = countdown + 's';
@@ -455,7 +463,7 @@
                 }
             })
             .catch(error => {
-                showError('网络错误，请重试');
+                showError('发送失败: ' + error.message);
                 btn.disabled = false;
                 btn.textContent = '发送验证码';
             });
@@ -508,7 +516,7 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ username, email, password, emailCode, inviteCode })
+                    body: JSON.stringify({ username, email, password, verify_code: emailCode, invite_code: inviteCode })
                 });
                 
                 const data = await response.json();
