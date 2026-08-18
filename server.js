@@ -555,7 +555,21 @@ if (!IS_VERCEL && FileStore) {
 
 // Vercel 环境: 使用 Authorization header 认证（localStorage 存储）
 if (IS_VERCEL) {
-    // 从 Authorization header 读取 token
+    // 先加载 session
+    app.use(session({
+        secret: SESSION_SECRET,
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            secure: true,
+            maxAge: 24 * 60 * 60 * 1000,
+            httpOnly: false,
+            sameSite: 'none',
+            path: '/'
+        }
+    }));
+    
+    // 然后从 Authorization header 读取 token，并设置到 session
     app.use((req, res, next) => {
         const authHeader = req.headers.authorization || req.headers['x-auth-token'];
         let authUser = null;
@@ -583,7 +597,7 @@ if (IS_VERCEL) {
         req.authUser = authUser;
         req.isAuthenticated = !!authUser;
         
-        if (authUser) {
+        if (authUser && !req.session.userId) {
             req.session.userId = authUser.id;
             req.session.username = authUser.username;
             req.session.isAdmin = authUser.is_admin;
@@ -604,19 +618,6 @@ if (IS_VERCEL) {
         
         next();
     });
-    
-    app.use(session({
-        secret: SESSION_SECRET,
-        resave: false,
-        saveUninitialized: false,
-        cookie: {
-            secure: true,
-            maxAge: 24 * 60 * 60 * 1000,
-            httpOnly: false,
-            sameSite: 'none',
-            path: '/'
-        }
-    }));
 } else {
     app.use(session(sessionConfig));
     
@@ -724,30 +725,43 @@ function isSafePath(filePath, allowedDir) {
     return resolvedPath.startsWith(resolvedAllowedDir);
 }
 
+// 统一的用户获取函数（支持 session 和 authUser 两种方式）
+function getCurrentUser(req) {
+    if (req.session.userId) {
+        return db.data.users.find(u => u.id === req.session.userId);
+    }
+    if (req.authUser && req.authUser.id) {
+        return db.data.users.find(u => u.id === req.authUser.id);
+    }
+    return null;
+}
+
 const requireLogin = (req, res, next) => {
-    if (!req.session.userId) {
+    const user = getCurrentUser(req);
+    if (!user) {
+        console.log('[AUTH] requireLogin 失败，session.userId:', req.session.userId, 'authUser:', req.authUser?.id);
         return res.status(403).json({ error: '请先登录' });
     }
     next();
 };
 
 const requireAdmin = (req, res, next) => {
-    if (!req.session.userId) {
+    const user = getCurrentUser(req);
+    if (!user) {
         return res.status(403).json({ error: '请先登录' });
     }
-    const user = db.data.users.find(u => u.id === req.session.userId);
-    if (!user || !user.is_admin) {
+    if (!user.is_admin && !user.is_super_admin) {
         return res.status(403).json({ error: '权限不足' });
     }
     next();
 };
 
 const requireSuperAdmin = (req, res, next) => {
-    if (!req.session.userId) {
+    const user = getCurrentUser(req);
+    if (!user) {
         return res.status(403).json({ error: '请先登录' });
     }
-    const user = db.data.users.find(u => u.id === req.session.userId);
-    if (!user || !user.is_super_admin) {
+    if (!user.is_super_admin) {
         return res.status(403).json({ error: '权限不足' });
     }
     next();
@@ -1055,13 +1069,10 @@ app.get('/api/csrf-token', (req, res) => {
 });
 
 app.get('/api/user', (req, res) => {
-    console.log('[USER API] session.userId:', req.session.userId, 'authUser:', req.authUser?.username);
-    if (!req.session.userId) {
-        return res.status(401).json({ error: '未登录' });
-    }
-    const user = db.data.users.find(u => u.id === req.session.userId);
+    const user = getCurrentUser(req);
+    console.log('[USER API] session.userId:', req.session.userId, 'authUser:', req.authUser?.username, 'found:', !!user);
     if (!user) {
-        return res.status(404).json({ error: '用户不存在' });
+        return res.status(401).json({ error: '未登录' });
     }
     res.json({ id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin });
 });
