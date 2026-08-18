@@ -423,6 +423,8 @@ async function logout() {
         const response = await fetchWithAuth('/api/logout', {
             method: 'POST'
         });
+        // 无论成功与否，都清除本地 token
+        localStorage.removeItem('stc_auth_token');
         if (response.ok) {
             showMessage('登出成功');
             setTimeout(() => {
@@ -432,8 +434,16 @@ async function logout() {
             showMessage('登出失败', 'error');
         }
     } catch (error) {
-        if (error.message !== 'AccessDenied') {
+        // 清除本地 token，即使请求失败
+        localStorage.removeItem('stc_auth_token');
+        if (error.message !== 'AccessDenied' && error.message !== 'Unauthorized') {
             showMessage('登出失败', 'error');
+        } else {
+            // 401/403 也视为登出成功（token 已失效）
+            showMessage('登出成功');
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 1000);
         }
     }
 }

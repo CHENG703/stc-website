@@ -1588,9 +1588,14 @@ app.post('/api/register', async (req, res) => {
 });
 
 app.post('/api/logout', (req, res) => {
-    req.clearAuthCookie();
+    // 清除客户端 token
     req.session.destroy((err) => {
         if (err) console.error('[LOGOUT] Session 销毁失败:', err);
+        // 清除所有 session cookie
+        const sessCookies = Object.keys(req.cookies || {}).filter(k => k.startsWith('sess_'));
+        sessCookies.forEach(name => {
+            res.clearCookie(name, { path: '/' });
+        });
         res.json({ success: true, message: '登出成功' });
     });
 });
