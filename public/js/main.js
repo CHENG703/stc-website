@@ -663,7 +663,7 @@ async function publishTask() {
     };
     
     try {
-        const userResp = await fetch('/api/user', { credentials: 'include' });
+        const userResp = await fetchWithAuth('/api/user');
         if (!userResp.ok) {
             restoreBtn();
             showConfirmModal('发布任务需要先登录，是否前往登录页？', () => {

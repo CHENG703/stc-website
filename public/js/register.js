@@ -213,7 +213,13 @@ async function handleRegister(event) {
 // 页面加载完成后执行
 document.addEventListener('DOMContentLoaded', () => {
     // 检查是否已登录
-    fetch('/api/user')
+    const token = localStorage.getItem('stc_auth_token');
+    const headers = {};
+    if (token) {
+        headers['Authorization'] = 'Bearer ' + token;
+    }
+    
+    fetch('/api/user', { credentials: 'include', headers })
         .then(response => {
             if (response.ok) {
                 window.location.href = '/user';

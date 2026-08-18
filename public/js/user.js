@@ -279,7 +279,7 @@ function formatDate(dateString) {
 // 页面加载完成后执行
 async function loadAvatar() {
     try {
-        const response = await fetch('/api/user');
+        const response = await fetchWithAuth('/api/user');
         if (response.ok) {
             const user = await response.json();
             const avatarPreview = document.getElementById('avatar-preview');
