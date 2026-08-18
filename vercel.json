@@ -1,10 +1,11 @@
 {
   "version": 2,
-  "buildCommand": "echo 'build skip'",
+  "buildCommand": "npm install",
+  "outputDirectory": ".",
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
-      "includeFiles": "server.js,public/**,public/*.html,public/css/**,public/js/**,public/avatars/**,public/uploads/**"
+      "includeFiles": "server.js,public/**,public/*.html,public/css/**,public/js/**,public/avatars/**,public/uploads/**,sessions/**"
     }
   },
   "routes": [

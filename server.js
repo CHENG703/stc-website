@@ -25,17 +25,30 @@ const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
 
 // Vercel Serverless 限制：只读文件系统、无 child_process
 const IS_VERCEL = !!process.env.VERCEL;
 const canSpawn = !IS_VERCEL;
 const fsRoot = IS_VERCEL ? '/tmp' : __dirname;
+
+let spawn = () => { throw new Error('child_process not available'); };
+if (!IS_VERCEL) {
+    try {
+        spawn = require('child_process').spawn;
+    } catch (e) {}
+}
 const nodemailer = require('nodemailer');
 
 const { Low } = require('lowdb');
 const { JSONFile } = require('lowdb/node');
-const FileStore = IS_VERCEL ? null : require('session-file-store')(session);
+let FileStore = null;
+if (!IS_VERCEL) {
+    try {
+        FileStore = require('session-file-store')(session);
+    } catch (e) {
+        console.warn('session-file-store 加载失败，使用内存 session:', e.message);
+    }
+}
 
 // 数据库锁定状态
 let dbLocked = false;
@@ -323,7 +336,7 @@ const storage = multer.diskStorage({
 const upload = multer({
     storage: storage,
     limits: {
-        fileSize: 2 * 1024 * 1024 * 1024
+        fileSize: IS_VERCEL ? 50 * 1024 * 1024 : 2 * 1024 * 1024 * 1024
     },
     fileFilter: fileFilter
 });
@@ -384,13 +397,8 @@ const sessionConfig = {
 };
 
 // Vercel Serverless 用内存 session（无持久化），其他环境用文件 session
-if (!IS_VERCEL) {
-    sessionConfig.store = new FileStore({
-        path: sessionDir,
-        secret: 'STC_SECRET_KEY_2025',
-        ttl: 86400 * 7,
-        retries: 0
-    });
+if (!IS_VERCEL && FileStore) {
+    sessionConfig.store = FileStore;
 }
 
 app.use(session(sessionConfig));
@@ -2493,6 +2501,7 @@ if (isZeabur) {
 
 async function ensureReady() {
     await startPromise;
+    console.log('[Vercel] Server ready, app listening');
     return app;
 }
 
