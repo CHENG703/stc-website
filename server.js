@@ -64,6 +64,7 @@ let siteLockTime = null;
 const app = express();
 const PORT = process.env.PORT || 3000;
 const isVercel = !!process.env.VERCEL;
+const isZeabur = !!process.env.ZEABUR;
 const isProduction = process.env.NODE_ENV === 'production';
 
 const CORS_ORIGINS = process.env.CORS_ORIGINS
@@ -75,6 +76,8 @@ function isAllowedOrigin(origin) {
     if (CORS_ORIGINS.includes(origin)) return true;
     if (origin.endsWith('.github.io')) return true;
     if (origin === 'github.io') return true;
+    if (origin.endsWith('.zeabur.app')) return true;
+    if (origin.endsWith('.zeabur.com')) return true;
     return false;
 }
 
@@ -93,8 +96,8 @@ app.use((req, res, next) => {
     next();
 });
 
-const runtimeDir = isVercel ? '/tmp/stc-runtime' : __dirname;
-if (isVercel && !fs.existsSync(runtimeDir)) {
+const runtimeDir = isVercel ? '/tmp/stc-runtime' : (isZeabur ? '/data/stc-runtime' : __dirname);
+if ((isVercel || isZeabur) && !fs.existsSync(runtimeDir)) {
     try { fs.mkdirSync(runtimeDir, { recursive: true }); } catch (e) {}
 }
 
@@ -242,7 +245,7 @@ console.error = function() {
     addServerLog(args.map(function(a) { return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' '), 'error');
 };
 
-const uploadsDir = (process.env.VERCEL || process.env.RAILWAY) ? '/tmp/uploads' : 'uploads';
+const uploadsDir = (process.env.VERCEL || process.env.RAILWAY) ? '/tmp/uploads' : (isZeabur ? '/data/uploads' : 'uploads');
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -2107,6 +2110,15 @@ const startPromise = (async () => {
 })();
 
 const isDevelopment = !process.env.VERCEL && !process.env.RAILWAY;
+
+if (isZeabur) {
+    setInterval(async () => {
+        try {
+            await db.read();
+            await db.write();
+        } catch (e) {}
+    }, 30000);
+}
 
 async function ensureReady() {
     await startPromise;
