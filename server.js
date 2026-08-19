@@ -1501,27 +1501,34 @@ app.use('/api/', (req, res, next) => {
     if (publicPaths.includes(req.path) || req.path.startsWith('/api/logs')) {
         return next();
     }
-    
+
+    // Vercel/Serverless 环境下跳过 IP 检查：
+    // 1. CDN 和负载均衡会使 x-vercel-forwarded-for 等IP头不稳定
+    // 2. 认证已由 Authorization header (token) 提供，IP 检查意义不大
+    if (IS_VERCEL) {
+        return next();
+    }
+
     // 如果没有登录，跳过
     if (!req.session.userId) {
         return next();
     }
-    
+
     const currentIP = getClientIP(req);
     const loginIP = req.session.loginIP;
-    
+
     // 如果有记录的登录IP且不匹配，说明异地登录了
     if (loginIP && currentIP !== loginIP) {
         // 清除session
         req.session.destroy((err) => {
-            return res.status(401).json({ 
+            return res.status(401).json({
                 error: '账号已在其他设备登录，请重新登录',
-                relogin: true 
+                relogin: true
             });
         });
         return;
     }
-    
+
     next();
 });
 

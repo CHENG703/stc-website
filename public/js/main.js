@@ -799,14 +799,10 @@ async function publishTask() {
                         csrfToken = tkData.csrfToken;
                     }
                 }
-                
-                const headers = {};
-                if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
-                
-                const response = await fetch('/api/tasks', {
+
+                // 使用 fetchWithAuth 确保 Vercel 环境下带上 Authorization 头
+                const response = await fetchWithAuth('/api/tasks', {
                     method: 'POST',
-                    credentials: 'include',
-                    headers: headers,
                     body: formData
                 });
                 
@@ -840,7 +836,15 @@ async function publishTask() {
         
     } catch (error) {
         restoreBtn();
-        showMessage('发布功能暂时不可用', 'error');
+        // 401 未授权 / 未登录，引导用户登录
+        if (error.message === 'Unauthorized' || error.message === 'AccessDenied') {
+            showConfirmModal('登录状态已失效，是否前往登录页？', () => {
+                window.location.href = '/login';
+            });
+        } else if (error.message !== 'PermissionDenied' && error.message !== 'SiteLocked') {
+            console.error('[publishTask] 错误:', error);
+            showMessage('发布功能暂时不可用：' + (error.message || '请重试'), 'error');
+        }
     }
 }
 
