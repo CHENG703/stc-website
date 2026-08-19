@@ -450,9 +450,25 @@ function getClientIP(req) {
            '127.0.0.1';
 }
 
+var generateLogId = (function() {
+    var lastTimestamp = 0;
+    var seq = 0;
+    return function() {
+        var timestamp = Date.now();
+        if (timestamp === lastTimestamp) {
+            seq++;
+        } else {
+            lastTimestamp = timestamp;
+            seq = 0;
+        }
+        return timestamp + '-' + String(seq).padStart(3, '0');
+    };
+})();
+
 function addServerLog(message, type) {
     type = type || 'info';
     var entry = {
+        id: generateLogId(),
         time: new Date().toISOString(),
         message: String(message),
         type: type
@@ -3245,6 +3261,25 @@ app.use((req, res, next) => {
 });
 
 app.get('/api/logs', requireAdmin, (req, res) => {
+    var since = req.query.since;
+    if (since && typeof since === 'string') {
+        var sinceParts = since.split('-');
+        var sinceTimestamp = parseInt(sinceParts[0], 10);
+        var sinceSeq = sinceParts[1] ? parseInt(sinceParts[1], 10) : 0;
+        if (!isNaN(sinceTimestamp) && !isNaN(sinceSeq)) {
+            var filteredLogs = serverLogs.filter(function(log) {
+                if (!log.id) return false;
+                var logParts = log.id.split('-');
+                var logTimestamp = parseInt(logParts[0], 10);
+                var logSeq = logParts[1] ? parseInt(logParts[1], 10) : 0;
+                if (logTimestamp > sinceTimestamp) return true;
+                if (logTimestamp === sinceTimestamp && logSeq > sinceSeq) return true;
+                return false;
+            });
+            res.json({ success: true, data: filteredLogs });
+            return;
+        }
+    }
     res.json({ success: true, data: serverLogs });
 });
 
@@ -3257,23 +3292,42 @@ app.get('/api/logs/sse', requireAdmin, (req, res) => {
     });
     
     // 发送初始连接成功消息
-    res.write('data: ' + JSON.stringify({message: '日志连接已建立', type: 'system'}) + '\n\n');
+    res.write('data: ' + JSON.stringify({id: generateLogId(), message: '日志连接已建立', type: 'system'}) + '\n\n');
     
     sseClients.push(res);
     
-    // 心跳机制 - 每15秒发送心跳保持连接
-    const heartbeat = setInterval(() => {
+    // 心跳机制 - 每10秒发送心跳保持连接
+    var heartbeat = setInterval(function() {
         try {
             res.write(': heartbeat\n\n');
         } catch (e) {
             clearInterval(heartbeat);
-            sseClients = sseClients.filter(client => client !== res);
+            sseClients = sseClients.filter(function(client) { return client !== res; });
         }
-    }, 15000);
+    }, 10000);
     
-    req.on('close', () => {
+    // 25秒优雅重连机制
+    var reconnectTimer = setTimeout(function() {
+        try {
+            res.write('data: ' + JSON.stringify({ type: 'reconnect', message: '连接即将超时，请重连', time: new Date().toISOString() }) + '\n\n');
+        } catch (e) {
+            // 忽略写入错误
+        }
+        setTimeout(function() {
+            clearInterval(heartbeat);
+            sseClients = sseClients.filter(function(client) { return client !== res; });
+            try {
+                res.end();
+            } catch (e) {
+                // 忽略结束错误
+            }
+        }, 1000);
+    }, 25000);
+    
+    req.on('close', function() {
         clearInterval(heartbeat);
-        sseClients = sseClients.filter(client => client !== res);
+        clearTimeout(reconnectTimer);
+        sseClients = sseClients.filter(function(client) { return client !== res; });
     });
 });
 

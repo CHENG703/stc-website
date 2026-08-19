@@ -1,14 +1,231 @@
+const LogStreamManager = {
+    lastLogId: null,
+    status: 'disconnected',
+    subscribers: [],
+    statusSubscribers: [],
+    reader: null,
+    controller: null,
+    reconnectAttempts: 0,
+    maxReconnectAttempts: 3,
+
+    subscribe(callback) {
+        this.subscribers.push(callback);
+        return () => {
+            const idx = this.subscribers.indexOf(callback);
+            if (idx !== -1) {
+                this.subscribers.splice(idx, 1);
+            }
+        };
+    },
+
+    onStatusChange(callback) {
+        this.statusSubscribers.push(callback);
+        return () => {
+            const idx = this.statusSubscribers.indexOf(callback);
+            if (idx !== -1) {
+                this.statusSubscribers.splice(idx, 1);
+            }
+        };
+    },
+
+    subscribeStatus(callback) {
+        this.statusSubscribers.push(callback);
+        return () => {
+            const idx = this.statusSubscribers.indexOf(callback);
+            if (idx !== -1) {
+                this.statusSubscribers.splice(idx, 1);
+            }
+        };
+    },
+
+    start() {
+        if (this.status === 'connecting' || this.status === 'connected' || this.status === 'reconnecting') {
+            return;
+        }
+        this.reconnectAttempts = 0;
+        this._connect();
+    },
+
+    stop() {
+        if (this.controller) {
+            this.controller.abort();
+            this.controller = null;
+        }
+        if (this.reader) {
+            try { this.reader.cancel(); } catch(e) {}
+            this.reader = null;
+        }
+        this._setStatus('disconnected');
+    },
+
+    async _connect() {
+        if (this.status === 'connecting') return;
+
+        this._setStatus(this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting');
+
+        try {
+            await this._fetchMissingLogs();
+        } catch (e) {
+            console.error('获取增量日志失败:', e);
+        }
+
+        try {
+            this.controller = new AbortController();
+            const response = await fetchWithAuth('/api/logs/sse', {
+                signal: this.controller.signal,
+                headers: { 'Accept': 'text/event-stream' }
+            });
+
+            if (!response.ok) {
+                throw new Error('HTTP ' + response.status);
+            }
+
+            this._setStatus('connected');
+            this.reconnectAttempts = 0;
+
+            this.reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await this.reader.read();
+
+                if (done) {
+                    break;
+                }
+
+                buffer += decoder.decode(value, { stream: true });
+                const events = buffer.split('\n\n');
+                buffer = events.pop() || '';
+
+                for (const event of events) {
+                    const trimmed = event.trim();
+                    if (!trimmed) continue;
+
+                    const dataMatch = trimmed.match(/^data: (.+)$/m);
+                    if (dataMatch) {
+                        try {
+                            const entry = JSON.parse(dataMatch[1]);
+                            if (entry.type === 'reconnect') {
+                                if (this.reader) {
+                                    try { this.reader.cancel(); } catch(e) {}
+                                    this.reader = null;
+                                }
+                                this._connect();
+                                return;
+                            }
+                            if (entry.id) {
+                                this.lastLogId = entry.id;
+                            }
+                            this._notify(entry);
+                        } catch (e) {}
+                    }
+                }
+            }
+
+            this._handleDisconnect();
+        } catch (e) {
+            if (e.name === 'AbortError') {
+                this._setStatus('disconnected');
+                return;
+            }
+            this._handleDisconnect(e);
+        }
+    },
+
+    _handleDisconnect(error) {
+        this.reader = null;
+        this.controller = null;
+
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+            this.reconnectAttempts++;
+            this._setStatus('reconnecting');
+            setTimeout(() => {
+                this._connect();
+            }, 1000);
+        } else {
+            this._setStatus('disconnected');
+        }
+    },
+
+    async _fetchMissingLogs() {
+        const url = this.lastLogId
+            ? '/api/logs?since=' + encodeURIComponent(this.lastLogId)
+            : '/api/logs';
+
+        const response = await fetchWithAuth(url);
+        const data = await response.json();
+
+        if (data.success && data.data && data.data.length > 0) {
+            for (const entry of data.data) {
+                if (entry.id) {
+                    this.lastLogId = entry.id;
+                }
+                this._notify(entry);
+            }
+        }
+    },
+
+    _notify(entry) {
+        for (const cb of this.subscribers) {
+            try {
+                cb(entry);
+            } catch (e) {
+                console.error('Log subscriber error:', e);
+            }
+        }
+    },
+
+    _setStatus(status) {
+        this.status = status;
+        for (const cb of this.statusSubscribers) {
+            try {
+                cb(status);
+            } catch (e) {
+                console.error('Status subscriber error:', e);
+            }
+        }
+    }
+};
+
 // CMD日志系统
 const CMDLog = {
     logs: [],
     maxLogs: 100,
     terminalId: 'cmd-terminal-overlay',
-    logStream: null,
 
     init() {
         this.injectStyles();
         this.createTerminal();
-        this.connectToServerLogs();
+        LogStreamManager.subscribe(entry => {
+            this.log(entry.message, entry.type);
+        });
+        LogStreamManager.onStatusChange(status => {
+            const statusMap = {
+                connecting: { text: '日志流连接中...', type: 'warn' },
+                connected: { text: '日志流已连接', type: 'success' },
+                reconnecting: { text: '日志流重连中...', type: 'warn' },
+                disconnected: { text: '日志流已断开', type: 'error' }
+            };
+            const info = statusMap[status];
+            if (info) {
+                this.log(info.text, info.type);
+            }
+
+            const titleStatusMap = {
+                connecting: { text: '连接中...', color: '#f59e0b' },
+                connected: { text: '已连接', color: '#10b981' },
+                reconnecting: { text: '重连中...', color: '#f97316' },
+                disconnected: { text: '已断开', color: '#ef4444' }
+            };
+            const titleInfo = titleStatusMap[status] || { text: '未连接', color: '#888' };
+            const statusEl = document.getElementById('cmd-log-status');
+            if (statusEl) {
+                statusEl.textContent = '(' + titleInfo.text + ')';
+                statusEl.style.color = titleInfo.color;
+            }
+        });
+        LogStreamManager.start();
         this.log('CMD日志系统已初始化', 'system');
     },
 
@@ -98,6 +315,7 @@ const CMDLog = {
             .cmd-log-entry.info { color: #00ff00; }
             .cmd-log-entry.warn { color: #ffff00; }
             .cmd-log-entry.error { color: #ff0000; }
+            .cmd-log-entry.success { color: #10b981; }
             .cmd-log-entry.system { color: #00ffff; }
             .cmd-log-entry.cmd { color: #ff00ff; }
             .cmd-terminal-input-area {
@@ -134,7 +352,7 @@ const CMDLog = {
         terminal.id = this.terminalId;
         terminal.innerHTML = `
             <div class="cmd-terminal-header" onclick="CMDLog.toggleFullscreen()">
-                <span class="cmd-terminal-title">CMD - 服务器日志 <span style="font-size:10px;color:#888">(点击标题栏全屏)</span></span>
+                <span class="cmd-terminal-title">CMD - 服务器日志 <span id="cmd-log-status" style="font-size:10px;color:#888">(未连接)</span></span>
                 <div class="cmd-terminal-controls" onclick="event.stopPropagation()">
                     <button class="cmd-terminal-btn cmd-terminal-btn-fullscreen" onclick="CMDLog.toggleFullscreen()">全屏</button>
                     <button class="cmd-terminal-btn cmd-terminal-btn-clear" onclick="CMDLog.clear()">清除</button>
@@ -890,77 +1108,6 @@ const CMDLog = {
         if (terminal) {
             terminal.style.display = 'flex';
         }
-    },
-
-    connectToServerLogs() {
-        if (this.logStream) {
-            try { this.logStream.cancel(); } catch(e) {}
-        }
-        
-        const connect = async () => {
-            try {
-                const headers = {
-                    'Accept': 'text/event-stream'
-                };
-                // 从 localStorage 读取 token
-                const token = localStorage.getItem('stc_auth_token');
-                if (token) {
-                    headers['Authorization'] = 'Bearer ' + token;
-                }
-                
-                const response = await fetch('/api/logs/sse', {
-                    method: 'GET',
-                    credentials: 'include',
-                    headers: headers
-                });
-                
-                if (!response.ok) {
-                    this.log('日志连接失败: ' + response.status, 'error');
-                    setTimeout(connect, 5000);
-                    return;
-                }
-                
-                this.log('服务器日志连接已建立', 'system');
-                
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-                
-                while (true) {
-                    const { done, value } = await reader.read();
-                    
-                    if (done) {
-                        this.log('服务器日志连接已关闭，正在重连...', 'warn');
-                        setTimeout(connect, 5000);
-                        return;
-                    }
-                    
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n\n');
-                    buffer = lines.pop() || '';
-                    
-                    for (const line of lines) {
-                        const trimmedLine = line.trim();
-                        if (!trimmedLine) continue;
-                        
-                        if (trimmedLine.startsWith('data: ')) {
-                            const dataStr = trimmedLine.slice(6);
-                            try {
-                                const data = JSON.parse(dataStr);
-                                this.log(data.message, data.type || 'info');
-                            } catch (e) {
-                                this.log(dataStr, 'info');
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                this.log('日志连接错误: ' + e.message, 'error');
-                setTimeout(connect, 5000);
-            }
-        };
-        
-        connect();
     }
 };
 
@@ -1376,7 +1523,29 @@ async function initAdminPanel() {
 
 // 服务器日志功能
 let logStreamActive = false;
-let logStream = null;
+let logStreamUnsubscribe = null;
+let logStatusUnsubscribe = null;
+
+function updateLogStatusUI(status) {
+    const dotEl = document.getElementById('log-status-dot');
+    const textEl = document.getElementById('log-status-text');
+    if (!dotEl && !textEl) return;
+
+    const statusMap = {
+        connecting: { text: '连接中...', color: '#f59e0b' },
+        connected: { text: '已连接', color: '#10b981' },
+        reconnecting: { text: '重连中...', color: '#f97316' },
+        disconnected: { text: '已断开', color: '#ef4444' }
+    };
+    const info = statusMap[status] || { text: '未连接', color: '#8b949e' };
+    
+    if (dotEl) {
+        dotEl.style.background = info.color;
+    }
+    if (textEl) {
+        textEl.textContent = info.text;
+    }
+}
 
 function appendServerLog(entry) {
     const container = document.getElementById('server-logs-container');
@@ -1410,6 +1579,9 @@ function clearServerLogs() {
 }
 
 async function loadServerLogs() {
+    if (LogStreamManager.lastLogId && (LogStreamManager.status === 'connected' || LogStreamManager.status === 'connecting')) {
+        return;
+    }
     try {
         const response = await fetchWithAuth('/api/logs');
         const data = await response.json();
@@ -1424,51 +1596,38 @@ async function loadServerLogs() {
     }
 }
 
-async function toggleLogStream() {
+function toggleLogStream() {
     const btn = document.getElementById('log-stream-btn');
     
     if (logStreamActive) {
-        if (logStream) {
-            try { logStream.cancel(); } catch(e) {}
-            logStream = null;
+        if (logStreamUnsubscribe) {
+            logStreamUnsubscribe();
+            logStreamUnsubscribe = null;
         }
+        if (logStatusUnsubscribe) {
+            logStatusUnsubscribe();
+            logStatusUnsubscribe = null;
+        }
+        LogStreamManager.stop();
         logStreamActive = false;
         if (btn) btn.textContent = '启动实时日志';
+        updateLogStatusUI('disconnected');
         return;
     }
     
-    try {
-        logStreamActive = true;
-        if (btn) btn.textContent = '停止实时日志';
-        
-        const response = await fetchWithAuth('/api/logs/sse');
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        
-        while (logStreamActive) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n\n');
-            buffer = lines.pop() || '';
-            
-            for (const line of lines) {
-                const dataMatch = line.match(/^data: (.+)$/);
-                if (dataMatch) {
-                    try {
-                        const entry = JSON.parse(dataMatch[1]);
-                        appendServerLog(entry);
-                    } catch (e) {}
-                }
-            }
-        }
-    } catch (error) {
-        logStreamActive = false;
-        if (btn) btn.textContent = '启动实时日志';
-        console.error('日志流错误:', error);
-    }
+    logStreamActive = true;
+    if (btn) btn.textContent = '停止实时日志';
+    
+    logStreamUnsubscribe = LogStreamManager.subscribe(entry => {
+        appendServerLog(entry);
+    });
+    
+    logStatusUnsubscribe = LogStreamManager.onStatusChange(status => {
+        updateLogStatusUI(status);
+    });
+    
+    LogStreamManager.start();
+    updateLogStatusUI(LogStreamManager.status);
 }
 
 // 页面加载完成后初始化
@@ -1476,6 +1635,7 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
             CMDLog.init();
+            LogStreamManager.subscribeStatus(updateLogStatusUI);
             initAdminPanel();
             loadServerLogs();
             // 初始化机器人控制台
@@ -1487,6 +1647,7 @@ if (document.readyState === 'loading') {
 } else {
     setTimeout(() => {
         CMDLog.init();
+        LogStreamManager.subscribeStatus(updateLogStatusUI);
         initAdminPanel();
         loadServerLogs();
         setupBotPanel();
