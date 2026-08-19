@@ -942,9 +942,9 @@ app.use((req, res, next) => {
     
     req.authUser = authUser;
     req.isAuthenticated = !!authUser;
-    
-    // 如果有 authUser，同步 session
-    if (authUser) {
+
+    // 仅在 session 缺失或关键字段不一致时才同步，避免每次请求都触发 Set-Cookie
+    if (authUser && req.session.userId !== authUser.id) {
         req.session.userId = authUser.id;
         req.session.username = authUser.username;
         req.session.isAdmin = authUser.is_admin;
@@ -1073,14 +1073,16 @@ async function getCurrentUser(req) {
         // 先尝试从数据库查找完整用户信息
         let user = db.data.users.find(u => u.id === req.authUser.id);
         if (user) {
-            // 同步 session
-            req.session.userId = user.id;
-            req.session.username = user.username;
-            req.session.isAdmin = user.is_admin;
-            req.session.isSuperAdmin = user.is_super_admin;
+            // 仅在 session 缺失时同步，避免每次请求都触发 Set-Cookie
+            if (!req.session.userId) {
+                req.session.userId = user.id;
+                req.session.username = user.username;
+                req.session.isAdmin = user.is_admin;
+                req.session.isSuperAdmin = user.is_super_admin;
+            }
             return user;
         }
-        
+
         // 数据库中找不到用户，直接从 token 构建用户对象
         // token 已经验证了用户身份，不需要依赖数据库
         console.log('[AUTH] 数据库中未找到用户，使用 token 信息构建用户:', req.authUser.username);
@@ -1093,13 +1095,15 @@ async function getCurrentUser(req) {
             status: 'active',
             password: ''
         };
-        
-        // 同步 session
-        req.session.userId = tokenUser.id;
-        req.session.username = tokenUser.username;
-        req.session.isAdmin = tokenUser.is_admin;
-        req.session.isSuperAdmin = tokenUser.is_super_admin;
-        
+
+        // 仅在 session 缺失时同步，避免每次请求都触发 Set-Cookie
+        if (!req.session.userId) {
+            req.session.userId = tokenUser.id;
+            req.session.username = tokenUser.username;
+            req.session.isAdmin = tokenUser.is_admin;
+            req.session.isSuperAdmin = tokenUser.is_super_admin;
+        }
+
         return tokenUser;
     }
     
