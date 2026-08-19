@@ -1662,6 +1662,16 @@ app.get('/api/csrf-token', (req, res) => {
     res.json({ success: true, csrfToken: token });
 });
 
+// 清理累积的 cookie（解决 494 REQUEST_HEADER_TOO_LARGE）
+app.get('/api/clean', (req, res) => {
+    const staleCookies = Object.keys(req.cookies || {}).filter(k => k.startsWith('sess_') || k === 'connect.sid');
+    staleCookies.forEach(name => {
+        res.clearCookie(name, { path: '/', secure: true, sameSite: 'none' });
+    });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Cookie 清理完成</title><style>body{font-family:sans-serif;text-align:center;padding:60px;background:#0d1117;color:#f0f6fc}.box{max-width:500px;margin:0 auto;padding:40px;background:#161b22;border-radius:12px;border:1px solid #30363d}h2{color:#2ea043}.count{font-size:48px;color:#2ea043}a{display:inline-block;margin-top:24px;padding:12px 32px;background:#238636;color:#fff;text-decoration:none;border-radius:6px}</style></head><body><div class="box"><h2>Cookie 清理完成</h2><div class="count">${staleCookies.length}</div><p>已清理 ${staleCookies.length} 个旧 cookie</p><a href="/">返回首页</a></div><script>setTimeout(function(){location.href='/'},3000)</script></body></html>`);
+});
+
 app.get('/api/user', async (req, res) => {
     const user = await getCurrentUser(req);
     console.log('[USER API] session.userId:', req.session.userId, 'authUser:', req.authUser?.username, 'found:', !!user, 'dbUsers:', db.data.users?.length || 0);
