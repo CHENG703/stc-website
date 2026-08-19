@@ -788,8 +788,8 @@ CookieStore._currentContext = null;
 // 统一的 session 配置
 const sessionConfig = {
     secret: SESSION_SECRET,
-    resave: true, // 强制保存以确保 cookie 更新
-    saveUninitialized: true,
+    resave: false,
+    saveUninitialized: false,
     cookie: {
         secure: IS_VERCEL || isProduction,
         maxAge: 24 * 60 * 60 * 1000,
@@ -800,11 +800,10 @@ const sessionConfig = {
 };
 
 if (IS_VERCEL) {
-    // Vercel 环境：使用自定义 CookieStore 存储 session（跨实例共享）
-    const cookieStore = new CookieStore({ secret: SESSION_SECRET });
-    sessionConfig.store = cookieStore;
-    app.use(CookieStore.contextMiddleware);
-    console.log('[SESSION] Vercel 环境：使用 CookieStore');
+    // Vercel 环境：完全依赖 token 认证（Authorization header）
+    // 不使用 CookieStore，避免 session 数据分片 cookie 累积导致 494 REQUEST_HEADER_TOO_LARGE
+    // session 仅作辅助，认证以 token 为准（见 authUser 中间件）
+    console.log('[SESSION] Vercel 环境：使用默认内存存储 + token 认证');
 } else if (FileStore) {
     // 本地环境：使用文件存储
     sessionConfig.store = FileStore;
@@ -814,6 +813,18 @@ if (IS_VERCEL) {
 }
 
 app.use(session(sessionConfig));
+
+// 清理旧的 CookieStore 分片 cookie（历史遗留，会导致 494 REQUEST_HEADER_TOO_LARGE）
+app.use((req, res, next) => {
+    const staleCookies = Object.keys(req.cookies || {}).filter(k => k.startsWith('sess_'));
+    if (staleCookies.length > 0) {
+        console.log('[CLEANUP] 清理旧 session 分片 cookie:', staleCookies.length, '个');
+        staleCookies.forEach(name => {
+            res.clearCookie(name, { path: '/', secure: true, sameSite: 'none' });
+        });
+    }
+    next();
+});
 
 // Logto 认证路由（等待 SDK 初始化完成）
 // 注意：Logto Router 内部已经处理了 /logto/ 前缀，所以直接挂在根路径下

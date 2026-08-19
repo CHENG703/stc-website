@@ -995,6 +995,16 @@ function calculateUnionDays() {
 
 // 页面加载完成后执行
 document.addEventListener('DOMContentLoaded', async () => {
+    // 清理历史遗留的 CookieStore 分片 cookie（避免 494 REQUEST_HEADER_TOO_LARGE）
+    try {
+        document.cookie.split(';').forEach(c => {
+            const name = c.split('=')[0].trim();
+            if (name.startsWith('sess_')) {
+                document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; secure; samesite=none';
+            }
+        });
+    } catch (e) {}
+
     // 初始化主题
     initTheme();
     
