@@ -6,6 +6,9 @@
     "api/index.js": {
       "maxDuration": 30,
       "includeFiles": "server.js,public/**,public/*.html,public/css/**,public/js/**,public/avatars/**,public/uploads/**,sessions/**"
+    },
+    "api/clean-cookies.js": {
+      "runtime": "edge"
     }
   },
   "routes": [
@@ -14,7 +17,7 @@
     { "src": "/avatars/(.*)", "dest": "/public/avatars/$1" },
     { "src": "/uploads/(.*)", "dest": "/public/uploads/$1" },
     { "src": "/(.*\\.(?:html|ico|png|jpg|jpeg|svg|gif|txt|webp|css|js))", "dest": "/public/$1" },
-    { "src": "/api/clean-cookies", "dest": "/api/clean-cookies" },
+    { "src": "/api/clean-cookies", "dest": "/api/clean-cookies.js" },
     { "src": "/api/(.*)", "dest": "/api/index.js" },
     { "src": "/(.*)", "dest": "/api/index.js" }
   ],
