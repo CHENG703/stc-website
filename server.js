@@ -889,6 +889,16 @@ app.use((req, res, next) => {
     next();
 });
 
+// 确保每个请求前 KV 数据已加载（Vercel Serverless 多实例共享数据的关键）
+app.use(async (req, res, next) => {
+    try {
+        await db.read();
+    } catch (e) {
+        console.warn('[DB] 加载失败:', e.message);
+    }
+    next();
+});
+
 // Logto 认证路由（等待 SDK 初始化完成）
 // 注意：Logto Router 内部已经处理了 /logto/ 前缀，所以直接挂在根路径下
 app.use(async (req, res, next) => {
