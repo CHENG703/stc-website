@@ -28,6 +28,19 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
+// Vercel KV（条件加载，本地未安装时不报错）
+let kv = null;
+const KV_KEY = 'stc:database';
+const KV_ENABLED = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+if (KV_ENABLED) {
+    try {
+        kv = require('@vercel/kv');
+        console.log('[KV] Vercel KV 已启用');
+    } catch (e) {
+        console.warn('[KV] @vercel/kv 加载失败，回退到文件存储:', e.message);
+    }
+}
+
 // Logto 配置
 const LOGTO_CONFIG = {
     endpoint: process.env.LOGTO_ENDPOINT || 'https://auth.manymice.cn',
@@ -185,11 +198,55 @@ class SimpleJSONDB {
         this.filePath = filePath;
         this._data = null;
         this._defaults = defaults;
-        this._kvEnabled = false;
+        this._kvEnabled = KV_ENABLED && !!kv;
         this._pendingKvSave = Promise.resolve();
         this._lastModified = null;
+        this._kvLoaded = false;
+        this._kvSaveTimer = null;
 
         this._loadFileSync();
+    }
+
+    async _loadKv() {
+        if (!this._kvEnabled || this._kvLoaded) return;
+        try {
+            const kvData = await kv.get(KV_KEY);
+            if (kvData && typeof kvData === 'object') {
+                // KV 数据优先，合并默认值
+                this._data = kvData;
+                this._ensureDefaults();
+                this._kvLoaded = true;
+                console.log('[KV] 数据已从 Vercel KV 加载');
+                // 同步到本地文件（作为缓存）
+                this._saveFile();
+            } else {
+                // KV 中没有数据，把本地数据上传到 KV
+                console.log('[KV] KV 中无数据，上传本地数据');
+                await kv.set(KV_KEY, this._data);
+                this._kvLoaded = true;
+            }
+        } catch (e) {
+            console.warn('[KV] 从 KV 加载失败，使用本地文件:', e.message);
+            this._kvLoaded = true; // 标记已尝试，避免反复失败
+        }
+    }
+
+    async _saveKv() {
+        if (!this._kvEnabled) return;
+        try {
+            await kv.set(KV_KEY, this._data);
+        } catch (e) {
+            console.warn('[KV] 写入 KV 失败:', e.message);
+        }
+    }
+
+    _scheduleKvSave() {
+        if (!this._kvEnabled) return;
+        // 防抖：500ms 内多次修改只保存一次
+        if (this._kvSaveTimer) clearTimeout(this._kvSaveTimer);
+        this._kvSaveTimer = setTimeout(() => {
+            this._pendingKvSave = this._saveKv();
+        }, 500);
     }
 
     _loadFileSync() {
@@ -224,6 +281,8 @@ class SimpleJSONDB {
         } catch (e) {
             console.error('[DB] 写入本地文件失败:', e.message);
         }
+        // 同时异步保存到 KV（带防抖）
+        this._scheduleKvSave();
     }
 
     _onMutate() {
@@ -316,6 +375,10 @@ class SimpleJSONDB {
     }
 
     async read() {
+        // KV 模式：首次读取时从 KV 加载
+        if (this._kvEnabled && !this._kvLoaded) {
+            await this._loadKv();
+        }
         // 检查文件是否被修改，避免不必要的重新加载
         try {
             if (fs.existsSync(this.filePath)) {
