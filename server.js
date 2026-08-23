@@ -1068,22 +1068,35 @@ async function initDatabase() {
         db.data = {
             users: [],
             tasks: [],
+            messages: [],
             invite_codes: [],
             invite_requests: [],
             banned_ips: [],
-            verification_codes: []
+            verification_codes: [],
+            emails: [],
+            emailAttachments: [],
+            emailFolders: [],
+            inviteApplications: [],
+            inviteCodes: [],
+            bannedIPs: []
         };
         await db.write();
     }
     
-    // 确保所有必需的字段都存在
+    // 确保所有必需的字段都存在（与 defaults 完全一致）
     if (!Array.isArray(db.data.users)) db.data.users = [];
     if (!Array.isArray(db.data.tasks)) db.data.tasks = [];
+    if (!Array.isArray(db.data.messages)) db.data.messages = [];
     if (!Array.isArray(db.data.invite_codes)) db.data.invite_codes = [];
     if (!Array.isArray(db.data.invite_requests)) db.data.invite_requests = [];
     if (!Array.isArray(db.data.banned_ips)) db.data.banned_ips = [];
     if (!Array.isArray(db.data.verification_codes)) db.data.verification_codes = [];
+    if (!Array.isArray(db.data.emails)) db.data.emails = [];
+    if (!Array.isArray(db.data.emailAttachments)) db.data.emailAttachments = [];
+    if (!Array.isArray(db.data.emailFolders)) db.data.emailFolders = [];
+    if (!Array.isArray(db.data.inviteApplications)) db.data.inviteApplications = [];
     if (!Array.isArray(db.data.inviteCodes)) db.data.inviteCodes = [];
+    if (!Array.isArray(db.data.bannedIPs)) db.data.bannedIPs = [];
     await db.write();
     
     const adminUser = db.data.users.find(u => u.username === 'REDACTED_USER');
