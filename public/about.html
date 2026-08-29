@@ -226,25 +226,99 @@
             line-height: 1.7;
         }
 
-        /* 公告 */
-        .ld-announce {
-            padding: 30px 0;
+        /* 工会大事记时间线 */
+        .ld-timeline {
+            position: relative;
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 8px 0;
         }
-        .ld-announce-box {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            padding: 20px 26px;
-            border-radius: 18px;
+        .ld-timeline::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 4px;
+            bottom: 4px;
+            width: 2px;
+            transform: translateX(-50%);
+            background: linear-gradient(180deg, transparent, var(--ld-primary) 12%, var(--ld-accent) 88%, transparent);
+            opacity: 0.6;
+        }
+        .ld-tl-item {
+            position: relative;
+            width: 50%;
+            padding: 0 44px 34px 0;
+            text-align: right;
+        }
+        .ld-tl-item:nth-child(even) {
+            left: 50%;
+            padding: 0 0 34px 44px;
+            text-align: left;
+        }
+        .ld-tl-item:last-child { padding-bottom: 0; }
+        .ld-tl-item::before {
+            content: '';
+            position: absolute;
+            top: 18px;
+            right: -6px;
+            width: 13px;
+            height: 13px;
+            border-radius: 50%;
+            background: var(--ld-accent);
+            border: 3px solid rgba(2, 8, 23, 0.85);
+            box-shadow: 0 0 16px rgba(56, 189, 248, 0.85);
+            transform: translateX(50%);
+        }
+        .ld-tl-item:nth-child(even)::before {
+            right: auto;
+            left: -7px;
+            transform: translateX(-50%);
+        }
+        .ld-tl-card {
+            display: inline-block;
+            text-align: left;
+            padding: 15px 20px;
+            border-radius: 16px;
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid rgba(56, 189, 248, 0.22);
             backdrop-filter: blur(12px);
-            box-shadow: 0 8px 30px rgba(14, 165, 233, 0.12);
+            box-shadow: 0 8px 30px rgba(14, 165, 233, 0.1);
+            transition: transform 0.3s, border-color 0.3s, box-shadow 0.3s;
         }
-        .ld-announce-box .ld-announce-icon { font-size: 1.6rem; flex-shrink: 0; }
-        .ld-announce-box h3 { margin: 0 0 4px; font-size: 1.05rem; color: var(--ld-text); }
-        .ld-announce-box p { margin: 0; color: var(--ld-text-soft); font-size: 0.95rem; line-height: 1.6; }
-        .ld-announce-box .ld-announce-date { color: #64748b; font-size: 0.85rem; flex-shrink: 0; }
+        .ld-tl-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--ld-accent);
+            box-shadow: 0 14px 40px rgba(14, 165, 233, 0.22);
+        }
+        .ld-tl-date {
+            font-size: 0.88rem;
+            font-weight: 700;
+            color: var(--ld-accent);
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .ld-tl-text {
+            font-size: 0.98rem;
+            color: var(--ld-text);
+            line-height: 1.5;
+        }
+        /* 移动端：时间线收缩到左侧 */
+        @media (max-width: 640px) {
+            .ld-timeline::before { left: 13px; }
+            .ld-tl-item,
+            .ld-tl-item:nth-child(even) {
+                width: 100%;
+                left: 0;
+                padding: 0 0 26px 42px;
+                text-align: left;
+            }
+            .ld-tl-item::before,
+            .ld-tl-item:nth-child(even)::before {
+                left: 7px;
+                right: auto;
+                transform: translateX(-50%);
+            }
+        }
 
         /* 关于卡片 */
         .ld-about-grid {
@@ -498,16 +572,36 @@
             <div class="ld-scroll-hint">▼ 向下探索</div>
         </section>
 
-        <!-- ============ 公告 ============ -->
-        <section class="ld-section ld-announce">
+        <!-- ============ 工会大事记 ============ -->
+        <section class="ld-section">
             <div class="container">
-                <div class="ld-announce-box ld-reveal">
-                    <div class="ld-announce-icon">📢</div>
-                    <div>
-                        <h3>最新公告</h3>
-                        <p>STC工会正在招募新成员！欢迎热爱Minecraft的玩家加入我们，一起创造精彩世界。</p>
+                <h2 class="ld-section-title">工会大事记</h2>
+                <p class="ld-section-desc">从成立到发展，STC 的每一个重要时刻。</p>
+                <div class="ld-timeline">
+                    <div class="ld-tl-item ld-reveal">
+                        <div class="ld-tl-card">
+                            <div class="ld-tl-date">2025.01.24</div>
+                            <div class="ld-tl-text">工会主会成立</div>
+                        </div>
                     </div>
-                    <div class="ld-announce-date">2025-01-24</div>
+                    <div class="ld-tl-item ld-reveal">
+                        <div class="ld-tl-card">
+                            <div class="ld-tl-date">2025.11.02</div>
+                            <div class="ld-tl-text">副会陈某加入</div>
+                        </div>
+                    </div>
+                    <div class="ld-tl-item ld-reveal">
+                        <div class="ld-tl-card">
+                            <div class="ld-tl-date">2025.12.21</div>
+                            <div class="ld-tl-text">Java 分会成立</div>
+                        </div>
+                    </div>
+                    <div class="ld-tl-item ld-reveal">
+                        <div class="ld-tl-card">
+                            <div class="ld-tl-date">2026.07.04</div>
+                            <div class="ld-tl-text">分会副会长 Licnafz 加入</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
