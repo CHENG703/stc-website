@@ -594,6 +594,7 @@ const RATE_CONFIGS = {
     invite:       { max: 5,   window: 60 * 1000 },        // 邀请码申请：1分钟5次
     admin:        { max: 60,  window: 60 * 1000 },        // 管理操作：1分钟60次
     password:     { max: 3,   window: 60 * 1000 },        // 改密：1分钟3次
+    ai:           { max: 20,  window: 60 * 1000 },        // AI 对话：1分钟20次
 };
 
 function requireRateLimit(type) {
@@ -1640,6 +1641,10 @@ app.get('/reaction', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'reaction.html'));
 });
 
+app.get('/ai', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'ai-chat.html'));
+});
+
 app.get('/terms', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'terms.html'));
 });
@@ -2134,6 +2139,102 @@ app.get('/api/csrf-token', (req, res) => {
     }
     const token = generateCSRFToken(req.sessionID);
     res.json({ success: true, csrfToken: token });
+});
+
+// ==================== AI 对话（SenseNova） ====================
+const https = require('https');
+const SENSENOVA_BASE_URL = process.env.SENSENOVA_BASE_URL || 'https://token.sensenova.cn/v1';
+const SENSENOVA_API_KEY = process.env.SENSENOVA_API_KEY || '';
+const SENSENOVA_DEFAULT_MODEL = process.env.SENSENOVA_MODEL || 'sensenova-6.7-flash-lite';
+const AI_ALLOWED_MODELS = ['sensenova-6.7-flash-lite', 'sensenova-6.8-flash-lite', 'glm-5.2', 'deepseek-v4-flash'];
+const AI_MAX_MESSAGES = 30;   // 最多携带的历史消息条数
+const AI_MAX_CONTENT = 4000;  // 单条消息最长字符数
+
+// AI 对话：流式转发 SenseNova（OpenAI 兼容接口），仅登录用户可用
+app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, async (req, res) => {
+    console.log('[AI] 收到对话请求, model=', req.body && req.body.model);
+    try {
+        if (!SENSENOVA_API_KEY) {
+            return res.status(500).json({ success: false, message: '服务器尚未配置 SenseNova API Key（SENSENOVA_API_KEY）' });
+        }
+        const { messages, model } = req.body || {};
+        if (!Array.isArray(messages) || !messages.length) {
+            return res.status(400).json({ success: false, message: '缺少对话内容' });
+        }
+        const chosenModel = AI_ALLOWED_MODELS.includes(model) ? model : SENSENOVA_DEFAULT_MODEL;
+        const safeMessages = messages
+            .slice(-AI_MAX_MESSAGES)
+            .map(m => ({
+                role: m.role === 'assistant' ? 'assistant' : 'user',
+                content: typeof m.content === 'string' ? m.content.slice(0, AI_MAX_CONTENT) : ''
+            }))
+            .filter(m => m.content);
+
+        // 使用 https 模块转发上游（长驻进程下 fetch/undici 不稳定，改用核心模块）
+        const upstreamBody = JSON.stringify({
+            model: chosenModel,
+            messages: safeMessages,
+            temperature: 0.7,
+            stream: true
+        });
+
+        await new Promise((resolve) => {
+            const uReq = https.request(`${SENSENOVA_BASE_URL}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${SENSENOVA_API_KEY}`,
+                    'Content-Length': Buffer.byteLength(upstreamBody)
+                },
+                timeout: 30000
+            }, (uRes) => {
+                if (uRes.statusCode >= 200 && uRes.statusCode < 300) {
+                    // 流式透传 SSE
+                    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+                    res.setHeader('Cache-Control', 'no-cache, no-transform');
+                    res.setHeader('Connection', 'keep-alive');
+                    res.setHeader('X-Accel-Buffering', 'no');
+                    res.flushHeaders();
+                    uRes.on('data', (chunk) => {
+                        try { res.write(chunk); } catch (e) {}
+                    });
+                    uRes.on('end', () => {
+                        try { res.end(); } catch (e) {}
+                        resolve();
+                    });
+                } else {
+                    let errBody = '';
+                    uRes.on('data', (c) => { errBody += c; });
+                    uRes.on('end', () => {
+                        console.error('[AI] SenseNova 上游错误:', uRes.statusCode, errBody.slice(0, 300));
+                        if (!res.headersSent) {
+                            res.status(502).json({ success: false, message: `AI 服务响应异常（${uRes.statusCode}），请稍后重试` });
+                        }
+                        resolve();
+                    });
+                }
+            });
+            uReq.on('timeout', () => uReq.destroy(new Error('上游请求超时')));
+            uReq.on('error', (e) => {
+                console.error('[AI] 上游连接失败:', e.message);
+                if (!res.headersSent) {
+                    res.status(502).json({ success: false, message: 'AI 服务连接失败，请稍后重试' });
+                } else {
+                    try { res.end(); } catch (ignored) {}
+                }
+                resolve();
+            });
+            uReq.write(upstreamBody);
+            uReq.end();
+        });
+    } catch (e) {
+        console.error('[AI] 对话接口异常:', e.message);
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, message: 'AI 对话服务异常，请稍后重试' });
+        } else {
+            try { res.end(); } catch (ignored) {}
+        }
+    }
 });
 
 // 清理累积的 cookie（解决 494 REQUEST_HEADER_TOO_LARGE）

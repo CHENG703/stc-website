@@ -390,6 +390,26 @@
     </div>
 
     <script>
+        let _csrfToken = null;
+
+        // 获取一次性 CSRF Token
+        async function getCsrfToken() {
+            try {
+                const resp = await fetch('/api/csrf-token', { credentials: 'include' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    _csrfToken = data.csrfToken;
+                    return data.csrfToken;
+                }
+            } catch (e) {}
+            return null;
+        }
+
+        // 生成请求 nonce
+        function genNonce() {
+            return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
+        }
+
         // 检查URL参数
         const urlParams = new URLSearchParams(window.location.search);
         const error = urlParams.get('error');
@@ -429,12 +449,17 @@
             btn.disabled = true;
             btn.textContent = '发送中...';
             
-            fetch('/api/send-code', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ email: email, type: 'register' })
+            getCsrfToken().then(csrf => {
+                const nonce = genNonce();
+                return fetch('/api/send-code', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+                        'X-Request-Nonce': nonce
+                    },
+                    body: JSON.stringify({ email: email, type: 'register' })
+                });
             })
             .then(response => {
                 const ct = response.headers.get('content-type') || '';
@@ -515,10 +540,14 @@
             btn.textContent = '注册中...';
             
             try {
+                const csrf = await getCsrfToken();
+                const nonce = genNonce();
                 const response = await fetch('/api/register', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+                        'X-Request-Nonce': nonce
                     },
                     body: JSON.stringify({ username, email, password, verify_code: emailCode, invite_code: inviteCode })
                 });

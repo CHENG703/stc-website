@@ -484,6 +484,25 @@
     <script>
         let currentLoginType = 'password';
         let codeTimer = null;
+        let _csrfToken = null;
+
+        // 获取一次性 CSRF Token
+        async function getCsrfToken() {
+            try {
+                const resp = await fetch('/api/csrf-token', { credentials: 'include' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    _csrfToken = data.csrfToken;
+                    return data.csrfToken;
+                }
+            } catch (e) {}
+            return null;
+        }
+
+        // 生成请求 nonce
+        function genNonce() {
+            return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
+        }
 
         // 检查URL参数
         const urlParams = new URLSearchParams(window.location.search);
@@ -516,7 +535,7 @@
         }
 
         // 发送登录验证码
-        document.getElementById('send-login-code').addEventListener('click', function() {
+        document.getElementById('send-login-code').addEventListener('click', async function() {
             const email = document.getElementById('login-email').value.trim();
             const btn = this;
             
@@ -533,10 +552,14 @@
             btn.disabled = true;
             btn.textContent = '发送中...';
             
+            const csrf = await getCsrfToken();
+            const nonce = genNonce();
             fetch('/api/send-code', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+                    'X-Request-Nonce': nonce
                 },
                 body: JSON.stringify({ email, type: 'login' })
             })
@@ -618,10 +641,14 @@
                     payload = { loginType: 'code', email, code };
                 }
                 
+                const csrf = await getCsrfToken();
+                const nonce = genNonce();
                 const response = await fetch('/api/login', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+                        'X-Request-Nonce': nonce
                     },
                     body: JSON.stringify(payload)
                 });
