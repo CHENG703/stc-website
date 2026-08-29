@@ -2984,7 +2984,7 @@ function getSiteBaseUrl(req) {
 }
 
 // 接收加入申请的管理员邮箱（1968550760 为首位，可用环境变量 JOIN_ADMIN_EMAILS 覆盖）
-const JOIN_ADMIN_EMAILS = (process.env.JOIN_ADMIN_EMAILS || 'REDACTED@example.com,3209989525@qq.com,3587933806@qq.com')
+const JOIN_ADMIN_EMAILS = (process.env.JOIN_ADMIN_EMAILS || 'REDACTED@example.com,3587933806@qq.com')
     .split(',').map(s => s.trim()).filter(Boolean);
 
 // 提交加入申请
