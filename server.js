@@ -134,9 +134,29 @@ function getEmailTransporter() {
         auth: {
             user: emailUser,
             pass: emailPass
-        }
+        },
+        // 防止 SMTP 服务器无响应时请求无限挂起（页面一直转圈）
+        connectionTimeout: 15000,
+        socketTimeout: 20000,
+        greetingTimeout: 10000
     });
     return emailTransporter;
+}
+
+// 后台发送邮件：不阻塞 HTTP 响应，即使 SMTP 卡住，页面也能立即返回
+function sendMailFireAndForget(mailOptions, logTag) {
+    try {
+        const _t = getEmailTransporter();
+        if (!_t) {
+            console.error(`[EMAIL][${logTag}] 邮件服务未配置，跳过发送`);
+            return;
+        }
+        _t.sendMail(mailOptions)
+            .then(() => console.log(`[EMAIL][${logTag}] 邮件已发送: ${mailOptions.to}`))
+            .catch(err => console.error(`[EMAIL][${logTag}] 发送失败:`, err.message));
+    } catch (err) {
+        console.error(`[EMAIL][${logTag}] 发送异常:`, err.message);
+    }
 }
 let dbLockTime = null;
 let lastBackupTime = null;
@@ -2759,32 +2779,7 @@ app.get('/api/invite/approve/:token', async (req, res) => {
         request.approved_by = 'email-link';
         request.invite_code = inviteCode;
         await db.write();
-        try {
-            const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
-                from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
-                to: request.email,
-                subject: '【STC】邀请码申请已通过',
-                html: `
-                    <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-                        <div style="background: linear-gradient(135deg, #10b981, #34d399); padding: 30px; border-radius: 16px 16px 0 0;">
-                            <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">申请已通过 ✅</h1>
-                        </div>
-                        <div style="background: #ecfdf5; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #a7f3d0;">
-                            <p style="color: #475569; font-size: 16px;">您好！</p>
-                            <p style="color: #475569; font-size: 16px;">您的邀请码申请已通过审批，您的专属邀请码是：</p>
-                            <div style="background: white; padding: 20px; border-radius: 12px; text-align: center; margin: 20px 0; border: 2px dashed #10b981;">
-                                <span style="font-size: 28px; font-weight: bold; color: #047857; letter-spacing: 4px; word-break: break-all;">${inviteCode}</span>
-                            </div>
-                            <p style="color: #64748b; font-size: 14px;">请在注册页使用该邀请码完成注册，邀请码仅限一次使用。</p>
-                        </div>
-                        <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
-                    </div>
-                `
-            });
-            console.log(`[APPROVE-TOKEN] 邀请码邮件已通过邮件链接发送给 ${request.email}`);
-        } catch (err) {
-            console.error('[APPROVE-TOKEN] 邀请码邮件发送失败:', err.message);
-        }
+        // 先返回页面，邮件改为后台发送（避免 SMTP 卡住导致批准页一直转圈）
         res.send(`
             <div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;">
                 <div style="background:linear-gradient(135deg,#10b981,#34d399);padding:30px;border-radius:16px 16px 0 0;">
@@ -2800,6 +2795,28 @@ app.get('/api/invite/approve/:token', async (req, res) => {
                 </div>
             </div>
         `);
+        // 后台发送邀请码邮件（不阻塞响应）
+        sendMailFireAndForget({
+            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            to: request.email,
+            subject: '【STC】邀请码申请已通过',
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #10b981, #34d399); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">申请已通过 ✅</h1>
+                    </div>
+                    <div style="background: #ecfdf5; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #a7f3d0;">
+                        <p style="color: #475569; font-size: 16px;">您好！</p>
+                        <p style="color: #475569; font-size: 16px;">您的邀请码申请已通过审批，您的专属邀请码是：</p>
+                        <div style="background: white; padding: 20px; border-radius: 12px; text-align: center; margin: 20px 0; border: 2px dashed #10b981;">
+                            <span style="font-size: 28px; font-weight: bold; color: #047857; letter-spacing: 4px; word-break: break-all;">${inviteCode}</span>
+                        </div>
+                        <p style="color: #64748b; font-size: 14px;">请在注册页使用该邀请码完成注册，邀请码仅限一次使用。</p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        }, 'APPROVE-TOKEN');
     } catch (error) {
         console.error('[APPROVE-TOKEN] 批准失败:', error.message);
         res.status(500).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 服务器错误</h1><p>${error.message}</p></div>`);
@@ -3149,42 +3166,7 @@ app.get('/api/join/approve/:token', async (req, res) => {
     application.created_username = username;
     await db.write();
 
-    // 发邮件给申请人：审核通过 + 加群链接 + 账号密码
-    try {
-        const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置');
-        await _t.sendMail({
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
-            to: email,
-            subject: '【STC】恭喜你通过审核，欢迎加入STC工会！',
-            html: `
-                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
-                    <div style="background: linear-gradient(135deg, #10b981, #34d399); padding: 30px; border-radius: 16px 16px 0 0;">
-                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">审核通过 ✅</h1>
-                    </div>
-                    <div style="background: #ecfdf5; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #a7f3d0;">
-                        <p style="color: #475569; font-size: 16px;">您好，${application.gameId}！</p>
-                        <p style="color: #475569; font-size: 16px;">恭喜你通过了 STC 工会的加入审核，欢迎你的到来！</p>
-                        <p style="color: #475569; font-size: 16px;">请点击加入我们的QQ群：</p>
-                        <div style="text-align:center;margin: 24px 0;">
-                            <a href="https://qm.qq.com/q/12Gs3NNm2c" style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:bold;color:white;text-decoration:none;border-radius:12px;background:#2563eb;">加入QQ群</a>
-                        </div>
-                        <div style="background: white; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #a7f3d0;">
-                            <p style="margin: 0 0 10px; color:#475569;"><strong>你的账号信息：</strong></p>
-                            <p style="margin: 0 0 8px; color:#475569;">用户名：<strong>${username}</strong></p>
-                            <p style="margin: 0 0 8px; color:#475569;">邮箱：<strong>${email}</strong></p>
-                            <p style="margin: 0; color:#475569;">密码：<strong>${password}</strong></p>
-                        </div>
-                        <p style="color: #64748b; font-size: 14px;">请使用以上账号密码在网站 <a href="${getSiteBaseUrl(req)}/login" style="color:#047857;">登录</a>，建议登录后及时修改密码。</p>
-                    </div>
-                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
-                </div>
-            `
-        });
-        console.log(`[JOIN-APPROVE] 审核通过邮件已发送: ${email}`);
-    } catch (error) {
-        console.error('[JOIN-APPROVE] 审核通过邮件发送失败:', error.message);
-    }
-
+    // 先返回页面，邮件改为后台发送（避免 SMTP 卡住导致批准页一直转圈）
     res.send(`
         <div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;">
             <div style="background:linear-gradient(135deg,#10b981,#34d399);padding:30px;border-radius:16px 16px 0 0;">
@@ -3198,11 +3180,41 @@ app.get('/api/join/approve/:token', async (req, res) => {
                     <p style="margin:4px 0;color:#475569;">邮箱：<strong>${email}</strong></p>
                     <p style="margin:4px 0;color:#475569;">密码：<strong>${password}</strong></p>
                 </div>
-                <p style="color:#64748b;font-size:14px;">审核通过邮件（含加群链接）已发送到申请人邮箱。</p>
+                <p style="color:#64748b;font-size:14px;">审核通过邮件（含加群链接）后台发送中。</p>
                 <p><a href="/admin.html" style="color:#047857;font-weight:bold;">返回管理面板</a></p>
             </div>
         </div>
     `);
+
+    // 后台发送审核通过邮件（不阻塞响应）
+    sendMailFireAndForget({
+        from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: '【STC】恭喜你通过审核，欢迎加入STC工会！',
+        html: `
+            <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
+                <div style="background: linear-gradient(135deg, #10b981, #34d399); padding: 30px; border-radius: 16px 16px 0 0;">
+                    <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">审核通过 ✅</h1>
+                </div>
+                <div style="background: #ecfdf5; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #a7f3d0;">
+                    <p style="color: #475569; font-size: 16px;">您好，${application.gameId}！</p>
+                    <p style="color: #475569; font-size: 16px;">恭喜你通过了 STC 工会的加入审核，欢迎你的到来！</p>
+                    <p style="color: #475569; font-size: 16px;">请点击加入我们的QQ群：</p>
+                    <div style="text-align:center;margin: 24px 0;">
+                        <a href="https://qm.qq.com/q/12Gs3NNm2c" style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:bold;color:white;text-decoration:none;border-radius:12px;background:#2563eb;">加入QQ群</a>
+                    </div>
+                    <div style="background: white; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #a7f3d0;">
+                        <p style="margin: 0 0 10px; color:#475569;"><strong>你的账号信息：</strong></p>
+                        <p style="margin: 0 0 8px; color:#475569;">用户名：<strong>${username}</strong></p>
+                        <p style="margin: 0 0 8px; color:#475569;">邮箱：<strong>${email}</strong></p>
+                        <p style="margin: 0; color:#475569;">密码：<strong>${password}</strong></p>
+                    </div>
+                    <p style="color: #64748b; font-size: 14px;">请使用以上账号密码在网站 <a href="${getSiteBaseUrl(req)}/login" style="color:#047857;">登录</a>，建议登录后及时修改密码。</p>
+                </div>
+                <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+            </div>
+        `
+    }, 'JOIN-APPROVE');
 });
 
 // 驳回加入申请
@@ -3222,32 +3234,7 @@ app.get('/api/join/reject/:token', async (req, res) => {
     application.rejected_at = new Date().toISOString();
     await db.write();
 
-    // 通知申请人被驳回
-    try {
-        const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置');
-        await _t.sendMail({
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
-            to: application.email,
-            subject: '【STC】加入申请未通过',
-            html: `
-                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-                    <div style="background: linear-gradient(135deg, #ef4444, #f87171); padding: 30px; border-radius: 16px 16px 0 0;">
-                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">申请未通过</h1>
-                    </div>
-                    <div style="background: #fef2f2; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #fecaca;">
-                        <p style="color: #475569; font-size: 16px;">您好，${application.gameId}！</p>
-                        <p style="color: #475569; font-size: 16px;">很遗憾，您的 STC 工会加入申请未通过管理员审批。</p>
-                        <p style="color: #64748b; font-size: 14px;">如有疑问，请与管理员联系。</p>
-                    </div>
-                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
-                </div>
-            `
-        });
-        console.log(`[JOIN-REJECT] 驳回通知邮件已发送: ${application.email}`);
-    } catch (error) {
-        console.error('[JOIN-REJECT] 驳回通知邮件发送失败:', error.message);
-    }
-
+    // 先返回页面，邮件改为后台发送（避免 SMTP 卡住导致页面一直转圈）
     res.send(`
         <div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;">
             <div style="background:linear-gradient(135deg,#ef4444,#f87171);padding:30px;border-radius:16px 16px 0 0;">
@@ -3255,11 +3242,31 @@ app.get('/api/join/reject/:token', async (req, res) => {
             </div>
             <div style="background:#fef2f2;padding:30px;border-radius:0 0 16px 16px;border:1px solid #fecaca;">
                 <p style="color:#475569;font-size:16px;">已驳回 <strong>${application.gameId}</strong>（QQ ${application.qq}）的加入申请。</p>
-                <p style="color:#64748b;font-size:14px;">驳回通知邮件已发送到申请人邮箱。</p>
+                <p style="color:#64748b;font-size:14px;">驳回通知邮件后台发送中。</p>
                 <p><a href="/admin.html" style="color:#b91c1c;font-weight:bold;">返回管理面板</a></p>
             </div>
         </div>
     `);
+
+    // 后台发送驳回通知邮件（不阻塞响应）
+    sendMailFireAndForget({
+        from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+        to: application.email,
+        subject: '【STC】加入申请未通过',
+        html: `
+            <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                <div style="background: linear-gradient(135deg, #ef4444, #f87171); padding: 30px; border-radius: 16px 16px 0 0;">
+                    <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">申请未通过</h1>
+                </div>
+                <div style="background: #fef2f2; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #fecaca;">
+                    <p style="color: #475569; font-size: 16px;">您好，${application.gameId}！</p>
+                    <p style="color: #475569; font-size: 16px;">很遗憾，您的 STC 工会加入申请未通过管理员审批。</p>
+                    <p style="color: #64748b; font-size: 14px;">如有疑问，请与管理员联系。</p>
+                </div>
+                <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+            </div>
+        `
+    }, 'JOIN-REJECT');
 });
 
 function canModifyUser(currentUser, targetUser, action) {
