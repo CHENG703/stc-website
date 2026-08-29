@@ -451,7 +451,7 @@ const CMDLog = {
                 }
                 if (confirm('确定要停止服务器吗？这将使网站离线！')) {
                     this.log('正在停止服务器...', 'warn');
-                    fetch('/api/console/stop', {method:'POST'}).then(r=>r.json()).then(d=>this.log(d.message, d.success?'info':'error')).catch(e=>this.log('停止失败: '+e.message,'error'));
+                    fetchWithAuth('/api/console/stop', {method:'POST'}).then(r=>r.json()).then(d=>this.log(d.message, d.success?'info':'error')).catch(e=>this.log('停止失败: '+e.message,'error'));
                 } else {
                     this.log('已取消', 'system');
                 }
@@ -467,7 +467,7 @@ const CMDLog = {
                     return;
                 }
                 this.log('正在重启服务器...', 'warn');
-                fetch('/api/console/restart', {method:'POST'}).then(r=>r.json()).then(d=>this.log(d.message, d.success?'info':'error')).catch(e=>this.log('重启失败: '+e.message,'error'));
+                fetchWithAuth('/api/console/restart', {method:'POST'}).then(r=>r.json()).then(d=>this.log(d.message, d.success?'info':'error')).catch(e=>this.log('重启失败: '+e.message,'error'));
                 break;
             case 'status':
                 this.log('服务器状态: 运行中', 'info');
@@ -906,7 +906,7 @@ const CMDLog = {
                         this.log('无法封禁超级管理员', 'error');
                         return;
                     }
-                    fetch('/api/members/' + target.id + '/ban', {
+                    fetchWithAuth('/api/members/' + target.id + '/ban', {
                         method: 'POST',
                         headers: {'Content-Type':'application/json'},
                         body: JSON.stringify({ban: true})
@@ -933,7 +933,7 @@ const CMDLog = {
                         this.log('未找到用户: ' + args, 'error');
                         return;
                     }
-                    fetch('/api/members/' + target.id + '/unban', {
+                    fetchWithAuth('/api/members/' + target.id + '/unban', {
                         method: 'POST',
                         headers: {'Content-Type':'application/json'}
                     }).then(r=>r.json()).then(d=>{
@@ -959,7 +959,7 @@ const CMDLog = {
                         this.log('未找到用户: ' + args, 'error');
                         return;
                     }
-                    fetch('/api/members/' + target.id + '/set_admin', {
+                    fetchWithAuth('/api/members/' + target.id + '/set_admin', {
                         method: 'POST',
                         headers: {'Content-Type':'application/json'}
                     }).then(r=>r.json()).then(d=>{
@@ -989,7 +989,7 @@ const CMDLog = {
                         this.log('无法取消超级管理员权限', 'error');
                         return;
                     }
-                    fetch('/api/members/' + target.id + '/unset_admin', {
+                    fetchWithAuth('/api/members/' + target.id + '/unset_admin', {
                         method: 'POST',
                         headers: {'Content-Type':'application/json'}
                     }).then(r=>r.json()).then(d=>{
@@ -1134,17 +1134,48 @@ function clearLogs() {
 }
 
 // 封装的fetch函数
+// 获取一次性 CSRF Token
+let _adminCsrfCache = null;
+async function getCSRFTokenOnce() {
+    try {
+        const resp = await fetch('/api/csrf-token', { credentials: 'include' });
+        if (resp.ok) {
+            const data = await resp.json();
+            _adminCsrfCache = data.csrfToken;
+            return data.csrfToken;
+        }
+    } catch (e) {
+        console.error('获取CSRF token失败:', e);
+    }
+    return null;
+}
+
+// 生成请求 nonce
+function genNonce() {
+    return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
+}
+
 async function fetchWithAuth(url, options = {}) {
     options.credentials = 'include';
     options.headers = options.headers || {};
     options.headers['Accept'] = 'application/json';
-    
+
     // 从 localStorage 读取 token（Vercel 环境）
     const token = localStorage.getItem('stc_auth_token');
     if (token) {
         options.headers['Authorization'] = 'Bearer ' + token;
     } else {
         console.warn('[fetchWithAuth] No token in localStorage for:', url);
+    }
+
+    // 写请求：每次都拿新的一次性 CSRF token + 生成唯一 nonce
+    const method = (options.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+        const csrf = await getCSRFTokenOnce();
+        const nonce = genNonce();
+        if (csrf) options.headers['X-CSRF-Token'] = csrf;
+        options.headers['X-Request-Nonce'] = nonce;
+        _adminCsrfCache = null;
     }
 
     const response = await fetch(url, options);

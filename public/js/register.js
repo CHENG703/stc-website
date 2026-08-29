@@ -10,6 +10,43 @@ function showMessage(message, type = 'success') {
     }, 3000);
 }
 
+// 获取一次性 CSRF Token
+let _csrfCache = null;
+async function getCSRFTokenOnce() {
+    try {
+        const resp = await fetch('/api/csrf-token', { credentials: 'include' });
+        if (resp.ok) {
+            const data = await resp.json();
+            _csrfCache = data.csrfToken;
+            return data.csrfToken;
+        }
+    } catch (e) {
+        console.error('获取CSRF token失败:', e);
+    }
+    return null;
+}
+
+// 生成请求 nonce
+function genNonce() {
+    return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
+}
+
+// 安全 fetch：写请求自动携带一次性 CSRF token + nonce
+async function secureFetch(url, options = {}) {
+    options.credentials = 'include';
+    const method = (options.method || 'GET').toUpperCase();
+
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+        const token = await getCSRFTokenOnce();
+        const nonce = genNonce();
+        options.headers = options.headers || {};
+        if (token) options.headers['X-CSRF-Token'] = token;
+        options.headers['X-Request-Nonce'] = nonce;
+        _csrfCache = null;
+    }
+    return fetch(url, options);
+}
+
 // 发送邮箱验证码
 async function sendEmailCode() {
     const email = document.getElementById('email').value.trim();
@@ -55,10 +92,9 @@ async function sendEmailCode() {
         sendBtn.disabled = true;
         sendBtn.textContent = '发送中...';
         
-        const response = await fetch('/api/send-code', {
+        const response = await secureFetch('/api/send-code', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({ email, type: 'register' })
         });
         
@@ -179,12 +215,11 @@ async function handleRegister(event) {
     }
 
     try {
-        const response = await fetch('/api/register', {
+        const response = await secureFetch('/api/register', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            credentials: 'include',
             body: JSON.stringify({ username, email, password, invite_code: inviteCode, verify_code: emailCode })
         });
 

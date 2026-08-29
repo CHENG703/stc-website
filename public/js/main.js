@@ -248,17 +248,28 @@ async function fetchWithAuth(url, options = {}) {
         options.headers['Authorization'] = 'Bearer ' + token;
     }
     
-    // 对于POST、PUT、DELETE请求，添加CSRF token
-    if (options.method && ['POST', 'PUT', 'DELETE'].includes(options.method.toUpperCase())) {
-        if (!csrfToken) {
-            csrfToken = await getCSRFToken();
+    // 对于写请求（POST、PUT、DELETE、PATCH）：
+    // 1. 每次都获取新的一次性 CSRF token（防重放，服务器端单次使用后删除）
+    // 2. 生成唯一 nonce（防抓包重放）
+    const method = (options.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+        // 每次写请求都拿新 token（CSRF token 是一次性的）
+        try {
+            const newToken = await getCSRFToken();
+            csrfToken = newToken;
+        } catch (e) {
+            console.warn('[CSRF] 刷新token失败:', e);
         }
-        
         if (csrfToken) {
-            // 添加CSRF token到header
             options.headers = options.headers || {};
             options.headers['X-CSRF-Token'] = csrfToken;
         }
+        // 生成请求 nonce：时间戳(ms) + 8位随机十六进制
+        const nonce = Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
+        options.headers = options.headers || {};
+        options.headers['X-Request-Nonce'] = nonce;
+        // 用过后清空本地缓存 token，强制下次请求再取
+        csrfToken = null;
     }
     
     const response = await fetch(url, options);

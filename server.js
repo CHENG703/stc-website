@@ -409,34 +409,258 @@ const db = new SimpleJSONDB(dbPath, defaults);
 
 let bannedIPs = new Set();
 
-const rateLimit = new Map();
-const RATE_LIMIT_WINDOW = 60000;
-const RATE_LIMIT_MAX = 100;
+// ==================== KV 存储的 CSRF + Rate Limit + Nonce 防护 ====================
+const CSRF_TOKEN_TTL = 15 * 60 * 1000; // 15分钟过期（防重放，原1小时太长）
+const NONCE_TTL = 5 * 60 * 1000;        // nonce 5分钟过期
 
-function checkRateLimit(ip) {
+// 内存 Map 作为本地降级（KV不可用时使用）
+const _localCsrf = new Map();
+const _localRateLimit = new Map();
+const _localNonces = new Map();
+
+// ---------- KV 辅助：统一封装 set/get/del，自动降级 ----------
+async function _kvGet(key) {
+    if (KV_ENABLED && kv) {
+        try { return await kv.get(key); } catch (e) { /* 降级 */ }
+    }
+    return _localMapGet(key);
+}
+async function _kvSet(key, value, ttlMs) {
+    if (KV_ENABLED && kv) {
+        try {
+            if (ttlMs) await kv.set(key, value, { ex: Math.ceil(ttlMs / 1000) });
+            else await kv.set(key, value);
+            return;
+        } catch (e) { /* 降级 */ }
+    }
+    _localMapSet(key, value, ttlMs);
+}
+async function _kvDel(key) {
+    if (KV_ENABLED && kv) {
+        try { await kv.del(key); return; } catch (e) { /* 降级 */ }
+    }
+    _localMapDel(key);
+}
+// 本地 Map 带 TTL 清理
+function _localMapGet(key) {
+    if (key.startsWith('csrf:')) {
+        const r = _localCsrf.get(key);
+        if (r && Date.now() < r.expires) return r;
+        _localCsrf.delete(key); return null;
+    }
+    if (key.startsWith('rate:')) {
+        const r = _localRateLimit.get(key);
+        if (r && Date.now() < r.expires) return r;
+        _localRateLimit.delete(key); return null;
+    }
+    if (key.startsWith('nonce:')) {
+        const r = _localNonces.get(key);
+        if (r && Date.now() < r.expires) return r;
+        _localNonces.delete(key); return null;
+    }
+    return null;
+}
+function _localMapSet(key, value, ttlMs) {
+    const expires = Date.now() + (ttlMs || 3600000);
+    if (key.startsWith('csrf:')) _localCsrf.set(key, { ...value, expires });
+    else if (key.startsWith('rate:')) _localRateLimit.set(key, { ...value, expires });
+    else if (key.startsWith('nonce:')) _localNonces.set(key, { ...value, expires });
+}
+function _localMapDel(key) {
+    if (key.startsWith('csrf:')) _localCsrf.delete(key);
+    else if (key.startsWith('rate:')) _localRateLimit.delete(key);
+    else if (key.startsWith('nonce:')) _localNonces.delete(key);
+}
+
+// ---------- 通用 Rate Limit（KV 存储，支持多实例） ----------
+/**
+ * 通用限流函数
+ * @param {string} key - 限流唯一键（如 rate:login:1.2.3.4）
+ * @param {number} max - 窗口内最大请求数
+ * @param {number} windowMs - 时间窗口（毫秒）
+ * @returns {Promise<{allowed:boolean, remaining:number, resetAt:number}>}
+ */
+async function rateLimitCheck(key, max, windowMs) {
     const now = Date.now();
-    const record = rateLimit.get(ip);
-    
-    if (!record) {
-        rateLimit.set(ip, { count: 1, timestamp: now });
-        return true;
+    const record = await _kvGet(key);
+    if (!record || now > record.expires) {
+        await _kvSet(key, { count: 1, expires: now + windowMs }, windowMs);
+        return { allowed: true, remaining: max - 1, resetAt: now + windowMs };
     }
-    
-    if (now - record.timestamp > RATE_LIMIT_WINDOW) {
-        rateLimit.set(ip, { count: 1, timestamp: now });
-        return true;
+    if (record.count >= max) {
+        return { allowed: false, remaining: 0, resetAt: record.expires };
     }
-    
-    if (record.count >= RATE_LIMIT_MAX) {
+    record.count++;
+    await _kvSet(key, record, record.expires - now);
+    return { allowed: true, remaining: max - record.count, resetAt: record.expires };
+}
+
+// 全局通用限流（非敏感接口，较宽松）
+const GLOBAL_RATE_MAX = 120;
+const GLOBAL_RATE_WINDOW = 60000;
+
+// 敏感接口限流配置
+const RATE_CONFIGS = {
+    login:        { max: 5,   window: 60 * 1000 },        // 登录：1分钟5次
+    register:     { max: 3,   window: 60 * 1000 },        // 注册：1分钟3次
+    verifyCode:   { max: 3,   window: 60 * 1000 },        // 发验证码：1分钟3次
+    messages:     { max: 10,  window: 60 * 1000 },        // 留言：1分钟10条
+    tasks:        { max: 10,  window: 60 * 1000 },        // 发任务：1分钟10条
+    email:        { max: 5,   window: 60 * 1000 },        // 发邮件：1分钟5封
+    invite:       { max: 5,   window: 60 * 1000 },        // 邀请码申请：1分钟5次
+    admin:        { max: 60,  window: 60 * 1000 },        // 管理操作：1分钟60次
+    password:     { max: 3,   window: 60 * 1000 },        // 改密：1分钟3次
+};
+
+function requireRateLimit(type) {
+    const cfg = RATE_CONFIGS[type] || { max: GLOBAL_RATE_MAX, window: GLOBAL_RATE_WINDOW };
+    return async (req, res, next) => {
+        const ip = getClientIP(req);
+        const key = `rate:${type}:${ip}`;
+        const result = await rateLimitCheck(key, cfg.max, cfg.window);
+        res.setHeader('X-RateLimit-Limit', cfg.max);
+        res.setHeader('X-RateLimit-Remaining', result.remaining);
+        res.setHeader('X-RateLimit-Reset', Math.ceil(result.resetAt / 1000));
+        if (!result.allowed) {
+            const retryAfter = Math.ceil((result.resetAt - Date.now()) / 1000);
+            res.setHeader('Retry-After', retryAfter);
+            return res.status(429).json({
+                success: false,
+                message: `请求过于频繁，请 ${retryAfter} 秒后再试`
+            });
+        }
+        next();
+    };
+}
+
+// ---------- CSRF Token（KV 存储 + 短过期 + 单次使用防重放） ----------
+function generateCSRFToken(sessionId) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const key = `csrf:${sessionId}`;
+    _kvSet(key, { token, expires: Date.now() + CSRF_TOKEN_TTL, used: false }, CSRF_TOKEN_TTL).catch(() => {});
+    return token;
+}
+
+async function validateCSRFToken(sessionId, token) {
+    const key = `csrf:${sessionId}`;
+    const record = await _kvGet(key);
+    if (!record) return false;
+    if (Date.now() > record.expires) {
+        await _kvDel(key);
         return false;
     }
-    
-    record.count++;
+    if (record.token !== token) return false;
+    // 单次使用：验证成功后立即删除（防抓包重放）
+    await _kvDel(key);
     return true;
 }
 
-const csrfTokens = new Map();
-const CSRF_TOKEN_TTL = 3600000;
+// ---------- Nonce 校验（防重放攻击的第二道防线） ----------
+/**
+ * 生成 nonce 给客户端，客户端每次写请求带 unique nonce
+ * 服务端记录用过的 nonce，5 分钟内重复使用直接拒绝
+ */
+async function useNonce(sessionId, nonce) {
+    if (!nonce || typeof nonce !== 'string' || nonce.length < 8) return false;
+    const key = `nonce:${sessionId}:${nonce}`;
+    const existing = await _kvGet(key);
+    if (existing) return false; // 已使用过
+    await _kvSet(key, { usedAt: Date.now() }, NONCE_TTL);
+    return true;
+}
+
+function requireCSRF(req, res, next) {
+    const token = req.headers['x-csrf-token'] || req.body._csrf;
+    const nonce = req.headers['x-request-nonce'] || req.body._nonce;
+
+    if (!token) {
+        return res.status(403).json({ success: false, message: '缺少CSRF Token' });
+    }
+    // 写操作必须带 nonce（防重放）
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method) && !nonce) {
+        return res.status(403).json({ success: false, message: '缺少请求Nonce' });
+    }
+
+    (async () => {
+        const sid = req.sessionID || (req.cookies && req.cookies['connect.sid']) || crypto.randomUUID();
+        if (nonce) {
+            const nonceOk = await useNonce(sid, nonce);
+            if (!nonceOk) {
+                return res.status(403).json({ success: false, message: '请求已过期或已被重放' });
+            }
+        }
+        const ok = await validateCSRFToken(sid, token);
+        if (!ok) {
+            return res.status(403).json({ success: false, message: 'CSRF Token无效或已过期，请刷新页面重试' });
+        }
+        next();
+    })().catch(err => {
+        console.error('[CSRF] 校验异常:', err);
+        res.status(500).json({ success: false, message: '安全校验失败' });
+    });
+}
+
+// ---------- XSS 输入过滤 ----------
+/**
+ * 严格 HTML/JS 转义，防止 XSS 攻击
+ * 额外移除 <script>、onxxx=、javascript: 等危险模式
+ */
+function xssEscape(str) {
+    if (str == null) return '';
+    if (typeof str !== 'string') str = String(str);
+    // 1. 先移除危险的脚本/事件模式（不区分大小写）
+    str = str.replace(/<\s*script[^>]*>[\s\S]*?<\s*\/\s*script\s*>/gi, '');
+    str = str.replace(/<\s*iframe[^>]*>[\s\S]*?<\s*\/\s*iframe\s*>/gi, '');
+    str = str.replace(/\bon\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+    str = str.replace(/\bjavascript\s*:/gi, '');
+    str = str.replace(/\bvbscript\s*:/gi, '');
+    str = str.replace(/\bdata\s*:\s*text\/html/gi, '');
+    str = str.replace(/<\s*(img|svg|video|audio|object|embed|link|meta|style)[^>]*>/gi, '');
+    // 2. HTML 实体转义
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/`/g, '&#96;')
+        .replace(/\//g, '&#x2F;');
+}
+
+/**
+ * 递归过滤对象中的所有字符串字段（用于 req.body）
+ */
+function sanitizeObject(obj) {
+    if (obj == null) return obj;
+    if (typeof obj === 'string') return xssEscape(obj);
+    if (Array.isArray(obj)) return obj.map(sanitizeObject);
+    if (typeof obj === 'object') {
+        const clean = {};
+        for (const k of Object.keys(obj)) {
+            clean[k] = sanitizeObject(obj[k]);
+        }
+        return clean;
+    }
+    return obj;
+}
+
+// 中间件：自动过滤 req.body / req.query / req.params 中的字符串
+function xssFilter(req, res, next) {
+    if (req.body) req.body = sanitizeObject(req.body);
+    if (req.query) req.query = sanitizeObject(req.query);
+    if (req.params) req.params = sanitizeObject(req.params);
+    next();
+}
+
+// ---------- HTTP 方法白名单 ----------
+const ALLOWED_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
+function methodWhitelist(req, res, next) {
+    if (!ALLOWED_METHODS.has(req.method)) {
+        res.setHeader('Allow', [...ALLOWED_METHODS].join(', '));
+        return res.status(405).json({ success: false, message: '不支持的请求方法' });
+    }
+    next();
+}
 
 const dataCache = new Map();
 const CACHE_TTL = 5000;
@@ -454,40 +678,6 @@ function getCachedData(key, fetchFn) {
 
 function invalidateCache(key) {
     dataCache.delete(key);
-}
-
-function generateCSRFToken(sessionId) {
-    const token = crypto.randomBytes(32).toString('hex');
-    csrfTokens.set(sessionId, {
-        token,
-        expires: Date.now() + CSRF_TOKEN_TTL
-    });
-    return token;
-}
-
-function validateCSRFToken(sessionId, token) {
-    const record = csrfTokens.get(sessionId);
-    if (!record) return false;
-    if (Date.now() > record.expires) {
-        csrfTokens.delete(sessionId);
-        return false;
-    }
-    if (record.token !== token) return false;
-    return true;
-}
-
-function requireCSRF(req, res, next) {
-    const token = req.headers['x-csrf-token'] || req.body._csrf;
-    
-    if (!token) {
-        return res.status(403).json({ success: false, message: '缺少CSRF token' });
-    }
-    
-    if (!validateCSRFToken(req.sessionID, token)) {
-        return res.status(403).json({ success: false, message: 'CSRF token无效或已过期' });
-    }
-    
-    next();
 }
 
 function validateEmail(email) {
@@ -638,35 +828,83 @@ const upload = multer({
 
 app.set('trust proxy', 1);
 
+// 1. HTTP 方法白名单（只允许必要方法）
+app.use(methodWhitelist);
+
+// 2. 安全响应头（严格版）
 app.use((req, res, next) => {
+    // 防止 MIME 类型嗅探
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    // 防止点击劫持
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    // XSS 防护（老式浏览器兼容）
     res.setHeader('X-XSS-Protection', '1; mode=block');
+    // Referrer 策略
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Content-Security-Policy', "default-src 'self' https:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; font-src 'self' https:; connect-src 'self' https: wss:;");
+    // HTTPS 强制跳转（HSTS，365天，含子域）
+    if (isProduction || isVercel || isZeabur) {
+        res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+    }
+    // 功能权限策略（禁用危险浏览器 API）
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=(), payment=(), usb=(), bluetooth=(), magnetometer=(), accelerometer=(), gyroscope=()');
+    // 严格 CSP（放宽了 inline 以兼容现有前端代码）
+    res.setHeader(
+        'Content-Security-Policy',
+        [
+            "default-src 'self' https:",
+            "script-src 'self' 'unsafe-inline' https:",
+            "style-src 'self' 'unsafe-inline' https:",
+            "img-src 'self' data: blob: https:",
+            "font-src 'self' https: data:",
+            "connect-src 'self' https: wss:",
+            "frame-ancestors 'self'",
+            "base-uri 'self'",
+            "form-action 'self'",
+            "object-src 'none'",
+            "worker-src 'self' blob:",
+            "media-src 'self' https: blob:",
+            "manifest-src 'self'"
+        ].join('; ')
+    );
+    // 跨域隔离（可选，防止 Spectre 类攻击）
+    // res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    // res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     next();
 });
 
-app.use((req, res, next) => {
+// 3. 全局通用限流（基于 KV，支持多实例；静态资源和 SSE 日志流放行）
+app.use(async (req, res, next) => {
+    const isStatic = /\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|map|wasm)$/i.test(req.path);
+    const isSSE = req.path.startsWith('/api/logs') || req.path.startsWith('/api/events');
+    if (isStatic || isSSE) return next();
+
     const ip = getClientIP(req);
-    
-    if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/) || 
-        req.path.startsWith('/api/logs')) {
-        return next();
-    }
-    
-    if (!checkRateLimit(ip)) {
+    const key = `rate:global:${ip}`;
+    const result = await rateLimitCheck(key, GLOBAL_RATE_MAX, GLOBAL_RATE_WINDOW);
+    res.setHeader('X-RateLimit-Limit', GLOBAL_RATE_MAX);
+    res.setHeader('X-RateLimit-Remaining', result.remaining);
+    res.setHeader('X-RateLimit-Reset', Math.ceil(result.resetAt / 1000));
+    if (!result.allowed) {
+        const retryAfter = Math.ceil((result.resetAt - Date.now()) / 1000);
+        res.setHeader('Retry-After', retryAfter);
         return res.status(429).json({
             success: false,
-            message: '请求过于频繁，请稍后再试'
+            message: `请求过于频繁，请 ${retryAfter} 秒后再试`
         });
     }
     next();
 });
 
+// 4. Cookie 解析
 app.use(cookieParser());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// 5. 请求体大小限制（防止大请求攻击）
+// JSON body 最大 100KB，urlencoded 表单最大 100KB，文件上传走 multer 单独限制
+app.use(express.json({ limit: '100kb', strict: true }));
+app.use(express.urlencoded({ extended: true, limit: '100kb', parameterLimit: 100 }));
+
+// 6. XSS 输入过滤（所有入站字符串自动转义）
+app.use(xssFilter);
 
 var serverLogs = [];
 const MAX_LOG_COUNT = 1000;
@@ -1464,7 +1702,7 @@ app.get('/api/auth-test', async (req, res) => {
     });
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) => {
     const { username, password, code, loginType } = req.body;
     
     if (!username && loginType !== 'code') {
@@ -1479,6 +1717,9 @@ app.post('/api/login', async (req, res) => {
         return res.status(400).json({ success: false, message: '请填写验证码' });
     }
     
+    const MAX_FAILED_ATTEMPTS = 3;     // 最多尝试3次
+    const LOCK_DURATION_MS = 5 * 60 * 1000; // 锁定5分钟
+
     // 验证码登录不需要用户名
     let user;
     if (loginType === 'code') {
@@ -1529,6 +1770,7 @@ app.post('/api/login', async (req, res) => {
                         is_super_admin: true,
                         status: 'active',
                         login_attempts: 0,
+                        locked_until: 0,
                         created_at: new Date().toISOString()
                     };
                     db.data.users.push(user);
@@ -1544,23 +1786,54 @@ app.post('/api/login', async (req, res) => {
     }
     
     if (user.is_banned) {
-        return res.status(400).json({ success: false, message: '账号已被封禁' });
+        return res.status(400).json({ success: false, message: '账号已被封禁，请联系管理员' });
+    }
+
+    // 检查临时锁定状态（5分钟锁定）
+    if (user.locked_until && Date.now() < user.locked_until) {
+        const remainSec = Math.ceil((user.locked_until - Date.now()) / 1000);
+        const remainMin = Math.ceil(remainSec / 60);
+        return res.status(400).json({
+            success: false,
+            message: `密码错误次数过多，账号已锁定，请 ${remainMin} 分钟后再试（还剩 ${remainSec} 秒）`
+        });
+    }
+    // 锁定时间已过，清除历史计数
+    if (user.locked_until && Date.now() >= user.locked_until) {
+        user.login_attempts = 0;
+        user.locked_until = 0;
     }
     
     if (loginType === 'password') {
         if (!bcrypt.compareSync(password, user.password)) {
+            // 密码错误：累加计数
             user.login_attempts = (user.login_attempts || 0) + 1;
-            if (user.login_attempts >= 5) {
-                user.is_banned = true;
+            let lockMsg = '';
+            if (user.login_attempts >= MAX_FAILED_ATTEMPTS) {
+                // 达到阈值：锁定5分钟
+                user.locked_until = Date.now() + LOCK_DURATION_MS;
+                lockMsg = `（连续错误 ${user.login_attempts} 次，账号已锁定 5 分钟）`;
+                // 重置计数，避免下次解除后立刻又被锁
+                user.login_attempts = 0;
+            } else {
+                const left = MAX_FAILED_ATTEMPTS - user.login_attempts;
+                lockMsg = `（还剩 ${left} 次尝试机会，超过将锁定 5 分钟）`;
             }
             await db.write();
-            return res.status(400).json({ success: false, message: '用户名或密码错误' });
+            return res.status(400).json({ success: false, message: '用户名或密码错误' + lockMsg });
         }
         
+        // 密码正确：清除失败计数与锁定
         user.login_attempts = 0;
+        user.locked_until = 0;
         await db.write();
     }
-    // 验证码登录在前面已验证通过
+    // 验证码登录在前面已验证通过，也清除锁定计数
+    if (loginType === 'code') {
+        user.login_attempts = 0;
+        user.locked_until = 0;
+        await db.write();
+    }
     
     // 检查网站是否被锁定
     if (siteLocked && !user.is_admin && !user.is_super_admin) {
@@ -1664,7 +1937,7 @@ app.use('/api/', (req, res, next) => {
     next();
 });
 
-app.post('/api/register', async (req, res) => {
+app.post('/api/register', requireRateLimit('register'), requireCSRF, async (req, res) => {
     const { username, email, password, invite_code, verify_code } = req.body;
     
     if (!username || !email || !password || !verify_code) {
@@ -1730,7 +2003,7 @@ app.post('/api/register', async (req, res) => {
     res.json({ success: true, message: '注册成功' });
 });
 
-app.post('/api/logout', (req, res) => {
+app.post('/api/logout', requireCSRF, (req, res) => {
     // 清除客户端 token
     req.session.destroy((err) => {
         if (err) console.error('[LOGOUT] Session 销毁失败:', err);
@@ -1768,7 +2041,7 @@ app.get('/api/user', async (req, res) => {
 });
 
 // 修改密码
-app.put('/api/user/password', requireLogin, async (req, res) => {
+app.put('/api/user/password', requireLogin, requireRateLimit('password'), requireCSRF, async (req, res) => {
     try {
         const { oldPassword, newPassword } = req.body;
 
@@ -1816,7 +2089,7 @@ app.put('/api/user/password', requireLogin, async (req, res) => {
     }
 });
 
-app.post('/api/send-code', async (req, res) => {
+app.post('/api/send-code', requireRateLimit('verifyCode'), requireCSRF, async (req, res) => {
     const { email, type } = req.body;
     
     if (!validateEmail(email)) {
@@ -2013,7 +2286,7 @@ app.get('/api/public/messages', async (req, res) => {
 });
 
 // 发布留言（需要登录）
-app.post('/api/messages', requireLogin, async (req, res) => {
+app.post('/api/messages', requireLogin, requireRateLimit('messages'), requireCSRF, async (req, res) => {
     const { content } = req.body;
     
     if (!content || content.trim().length === 0) {
@@ -2043,7 +2316,7 @@ app.post('/api/messages', requireLogin, async (req, res) => {
     });
 });
 
-app.post('/api/tasks', requireLogin, upload.single('file'), async (req, res) => {
+app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), upload.single('file'), requireCSRF, async (req, res) => {
     const { title, description, reward, deadline, status } = req.body;
     
     if (!title || !description) {
@@ -2105,7 +2378,7 @@ app.post('/api/tasks', requireLogin, upload.single('file'), async (req, res) => 
     res.json({ success: true, message: '任务发布成功', data: task });
 });
 
-app.put('/api/tasks/:id', requireLogin, async (req, res) => {
+app.put('/api/tasks/:id', requireLogin, requireRateLimit('tasks'), requireCSRF, async (req, res) => {
     const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
     
     if (!task) {
@@ -2130,7 +2403,7 @@ app.put('/api/tasks/:id', requireLogin, async (req, res) => {
 });
 
 // 更新任务状态接口
-app.put('/api/tasks/:id/status', requireLogin, async (req, res) => {
+app.put('/api/tasks/:id/status', requireLogin, requireRateLimit('tasks'), requireCSRF, async (req, res) => {
     const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
     
     if (!task) {
@@ -2168,7 +2441,7 @@ app.put('/api/tasks/:id/status', requireLogin, async (req, res) => {
     res.json({ success: true, message: '状态更新成功', data: task });
 });
 
-app.delete('/api/tasks/:id', requireLogin, async (req, res) => {
+app.delete('/api/tasks/:id', requireLogin, requireRateLimit('tasks'), requireCSRF, async (req, res) => {
     const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
     
     if (!task) {
@@ -2206,7 +2479,7 @@ app.get('/api/tasks/:id/download', async (req, res) => {
     res.download(task.file_path, task.file_name || 'download');
 });
 
-app.post('/api/invite/request', async (req, res) => {
+app.post('/api/invite/request', requireRateLimit('invite'), requireCSRF, async (req, res) => {
     const { email } = req.body;
     
     if (!validateEmail(email)) {
@@ -2499,7 +2772,7 @@ app.get('/api/invite/requests', requireAdmin, async (req, res) => {
     res.json({ success: true, data: db.data.invite_requests || [] });
 });
 
-app.post('/api/invite/requests/:id/approve', requireAdmin, async (req, res) => {
+app.post('/api/invite/requests/:id/approve', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const request = db.data.invite_requests.find(r => r.id === parseInt(req.params.id));
     
     if (!request) {
@@ -2550,7 +2823,7 @@ app.post('/api/invite/requests/:id/approve', requireAdmin, async (req, res) => {
     res.json({ success: true, message: '邀请码已生成并发送', invite_code: inviteCode });
 });
 
-app.post('/api/invite/requests/:id/reject', requireAdmin, async (req, res) => {
+app.post('/api/invite/requests/:id/reject', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const request = db.data.invite_requests.find(r => r.id === parseInt(req.params.id));
     
     if (!request) {
@@ -2647,7 +2920,7 @@ app.get('/api/members', requireAdmin, async (req, res) => {
 });
 
 // 管理员重置用户密码
-app.put('/api/members/:id/reset-password', requireAdmin, async (req, res) => {
+app.put('/api/members/:id/reset-password', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     try {
         const currentUser = req.currentUser;
         const user = db.data.users.find(u => u.id === parseInt(req.params.id));
@@ -2675,7 +2948,7 @@ app.put('/api/members/:id/reset-password', requireAdmin, async (req, res) => {
     }
 });
 
-app.post('/api/members/:id/ban', requireAdmin, async (req, res) => {
+app.post('/api/members/:id/ban', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
     const user = db.data.users.find(u => u.id === parseInt(req.params.id));
     
@@ -2694,7 +2967,7 @@ app.post('/api/members/:id/ban', requireAdmin, async (req, res) => {
     res.json({ success: true, message: '用户已封禁' });
 });
 
-app.post('/api/members/:id/unban', requireAdmin, async (req, res) => {
+app.post('/api/members/:id/unban', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
     const user = db.data.users.find(u => u.id === parseInt(req.params.id));
     
@@ -2713,7 +2986,7 @@ app.post('/api/members/:id/unban', requireAdmin, async (req, res) => {
     res.json({ success: true, message: '用户已解封' });
 });
 
-app.post('/api/members/:id/set_admin', requireAdmin, async (req, res) => {
+app.post('/api/members/:id/set_admin', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
     const user = db.data.users.find(u => u.id === parseInt(req.params.id));
     
@@ -2732,7 +3005,7 @@ app.post('/api/members/:id/set_admin', requireAdmin, async (req, res) => {
     res.json({ success: true, message: '用户已设为管理员' });
 });
 
-app.post('/api/members/:id/unset_admin', requireAdmin, async (req, res) => {
+app.post('/api/members/:id/unset_admin', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
     const user = db.data.users.find(u => u.id === parseInt(req.params.id));
     
@@ -2751,7 +3024,7 @@ app.post('/api/members/:id/unset_admin', requireAdmin, async (req, res) => {
     res.json({ success: true, message: '用户管理员权限已移除' });
 });
 
-app.delete('/api/members/:id', requireAdmin, async (req, res) => {
+app.delete('/api/members/:id', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
     const user = db.data.users.find(u => u.id === parseInt(req.params.id));
     
@@ -2782,7 +3055,7 @@ app.get('/api/invite-codes', requireAdmin, async (req, res) => {
     res.json({ success: true, data: codes });
 });
 
-app.post('/api/invite-codes', requireAdmin, async (req, res) => {
+app.post('/api/invite-codes', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const code = 'STC' + Math.random().toString(36).substring(2, 8).toUpperCase();
     const newCode = {
         id: Date.now(),
@@ -2797,7 +3070,7 @@ app.post('/api/invite-codes', requireAdmin, async (req, res) => {
     res.json({ success: true, data: newCode, code: code });
 });
 
-app.delete('/api/invite-codes/:id', requireAdmin, async (req, res) => {
+app.delete('/api/invite-codes/:id', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const id = parseInt(req.params.id) || parseFloat(req.params.id);
     if (!db.data.inviteCodes) db.data.inviteCodes = [];
     db.data.inviteCodes = db.data.inviteCodes.filter(c => c.id !== id);
@@ -2805,7 +3078,7 @@ app.delete('/api/invite-codes/:id', requireAdmin, async (req, res) => {
     res.json({ success: true, message: '邀请码已删除' });
 });
 
-app.post('/api/console/create_user', requireAdmin, async (req, res) => {
+app.post('/api/console/create_user', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const { username, email, password, isAdmin } = req.body;
     
     if (!username || !email || !password) {
@@ -2841,13 +3114,13 @@ app.post('/api/console/create_user', requireAdmin, async (req, res) => {
 
 const isLocalDev = !process.env.VERCEL && !process.env.RAILWAY;
 if (isLocalDev) {
-    app.post('/api/console/stop', requireLogin, requireAdmin, (req, res) => {
+    app.post('/api/console/stop', requireLogin, requireAdmin, requireRateLimit('admin'), requireCSRF, (req, res) => {
         console.log('服务器被管理员停止');
         res.json({ success: true, message: '服务器已停止' });
         setTimeout(() => process.exit(0), 1000);
     });
 
-    app.post('/api/console/restart', requireLogin, requireAdmin, (req, res) => {
+    app.post('/api/console/restart', requireLogin, requireAdmin, requireRateLimit('admin'), requireCSRF, (req, res) => {
         console.log('服务器被管理员重启');
         res.json({ success: true, message: '服务器正在重启...' });
         
@@ -2995,7 +3268,7 @@ function stopAutoBackup() {
     autoBackupEnabled = false;
 }
 
-app.post('/api/admin/backup', requireSuperAdmin, async (req, res) => {
+app.post('/api/admin/backup', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     try {
         const backup = await createBackup();
         res.json({ 
@@ -3024,7 +3297,7 @@ app.get('/api/admin/backup-info', requireSuperAdmin, (req, res) => {
 });
 
 // 设置自动备份API
-app.post('/api/admin/auto-backup', requireSuperAdmin, (req, res) => {
+app.post('/api/admin/auto-backup', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, (req, res) => {
     const { time } = req.body;
     
     if (!time) {
@@ -3047,7 +3320,7 @@ app.post('/api/admin/auto-backup', requireSuperAdmin, (req, res) => {
 });
 
 // 关闭自动备份API
-app.post('/api/admin/auto-backup/stop', requireSuperAdmin, (req, res) => {
+app.post('/api/admin/auto-backup/stop', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, (req, res) => {
     stopAutoBackup();
     res.json({ 
         success: true, 
@@ -3105,7 +3378,7 @@ function getDirSize(dirPath) {
 }
 
 // 回滚到指定备份API
-app.post('/api/admin/rollback', requireSuperAdmin, async (req, res) => {
+app.post('/api/admin/rollback', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const { backupName } = req.body;
     
     if (!backupName) {
@@ -3151,7 +3424,7 @@ app.post('/api/admin/rollback', requireSuperAdmin, async (req, res) => {
 });
 
 // 删除指定备份API
-app.delete('/api/admin/backup/:name', requireSuperAdmin, async (req, res) => {
+app.delete('/api/admin/backup/:name', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const { name } = req.params;
     
     if (!name) {
@@ -3176,7 +3449,7 @@ app.delete('/api/admin/backup/:name', requireSuperAdmin, async (req, res) => {
 });
 
 // 锁定数据库API
-app.post('/api/admin/db-lock', requireSuperAdmin, async (req, res) => {
+app.post('/api/admin/db-lock', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const { reason } = req.body;
     
     if (dbLocked) {
@@ -3213,7 +3486,7 @@ app.get('/api/admin/db-status', requireSuperAdmin, (req, res) => {
 });
 
 // 解锁数据库API
-app.post('/api/admin/db-unlock', requireSuperAdmin, async (req, res) => {
+app.post('/api/admin/db-unlock', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     if (!dbLocked) {
         return res.json({ success: false, message: '数据库未被锁定' });
     }
@@ -3226,7 +3499,7 @@ app.post('/api/admin/db-unlock', requireSuperAdmin, async (req, res) => {
 });
 
 // 网站锁定API - 管理员可用
-app.post('/api/admin/site-lock', requireAdmin, async (req, res) => {
+app.post('/api/admin/site-lock', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const { reason } = req.body;
     const currentUser = req.currentUser;
     
@@ -3285,7 +3558,7 @@ app.post('/api/admin/site-lock', requireAdmin, async (req, res) => {
 });
 
 // 网站解锁API - 仅超级管理员
-app.post('/api/admin/site-unlock', requireAdmin, async (req, res) => {
+app.post('/api/admin/site-unlock', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     if (!siteLocked) {
         return res.json({ success: false, message: '网站未被锁定' });
     }
@@ -3314,7 +3587,7 @@ app.get('/api/admin/site-status', requireAdmin, async (req, res) => {
     });
 });
 
-app.post('/api/ban-ip', requireSuperAdmin, async (req, res) => {
+app.post('/api/ban-ip', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const { ip, reason } = req.body;
     
     if (!ip) {
@@ -3346,7 +3619,7 @@ app.get('/api/ban-ips', requireSuperAdmin, async (req, res) => {
     res.json({ success: true, data: db.data.banned_ip_info || [] });
 });
 
-app.post('/api/unban-ip', requireSuperAdmin, async (req, res) => {
+app.post('/api/unban-ip', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const { ip } = req.body;
     
     if (!ip) {
@@ -3533,7 +3806,7 @@ app.get('/api/db/export', requireSuperAdmin, async (req, res) => {
     }
 });
 
-app.post('/api/db/import', requireSuperAdmin, express.json({ limit: '10mb' }), async (req, res) => {
+app.post('/api/db/import', requireSuperAdmin, express.json({ limit: '10mb' }), requireRateLimit('admin'), requireCSRF, async (req, res) => {
     try {
         const newData = req.body;
         if (!newData || typeof newData !== 'object') {
@@ -3569,7 +3842,7 @@ function verifyBotKey(req) {
 }
 
 // 机器人连接/长轮询（获取待发送消息）
-app.post('/api/bot/connect', async (req, res) => {
+app.post('/api/bot/connect', requireRateLimit('email'), async (req, res) => {
     if (!verifyBotKey(req)) {
         return res.status(401).json({ success: false, message: '无效的 API Key' });
     }
@@ -3620,7 +3893,7 @@ app.post('/api/bot/connect', async (req, res) => {
 });
 
 // 机器人上报消息发送结果
-app.post('/api/bot/report-send-result', async (req, res) => {
+app.post('/api/bot/report-send-result', requireRateLimit('email'), async (req, res) => {
     if (!verifyBotKey(req)) {
         return res.status(401).json({ success: false, message: '无效的 API Key' });
     }
@@ -3650,7 +3923,7 @@ app.post('/api/bot/report-send-result', async (req, res) => {
 });
 
 // 机器人上报收到的消息
-app.post('/api/bot/report-message', async (req, res) => {
+app.post('/api/bot/report-message', requireRateLimit('email'), async (req, res) => {
     if (!verifyBotKey(req)) {
         return res.status(401).json({ success: false, message: '无效的 API Key' });
     }
@@ -3755,7 +4028,7 @@ app.get('/api/bot/messages', requireAdmin, async (req, res) => {
 });
 
 // 管理员：发送消息（加入发送队列）
-app.post('/api/bot/send', requireAdmin, async (req, res) => {
+app.post('/api/bot/send', requireAdmin, requireRateLimit('email'), requireCSRF, async (req, res) => {
     try {
         await ensureBotCollections();
         const { target_type, target_id, content, image_url, group_id, user_id } = req.body || {};
