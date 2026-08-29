@@ -21,12 +21,171 @@
         }
 
         /* ---------- 整体布局 ---------- */
-        .chat-app {
+        .app {
+            display: flex;
+            height: 100vh;
+            width: 100%;
+        }
+
+        .main {
+            flex: 1;
             display: flex;
             flex-direction: column;
-            height: 100vh;
-            max-width: 1000px;
-            margin: 0 auto;
+            min-width: 0;
+        }
+
+        /* ---------- 侧边栏 ---------- */
+        .sidebar {
+            width: 264px;
+            flex-shrink: 0;
+            background: #111;
+            border-right: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.25s ease;
+            z-index: 40;
+        }
+
+        .sidebar-header {
+            padding: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            flex-shrink: 0;
+        }
+
+        .sidebar-brand {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sidebar-brand .logo-mini {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: conic-gradient(from 0deg, #ff4e4e, #ff9f43, #ffe066, #2ed573, #1e90ff, #7c5cff, #ff4e4e);
+            padding: 2px;
+            flex-shrink: 0;
+        }
+
+        .sidebar-brand .logo-mini::before {
+            content: '';
+            display: block;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: #111;
+        }
+
+        .new-chat-btn {
+            width: 100%;
+            padding: 10px 0;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 10px;
+            color: #fff;
+            font-size: 13.5px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .new-chat-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.28);
+        }
+
+        .conv-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 8px;
+        }
+
+        .conv-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .conv-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 2px;
+        }
+
+        .conv-empty {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 12.5px;
+            padding: 30px 10px;
+            line-height: 1.8;
+        }
+
+        .conv-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            cursor: pointer;
+            margin-bottom: 2px;
+            transition: background 0.15s;
+            position: relative;
+        }
+
+        .conv-item:hover {
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .conv-item.active {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .conv-item .conv-body {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .conv-item .conv-title {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.9);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .conv-item .conv-meta {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.35);
+            margin-top: 2px;
+        }
+
+        .conv-item .conv-del {
+            background: none;
+            border: none;
+            color: rgba(255, 255, 255, 0.35);
+            font-size: 13px;
+            cursor: pointer;
+            padding: 4px 6px;
+            border-radius: 6px;
+            opacity: 0;
+            transition: all 0.15s;
+            flex-shrink: 0;
+        }
+
+        .conv-item:hover .conv-del {
+            opacity: 1;
+        }
+
+        .conv-item .conv-del:hover {
+            color: #ff6b6b;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .sidebar-mask {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 35;
         }
 
         /* ---------- 顶部栏 ---------- */
@@ -34,9 +193,13 @@
             display: flex;
             align-items: center;
             gap: 12px;
-            padding: 14px 24px;
+            padding: 12px 20px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.08);
             flex-shrink: 0;
+        }
+
+        .menu-btn {
+            display: none;
         }
 
         .chat-logo {
@@ -63,7 +226,7 @@
         }
 
         .chat-title h1 {
-            font-size: 16px;
+            font-size: 15.5px;
             font-weight: 600;
             color: #fff;
             line-height: 1.3;
@@ -72,6 +235,34 @@
         .chat-title p {
             font-size: 11px;
             color: rgba(255, 255, 255, 0.4);
+        }
+
+        /* 深度/快速思考切换 */
+        .mode-switch {
+            display: flex;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 999px;
+            padding: 3px;
+            flex-shrink: 0;
+        }
+
+        .mode-btn {
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.55);
+            font-size: 12.5px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .mode-btn.active {
+            background: linear-gradient(135deg, #4d8dff, #7c5cff);
+            color: #fff;
+            box-shadow: 0 2px 10px rgba(76, 141, 255, 0.35);
         }
 
         .model-select {
@@ -83,7 +274,7 @@
             font-size: 12.5px;
             cursor: pointer;
             outline: none;
-            max-width: 180px;
+            max-width: 170px;
             flex-shrink: 0;
             transition: border-color 0.2s, background 0.2s;
         }
@@ -98,33 +289,24 @@
             color: #fff;
         }
 
-        .icon-btn {
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            color: rgba(255, 255, 255, 0.8);
-            border-radius: 999px;
-            width: 36px;
-            height: 36px;
-            cursor: pointer;
-            font-size: 15px;
-            transition: all 0.2s;
-            flex-shrink: 0;
-        }
-
-        .icon-btn:hover {
-            background: rgba(255, 255, 255, 0.14);
-            color: #fff;
-        }
-
         /* ---------- 消息区 ---------- */
         .chat-box {
             flex: 1;
             overflow-y: auto;
-            padding: 32px 24px;
+            padding: 28px 20px;
             display: flex;
             flex-direction: column;
-            gap: 24px;
+            gap: 22px;
             scroll-behavior: smooth;
+        }
+
+        .chat-box-inner {
+            width: 100%;
+            max-width: 780px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 22px;
         }
 
         .chat-box::-webkit-scrollbar {
@@ -154,14 +336,14 @@
         }
 
         .welcome h2 {
-            font-size: 30px;
+            font-size: 28px;
             font-weight: 700;
             color: #fff;
             letter-spacing: 0.5px;
         }
 
         .welcome .sub {
-            font-size: 14px;
+            font-size: 13.5px;
             color: rgba(255, 255, 255, 0.45);
             line-height: 1.7;
         }
@@ -169,18 +351,18 @@
         .tips {
             display: flex;
             flex-wrap: wrap;
-            gap: 12px;
+            gap: 10px;
             justify-content: center;
-            margin-top: 26px;
-            max-width: 640px;
+            margin-top: 22px;
+            max-width: 620px;
         }
 
         .tips .tip-card {
             background: rgba(255, 255, 255, 0.04);
             border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 14px;
-            padding: 14px 20px;
-            font-size: 13.5px;
+            border-radius: 12px;
+            padding: 12px 18px;
+            font-size: 13px;
             color: rgba(255, 255, 255, 0.75);
             cursor: pointer;
             transition: all 0.25s;
@@ -197,7 +379,7 @@
         /* 消息气泡 */
         .msg {
             display: flex;
-            gap: 14px;
+            gap: 12px;
             max-width: 100%;
             animation: fadeIn 0.25s ease;
         }
@@ -250,12 +432,13 @@
 
         .msg .bubble {
             max-width: 78%;
-            padding: 12px 18px;
+            padding: 12px 16px;
             border-radius: 16px;
             font-size: 14.5px;
             line-height: 1.75;
             word-break: break-word;
             white-space: pre-wrap;
+            min-width: 0;
         }
 
         .msg-user .bubble {
@@ -275,6 +458,23 @@
             background: rgba(255, 170, 60, 0.12);
             border: 1px solid rgba(255, 170, 60, 0.25);
             color: #ffd9a8;
+        }
+
+        /* 用户消息里的图片 */
+        .msg-images {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+
+        .msg-images img {
+            max-width: 180px;
+            max-height: 140px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            object-fit: cover;
+            display: block;
         }
 
         /* AI 气泡里的 markdown 样式 */
@@ -309,6 +509,61 @@
             color: #fff;
         }
 
+        /* 深度思考过程 */
+        .think-box {
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            margin-bottom: 10px;
+            overflow: hidden;
+        }
+
+        .think-box .think-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 8px 12px;
+            font-size: 12.5px;
+            color: rgba(255, 255, 255, 0.75);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .think-box .think-header:hover {
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .think-box .think-toggle {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.4);
+            transition: transform 0.2s;
+        }
+
+        .think-box .think-content {
+            display: none;
+            padding: 4px 12px 12px;
+            font-size: 13px;
+            line-height: 1.7;
+            color: rgba(255, 255, 255, 0.6);
+            max-height: 320px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .think-box.open .think-content {
+            display: block;
+        }
+
+        .think-box.open .think-toggle {
+            transform: rotate(180deg);
+        }
+
+        .think-box.live .think-content {
+            display: block;
+        }
+
         /* 思考中动画 */
         .thinking .bubble {
             display: flex;
@@ -335,19 +590,22 @@
         /* ---------- 输入区 ---------- */
         .chat-input-wrap {
             flex-shrink: 0;
-            padding: 12px 24px 22px;
+            padding: 12px 20px 20px;
+        }
+
+        .chat-input-inner {
+            max-width: 780px;
+            margin: 0 auto;
         }
 
         .chat-input-bar {
             display: flex;
             align-items: flex-end;
-            gap: 10px;
-            max-width: 780px;
-            margin: 0 auto;
+            gap: 8px;
             background: rgba(255, 255, 255, 0.07);
             border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 24px;
-            padding: 10px 10px 10px 18px;
+            border-radius: 22px;
+            padding: 8px 8px 8px 10px;
             transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
         }
 
@@ -376,13 +634,34 @@
             color: rgba(255, 255, 255, 0.35);
         }
 
+        .img-btn {
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.55);
+            font-size: 18px;
+            cursor: pointer;
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
+            flex-shrink: 0;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .img-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+
         .send-btn {
             background: linear-gradient(135deg, #4d8dff, #7c5cff);
             color: #fff;
             border: none;
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
+            width: 38px;
+            height: 38px;
             font-size: 16px;
             cursor: pointer;
             transition: all 0.2s;
@@ -404,6 +683,48 @@
             box-shadow: none;
         }
 
+        /* 待发送图片预览 */
+        .img-preview {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .img-preview:empty {
+            display: none;
+        }
+
+        .img-preview .pv-item {
+            position: relative;
+        }
+
+        .img-preview .pv-item img {
+            width: 56px;
+            height: 56px;
+            border-radius: 8px;
+            object-fit: cover;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            display: block;
+        }
+
+        .img-preview .pv-item .pv-del {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #ff4d4f;
+            color: #fff;
+            border: none;
+            font-size: 11px;
+            line-height: 18px;
+            cursor: pointer;
+            text-align: center;
+            padding: 0;
+        }
+
         .input-hint {
             font-size: 11px;
             color: rgba(255, 255, 255, 0.28);
@@ -415,7 +736,7 @@
         .login-mask {
             position: fixed;
             inset: 0;
-            z-index: 30;
+            z-index: 50;
             background: rgba(0, 0, 0, 0.85);
             backdrop-filter: blur(14px);
             -webkit-backdrop-filter: blur(14px);
@@ -504,53 +825,104 @@
             background: rgba(255, 255, 255, 0.15);
         }
 
-        @media (max-width: 600px) {
-            .chat-header { padding: 12px 16px; }
-            .chat-box { padding: 20px 14px; }
-            .welcome h2 { font-size: 24px; }
-            .model-select { max-width: 130px; font-size: 11.5px; }
+        /* ---------- 移动端 ---------- */
+        @media (max-width: 860px) {
+            .sidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                bottom: 0;
+                transform: translateX(-100%);
+                box-shadow: 8px 0 30px rgba(0, 0, 0, 0.5);
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .sidebar-mask.show {
+                display: block;
+            }
+
+            .menu-btn {
+                display: flex;
+            }
+
+            .chat-header { padding: 10px 14px; gap: 8px; }
+            .chat-box { padding: 18px 12px; }
+            .chat-input-wrap { padding: 10px 12px 14px; }
+            .welcome h2 { font-size: 22px; }
+            .mode-btn { padding: 5px 10px; font-size: 11.5px; }
+            .model-select { max-width: 110px; font-size: 11px; padding: 6px 10px; }
             .chat-title p { display: none; }
             .msg .bubble { max-width: 86%; }
-            .tips .tip-card { padding: 11px 16px; font-size: 12.5px; }
-            .chat-input-wrap { padding: 10px 12px 16px; }
+            .tips .tip-card { padding: 10px 14px; font-size: 12px; }
         }
     </style>
 </head>
 <body>
 
-    <div class="chat-app">
-        <!-- 顶部栏 -->
-        <header class="chat-header">
-            <div class="chat-logo"></div>
-            <div class="chat-title">
-                <h1>STC AI 助手</h1>
-                <p>SenseNova 大模型驱动</p>
+    <div class="app">
+        <!-- 侧边栏（历史记录） -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-brand">
+                    <span class="logo-mini"></span>
+                    STC AI 助手
+                </div>
+                <button class="new-chat-btn" id="new-chat-btn">＋ 新建对话</button>
             </div>
-            <select id="model-select" class="model-select" title="选择模型"></select>
-            <button class="icon-btn" id="clear-btn" title="清空对话">🗑️</button>
-        </header>
+            <div class="conv-list" id="conv-list">
+                <div class="conv-empty">暂无历史对话<br>开始你的第一个问题吧</div>
+            </div>
+        </aside>
+        <div class="sidebar-mask" id="sidebar-mask"></div>
 
-        <!-- 消息区 -->
-        <main class="chat-box" id="chat-box">
-            <div class="welcome" id="welcome">
-                <h2>Hi，今天从哪里开始</h2>
-                <p class="sub">由商汤日日新（SenseNova）大模型驱动<br>可以聊天、写作、编程、解答问题</p>
-                <div class="tips">
-                    <span class="tip-card">✍️ 写一段工作周报</span>
-                    <span class="tip-card">💡 帮我解释什么是线程池</span>
-                    <span class="tip-card">🐍 用 Python 写个贪吃蛇</span>
-                    <span class="tip-card">😄 讲个冷笑话</span>
+        <div class="main">
+            <!-- 顶部栏 -->
+            <header class="chat-header">
+                <button class="icon-btn menu-btn" id="menu-btn">☰</button>
+                <div class="chat-logo"></div>
+                <div class="chat-title">
+                    <h1>STC AI 助手</h1>
+                    <p id="header-sub">深度思考 · 图片识别 · 流式输出</p>
+                </div>
+                <div class="mode-switch">
+                    <button class="mode-btn active" id="mode-deep">深度思考</button>
+                    <button class="mode-btn" id="mode-fast">快速思考</button>
+                </div>
+                <select id="model-select" class="model-select" title="选择模型"></select>
+            </header>
+
+            <!-- 消息区 -->
+            <main class="chat-box" id="chat-box">
+                <div class="chat-box-inner" id="chat-box-inner">
+                    <div class="welcome" id="welcome">
+                        <h2>Hi，今天从哪里开始</h2>
+                        <p class="sub">由商汤日日新（SenseNova）大模型驱动<br>支持深度思考、图片识别、连续对话</p>
+                        <div class="tips">
+                            <span class="tip-card">✍️ 写一段工作周报</span>
+                            <span class="tip-card">💡 帮我解释什么是线程池</span>
+                            <span class="tip-card">🐍 用 Python 写个贪吃蛇</span>
+                            <span class="tip-card">😄 讲个冷笑话</span>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- 输入区 -->
+            <div class="chat-input-wrap">
+                <div class="chat-input-inner">
+                    <div class="img-preview" id="img-preview"></div>
+                    <div class="chat-input-bar">
+                        <button class="img-btn" id="img-btn" title="上传图片（支持粘贴/拖拽）">🖼️</button>
+                        <input type="file" id="file-input" accept="image/*" multiple hidden>
+                        <textarea id="input" placeholder="输入你的问题，Enter 发送，Shift+Enter 换行"></textarea>
+                        <button class="send-btn" id="send-btn" title="发送">➤</button>
+                    </div>
+                    <div class="input-hint">内容由 AI 生成，仅供参考 · 支持图片识别与思考过程展示</div>
                 </div>
             </div>
-        </main>
-
-        <!-- 输入区 -->
-        <div class="chat-input-wrap">
-            <div class="chat-input-bar">
-                <textarea id="input" placeholder="输入你的问题，Enter 发送，Shift+Enter 换行"></textarea>
-                <button class="send-btn" id="send-btn" title="发送">➤</button>
-            </div>
-            <div class="input-hint">内容由 AI 生成，仅供参考 · 支持流式输出</div>
         </div>
 
         <!-- 未登录遮罩 -->
@@ -573,48 +945,74 @@
             'glm-5.2': 'GLM-5.2',
             'deepseek-v4-flash': 'DeepSeek V4'
         };
-        const SYSTEM_PROMPT = '你是STC工会任务平台的AI助手，由商汤日日新（SenseNova）大模型提供技术支持。请用简洁、友好的中文回答问题，涉及代码时给出完整可运行的示例。';
+        const DEEP_MODEL = 'sensenova-6.7-flash-lite';
+        const FAST_MODEL = 'deepseek-v4-flash';
+        const SYSTEM_PROMPT = '你是STC工会任务平台的AI助手，由商汤日日新（SenseNova）大模型提供技术支持。请用简洁、友好的中文回答问题，涉及代码时给出完整可运行的示例。可以分析用户上传的图片。';
 
         // ==================== 状态 ====================
-        let messages = [];      // {role, content}
+        let convId = null;          // 当前会话 id（null = 尚未创建的新对话）
+        let messages = [];          // 当前会话消息 [{role, content, images?, thinking?}]
+        let pendingImages = [];     // 待发送图片 [{data, mime}]
         let sending = false;
-        let _csrfCache = null;
+        let thinkingMode = localStorage.getItem('stc_ai_thinking') || 'deep';
 
+        // DOM
         const chatBox = document.getElementById('chat-box');
+        const chatBoxInner = document.getElementById('chat-box-inner');
         const inputEl = document.getElementById('input');
         const sendBtn = document.getElementById('send-btn');
         const modelSelect = document.getElementById('model-select');
         const welcomeEl = document.getElementById('welcome');
-
-        // 恢复历史
-        try {
-            const saved = JSON.parse(localStorage.getItem('stc_ai_history') || '[]');
-            if (Array.isArray(saved)) {
-                messages = saved.filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string');
-            }
-        } catch (e) {}
-
-        // 填充模型下拉
-        for (const [value, label] of Object.entries(MODELS)) {
-            const opt = document.createElement('option');
-            opt.value = value;
-            opt.textContent = label;
-            modelSelect.appendChild(opt);
-        }
-        modelSelect.value = localStorage.getItem('stc_ai_model') || 'sensenova-6.7-flash-lite';
+        const convListEl = document.getElementById('conv-list');
+        const imgPreviewEl = document.getElementById('img-preview');
+        const sidebarEl = document.getElementById('sidebar');
+        const sidebarMask = document.getElementById('sidebar-mask');
 
         // ==================== 工具函数 ====================
-        function saveHistory() {
+        function authHeaders() {
+            const token = localStorage.getItem('stc_auth_token');
+            return token ? { 'Authorization': 'Bearer ' + token } : {};
+        }
+
+        async function getCSRFToken() {
             try {
-                localStorage.setItem('stc_ai_history', JSON.stringify(messages.slice(-60)));
+                const resp = await fetch('/api/csrf-token', { credentials: 'include' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    return data.csrfToken;
+                }
             } catch (e) {}
+            return null;
+        }
+
+        function genNonce() {
+            return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
+        }
+
+        // 统一 API 请求（写操作自动带 CSRF + nonce）
+        async function api(path, { method = 'GET', body } = {}) {
+            let token = null;
+            if (method !== 'GET') token = await getCSRFToken();
+            const resp = await fetch(path, {
+                method,
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...authHeaders(),
+                    ...(token ? { 'X-CSRF-Token': token } : {}),
+                    'X-Request-Nonce': genNonce()
+                },
+                body: body ? JSON.stringify(body) : undefined
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(data.message || data.error || ('请求失败 (' + resp.status + ')'));
+            return data;
         }
 
         function escapeHtml(s) {
             return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
-        // 轻量 markdown：代码块 / 行内代码 / 粗体 / 换行
         function renderMarkdown(text) {
             const escaped = escapeHtml(text);
             const parts = escaped.split(/```/);
@@ -637,8 +1035,51 @@
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
+        function fmtTime(iso) {
+            try {
+                const d = new Date(iso);
+                const now = new Date();
+                const sameDay = d.toDateString() === now.toDateString();
+                if (sameDay) return d.toTimeString().slice(0, 5);
+                return (d.getMonth() + 1) + '/' + d.getDate();
+            } catch (e) { return ''; }
+        }
+
+        function imgSrc(img) {
+            return typeof img === 'string' ? img : ('data:' + (img.mime || 'image/jpeg') + ';base64,' + (img.data || ''));
+        }
+
         // ==================== 消息渲染 ====================
-        function buildBubble(role, content, isHtml) {
+        // 深度思考过程折叠框（静态版，用于历史消息）
+        function buildThinkBox(reasoning) {
+            const box = document.createElement('div');
+            box.className = 'think-box';
+
+            const header = document.createElement('div');
+            header.className = 'think-header';
+            const label = document.createElement('span');
+            label.textContent = '🤔 深度思考过程';
+            const toggle = document.createElement('span');
+            toggle.className = 'think-toggle';
+            toggle.textContent = '▾';
+            header.appendChild(label);
+            header.appendChild(toggle);
+
+            const content = document.createElement('div');
+            content.className = 'think-content';
+            content.textContent = reasoning;
+
+            box.appendChild(header);
+            box.appendChild(content);
+            header.addEventListener('click', () => box.classList.toggle('open'));
+            return box;
+        }
+
+        function buildBubble(role, item) {
+            const content = typeof item === 'string' ? item : (item.content || '');
+            const images = typeof item === 'string' ? [] : (item.images || []);
+            const thinking = typeof item === 'string' ? '' : (item.thinking || '');
+
             const wrap = document.createElement('div');
             wrap.className = 'msg msg-' + role;
 
@@ -648,25 +1089,42 @@
 
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
+
+            // 思考过程（仅 AI）
+            if (role === 'assistant' && thinking) {
+                bubble.appendChild(buildThinkBox(thinking));
+            }
+
+            // 图片（仅用户）
+            if (role === 'user' && images.length) {
+                const imgWrap = document.createElement('div');
+                imgWrap.className = 'msg-images';
+                for (const img of images.slice(0, 4)) {
+                    const im = document.createElement('img');
+                    im.src = imgSrc(img);
+                    imgWrap.appendChild(im);
+                }
+                bubble.appendChild(imgWrap);
+            }
+
             const text = document.createElement('div');
             text.className = 'msg-text';
-            if (isHtml) {
-                text.innerHTML = content;
-            } else if (role === 'assistant') {
-                text.innerHTML = renderMarkdown(content);
+            if (role === 'assistant') {
+                text.innerHTML = content ? renderMarkdown(content) : '';
             } else {
                 text.textContent = content;
             }
             bubble.appendChild(text);
+
             wrap.appendChild(avatar);
             wrap.appendChild(bubble);
             return wrap;
         }
 
-        function appendBubble(role, content) {
+        function appendBubble(role, item) {
             welcomeEl.style.display = 'none';
-            const el = buildBubble(role, content);
-            chatBox.appendChild(el);
+            const el = buildBubble(role, item);
+            chatBoxInner.appendChild(el);
             scrollBottom();
             return el;
         }
@@ -686,7 +1144,7 @@
             }
             wrap.appendChild(avatar);
             wrap.appendChild(bubble);
-            chatBox.appendChild(wrap);
+            chatBoxInner.appendChild(wrap);
             scrollBottom();
         }
 
@@ -696,53 +1154,211 @@
         }
 
         function renderAll() {
-            chatBox.querySelectorAll('.msg').forEach(el => el.remove());
+            chatBoxInner.querySelectorAll('.msg').forEach(el => el.remove());
             welcomeEl.style.display = messages.length ? 'none' : '';
             for (const m of messages) {
-                chatBox.appendChild(buildBubble(m.role, m.content));
+                chatBoxInner.appendChild(buildBubble(m.role, m));
             }
             scrollBottom();
         }
 
-        // ==================== CSRF / Nonce ====================
-        async function getCSRFToken() {
-            // 已缓存的 token 直接复用，避免每次提问都多一次网络往返
-            if (_csrfCache) return _csrfCache;
+        // ==================== 侧边栏：会话历史 ====================
+        async function loadConvs() {
             try {
-                const resp = await fetch('/api/csrf-token', { credentials: 'include' });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    _csrfCache = data.csrfToken;
-                    return data.csrfToken;
-                }
+                const data = await api('/api/ai/conversations');
+                renderConvList(data.data || []);
             } catch (e) {
-                console.error('获取CSRF token失败:', e);
+                console.error('[AI] 加载会话列表失败:', e.message);
             }
-            return null;
         }
 
-        // 一次性 nonce（防重放）
-        function genNonce() {
-            return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
+        function renderConvList(list) {
+            convListEl.innerHTML = '';
+            if (!list.length) {
+                const empty = document.createElement('div');
+                empty.className = 'conv-empty';
+                empty.textContent = '暂无历史对话';
+                convListEl.appendChild(empty);
+                return;
+            }
+            for (const c of list) {
+                const item = document.createElement('div');
+                item.className = 'conv-item' + (convId === c.id ? ' active' : '');
+                item.dataset.id = c.id;
+
+                const body = document.createElement('div');
+                body.className = 'conv-body';
+                const title = document.createElement('div');
+                title.className = 'conv-title';
+                title.textContent = c.title || '新对话';
+                const meta = document.createElement('div');
+                meta.className = 'conv-meta';
+                meta.textContent = fmtTime(c.updated_at) + ' · ' + c.message_count + ' 条';
+                body.appendChild(title);
+                body.appendChild(meta);
+
+                const del = document.createElement('button');
+                del.className = 'conv-del';
+                del.title = '删除对话';
+                del.textContent = '✕';
+
+                item.appendChild(body);
+                item.appendChild(del);
+                convListEl.appendChild(item);
+            }
+        }
+
+        async function openConv(id) {
+            if (sending) return;
+            try {
+                const data = await api('/api/ai/conversations/' + id);
+                const conv = data.data;
+                convId = conv.id;
+                messages = (conv.messages || []).map(m => ({
+                    role: m.role,
+                    content: m.content || '',
+                    images: m.images || [],
+                    thinking: m.thinking || ''
+                }));
+                renderAll();
+                renderConvList2();
+                closeSidebar();
+            } catch (e) {
+                console.error('[AI] 加载会话失败:', e.message);
+            }
+        }
+
+        // 刷新当前高亮（复用已拉取的列表不现实，直接重新加载一次）
+        function renderConvList2() {
+            loadConvs();
+        }
+
+        function newChat() {
+            if (sending) return;
+            convId = null;
+            messages = [];
+            pendingImages = [];
+            renderPreview();
+            renderAll();
+            loadConvs();
+            closeSidebar();
+            inputEl.focus();
+        }
+
+        async function deleteConv(id) {
+            if (!confirm('确定删除该对话吗？')) return;
+            try {
+                await api('/api/ai/conversations/' + id, { method: 'DELETE' });
+                if (convId === id) {
+                    convId = null;
+                    messages = [];
+                    renderAll();
+                }
+                loadConvs();
+            } catch (e) {
+                console.error('[AI] 删除会话失败:', e.message);
+                alert('删除失败：' + e.message);
+            }
+        }
+
+        function closeSidebar() {
+            sidebarEl.classList.remove('open');
+            sidebarMask.classList.remove('show');
+        }
+
+        // ==================== 图片处理 ====================
+        async function handleFiles(files) {
+            const fileList = Array.from(files || []).filter(f => f && f.type && f.type.startsWith('image/'));
+            if (!fileList.length) return;
+            const room = 4 - pendingImages.length;
+            for (const f of fileList.slice(0, room)) {
+                try {
+                    const compressed = await compressImage(f);
+                    pendingImages.push(compressed);
+                } catch (e) {
+                    console.error('[AI] 图片压缩失败:', e.message);
+                }
+            }
+            if (pendingImages.length >= 4) alert('最多支持 4 张图片');
+            renderPreview();
+        }
+
+        // 图片压缩（canvas 缩小 + JPEG，控制体积）
+        function compressImage(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const MAX = 1280;
+                        let w = img.width, h = img.height;
+                        if (w > MAX || h > MAX) {
+                            const ratio = Math.min(MAX / w, MAX / h);
+                            w = Math.round(w * ratio);
+                            h = Math.round(h * ratio);
+                        }
+                        const canvas = document.createElement('canvas');
+                        canvas.width = w;
+                        canvas.height = h;
+                        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                        const comma = dataUrl.indexOf(',');
+                        resolve({ data: dataUrl.slice(comma + 1), mime: 'image/jpeg' });
+                    };
+                    img.onerror = () => reject(new Error('图片解析失败'));
+                    img.src = reader.result;
+                };
+                reader.onerror = () => reject(new Error('文件读取失败'));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function renderPreview() {
+            imgPreviewEl.innerHTML = '';
+            pendingImages.forEach((img, i) => {
+                const item = document.createElement('div');
+                item.className = 'pv-item';
+                const im = document.createElement('img');
+                im.src = imgSrc(img);
+                const del = document.createElement('button');
+                del.className = 'pv-del';
+                del.textContent = '✕';
+                del.addEventListener('click', () => {
+                    pendingImages.splice(i, 1);
+                    renderPreview();
+                });
+                item.appendChild(im);
+                item.appendChild(del);
+                imgPreviewEl.appendChild(item);
+            });
         }
 
         // ==================== 发送消息（流式） ====================
         async function send() {
             const text = inputEl.value.trim();
-            if (!text || sending) return;
+            if ((!text && !pendingImages.length) || sending) return;
 
+            const userMsg = { role: 'user', content: text, images: pendingImages.slice() };
             inputEl.value = '';
+            pendingImages = [];
+            renderPreview();
             autoResize();
 
-            messages.push({ role: 'user', content: text });
-            saveHistory();
-            appendBubble('user', text);
+            messages.push(userMsg);
+            appendBubble('user', userMsg);
             showThinking();
 
             sending = true;
             sendBtn.disabled = true;
 
             try {
+                // 确保存在会话（首次提问自动创建）
+                if (!convId) {
+                    const cs = await api('/api/ai/conversations', { method: 'POST', body: { title: text.slice(0, 20) || '新对话' } });
+                    convId = cs.data.id;
+                    loadConvs();
+                }
+
                 let resp = null;
                 let retried = false;
                 for (;;) {
@@ -752,18 +1368,18 @@
                         credentials: 'include',
                         headers: {
                             'Content-Type': 'application/json',
+                            ...authHeaders(),
                             ...(token ? { 'X-CSRF-Token': token } : {}),
                             'X-Request-Nonce': genNonce()
                         },
                         body: JSON.stringify({
                             messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
-                            model: modelSelect.value
+                            model: modelSelect.value,
+                            conversationId: convId,
+                            thinking: thinkingMode
                         })
                     });
-
-                    // CSRF token 过期时清缓存重试一次
                     if (resp.status === 403 && !retried) {
-                        _csrfCache = null;
                         retried = true;
                         continue;
                     }
@@ -781,12 +1397,16 @@
                 // 把"思考中"气泡升级为正式 AI 气泡
                 removeThinking();
                 const aiEl = appendBubble('assistant', '');
+                const bubbleEl = aiEl.querySelector('.bubble');
                 const aiTextEl = aiEl.querySelector('.msg-text');
 
                 const reader = resp.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
                 let full = '';
+                let reasoning = '';
+                let thinkBox = null;
+                let thinkContentEl = null;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -802,21 +1422,56 @@
                         if (!data || data === '[DONE]') continue;
                         try {
                             const json = JSON.parse(data);
-                            const delta = json.choices && json.choices[0] && json.choices[0].delta
-                                ? json.choices[0].delta.content : '';
-                            if (delta) {
-                                full += delta;
+                            const delta = json.choices && json.choices[0] && json.choices[0].delta;
+                            if (!delta) continue;
+
+                            // 深度思考：实时展示推理链
+                            if (delta.reasoning && thinkingMode === 'deep') {
+                                reasoning += delta.reasoning;
+                                if (!thinkBox) {
+                                    thinkBox = document.createElement('div');
+                                    thinkBox.className = 'think-box live';
+                                    const header = document.createElement('div');
+                                    header.className = 'think-header';
+                                    const label = document.createElement('span');
+                                    label.textContent = '🤔 深度思考中…';
+                                    const toggle = document.createElement('span');
+                                    toggle.className = 'think-toggle';
+                                    toggle.textContent = '▾';
+                                    header.appendChild(label);
+                                    header.appendChild(toggle);
+                                    thinkContentEl = document.createElement('div');
+                                    thinkContentEl.className = 'think-content';
+                                    thinkBox.appendChild(header);
+                                    thinkBox.appendChild(thinkContentEl);
+                                    bubbleEl.insertBefore(thinkBox, aiTextEl);
+                                }
+                                thinkContentEl.textContent = reasoning;
+                                scrollBottom();
+                            }
+
+                            // 正文
+                            if (delta.content) {
+                                full += delta.content;
                                 aiTextEl.textContent = full;
+                                scrollBottom();
                             }
                         } catch (e) { /* 忽略解析失败 */ }
                     }
-                    scrollBottom();
                 }
 
-                // 流结束，渲染完整 markdown
+                // 流结束：渲染完整 markdown，思考过程折叠
                 aiTextEl.innerHTML = full ? renderMarkdown(full) : '（未收到回复，请重试）';
-                messages.push({ role: 'assistant', content: full });
-                saveHistory();
+                if (thinkBox) {
+                    thinkBox.classList.remove('live');
+                    thinkBox.querySelector('.think-header span').textContent = '🤔 深度思考过程';
+                }
+                messages.push({
+                    role: 'assistant',
+                    content: full,
+                    thinking: (thinkingMode === 'deep' && reasoning) ? reasoning : undefined
+                });
+                loadConvs(); // 刷新会话标题/时间
             } catch (e) {
                 removeThinking();
                 appendBubble('system', '❌ ' + e.message);
@@ -834,13 +1489,19 @@
             inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px';
         }
 
-        // ==================== 清空对话 ====================
-        function clearChat() {
-            if (sending) return;
-            messages = [];
-            saveHistory();
-            renderAll();
-            inputEl.focus();
+        // ==================== 思考模式切换 ====================
+        function setThinkingMode(mode, forceModel = true) {
+            thinkingMode = mode;
+            localStorage.setItem('stc_ai_thinking', mode);
+            if (forceModel) {
+                modelSelect.value = mode === 'deep' ? DEEP_MODEL : FAST_MODEL;
+                localStorage.setItem('stc_ai_model', modelSelect.value);
+            }
+            document.getElementById('mode-deep').classList.toggle('active', mode === 'deep');
+            document.getElementById('mode-fast').classList.toggle('active', mode === 'fast');
+            document.getElementById('header-sub').textContent = mode === 'deep'
+                ? '深度思考 · 图片识别 · 流式输出'
+                : '快速响应 · 图片识别 · 流式输出';
         }
 
         // ==================== 事件绑定 ====================
@@ -855,10 +1516,74 @@
 
         inputEl.addEventListener('input', autoResize);
 
-        document.getElementById('clear-btn').addEventListener('click', clearChat);
+        document.getElementById('new-chat-btn').addEventListener('click', newChat);
+        document.getElementById('menu-btn').addEventListener('click', () => {
+            sidebarEl.classList.add('open');
+            sidebarMask.classList.add('show');
+        });
+        sidebarMask.addEventListener('click', closeSidebar);
+
+        // 会话列表事件委托（切换 / 删除）
+        convListEl.addEventListener('click', (e) => {
+            const item = e.target.closest('.conv-item');
+            if (!item) return;
+            if (e.target.classList.contains('conv-del')) {
+                deleteConv(item.dataset.id);
+            } else {
+                openConv(item.dataset.id);
+            }
+        });
 
         modelSelect.addEventListener('change', () => {
             localStorage.setItem('stc_ai_model', modelSelect.value);
+        });
+
+        document.getElementById('mode-deep').addEventListener('click', () => setThinkingMode('deep'));
+        document.getElementById('mode-fast').addEventListener('click', () => setThinkingMode('fast'));
+
+        // 图片上传
+        const fileInput = document.getElementById('file-input');
+        document.getElementById('img-btn').addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', () => {
+            handleFiles(fileInput.files);
+            fileInput.value = '';
+        });
+
+        // 粘贴图片
+        inputEl.addEventListener('paste', (e) => {
+            const items = e.clipboardData && e.clipboardData.items;
+            if (!items) return;
+            const files = [];
+            for (const it of items) {
+                if (it.type && it.type.startsWith('image/')) {
+                    const f = it.getAsFile();
+                    if (f) files.push(f);
+                }
+            }
+            if (files.length) {
+                e.preventDefault();
+                handleFiles(files);
+            }
+        });
+
+        // 拖拽图片到输入框
+        const inputWrap = document.querySelector('.chat-input-inner');
+        ['dragover', 'dragenter'].forEach(ev => {
+            inputWrap.addEventListener(ev, (e) => {
+                e.preventDefault();
+                inputWrap.classList.add('drag-over');
+            });
+        });
+        ['dragleave', 'drop'].forEach(ev => {
+            inputWrap.addEventListener(ev, (e) => {
+                e.preventDefault();
+                inputWrap.classList.remove('drag-over');
+            });
+        });
+        inputWrap.addEventListener('drop', (e) => {
+            if (e.dataTransfer && e.dataTransfer.files) {
+                handleFiles(e.dataTransfer.files);
+            }
         });
 
         // 欢迎页快捷提问
@@ -881,7 +1606,7 @@
 
         async function checkLogin() {
             try {
-                const resp = await fetch('/api/user', { credentials: 'include' });
+                const resp = await fetch('/api/user', { credentials: 'include', headers: authHeaders() });
                 if (resp.ok) return true;
             } catch (e) {}
             return false;
@@ -894,7 +1619,20 @@
                 showLoginMask();
                 return;
             }
+
+            // 填充模型下拉
+            for (const [value, label] of Object.entries(MODELS)) {
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = label;
+                modelSelect.appendChild(opt);
+            }
+            const savedModel = localStorage.getItem('stc_ai_model');
+            modelSelect.value = MODELS[savedModel] ? savedModel : (thinkingMode === 'deep' ? DEEP_MODEL : FAST_MODEL);
+            setThinkingMode(thinkingMode, false);
+
             getCSRFToken(); // 预取 CSRF token，首次提问更快
+            await loadConvs();
             renderAll();
             inputEl.focus();
         })();

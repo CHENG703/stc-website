@@ -1436,6 +1436,7 @@ async function initDatabase() {
     if (!Array.isArray(db.data.inviteApplications)) db.data.inviteApplications = [];
     if (!Array.isArray(db.data.inviteCodes)) db.data.inviteCodes = [];
     if (!Array.isArray(db.data.bannedIPs)) db.data.bannedIPs = [];
+    if (!Array.isArray(db.data.ai_conversations)) db.data.ai_conversations = [];
     await db.write();
     
     const adminUser = db.data.users.find(u => u.username === 'REDACTED_USER');
@@ -2151,31 +2152,115 @@ const AI_MAX_MESSAGES = 12;   // 最多携带的历史消息条数（控制请�
 const AI_MAX_CONTENT = 2000;  // 单条消息最长字符数
 const AI_MAX_TOTAL = 8000;    // 所有消息总字符上限（超出只保留最近）
 
+// 查找当前用户的 AI 会话
+function findAIConv(req, id) {
+    const list = db.data.ai_conversations || [];
+    return list.find(c => c.id === id && c.user_id === String(req.currentUser.id));
+}
+
+// 规范化 AI 消息：支持纯文本与多模态（content 数组）两种格式
+function normalizeAIMessages(messages) {
+    return messages.slice(-AI_MAX_MESSAGES).map(m => {
+        const role = m.role === 'assistant' ? 'assistant' : 'user';
+        const text = typeof m.content === 'string' ? m.content : (m.content || '');
+        const images = Array.isArray(m.images) ? m.images.slice(0, 4) : [];
+        if (role === 'user' && images.length) {
+            const content = [{ type: 'text', text: text.slice(0, AI_MAX_CONTENT) }];
+            for (const img of images) {
+                const url = typeof img === 'string' ? img : (img.data ? `data:${img.mime || 'image/jpeg'};base64,${img.data}` : '');
+                if (url && url.length < 4 * 1024 * 1024) content.push({ type: 'image_url', image_url: { url } });
+            }
+            return { role, content };
+        }
+        return { role, content: text.slice(0, AI_MAX_CONTENT) };
+    }).filter(m => {
+        if (typeof m.content === 'string') return m.content.length > 0;
+        return Array.isArray(m.content) && m.content.length > 0;
+    });
+}
+
+// 会话列表（不携带完整消息，避免数据量过大）
+app.get('/api/ai/conversations', requireLogin, async (req, res) => {
+    const list = (db.data.ai_conversations || [])
+        .filter(c => c.user_id === String(req.currentUser.id))
+        .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+        .slice(0, 100)
+        .map(c => ({
+            id: c.id,
+            title: c.title || '新对话',
+            updated_at: c.updated_at,
+            message_count: (c.messages || []).length
+        }));
+    res.json({ success: true, data: list });
+});
+
+// 会话详情
+app.get('/api/ai/conversations/:id', requireLogin, async (req, res) => {
+    const conv = findAIConv(req, req.params.id);
+    if (!conv) return res.status(404).json({ success: false, message: '会话不存在' });
+    res.json({ success: true, data: { id: conv.id, title: conv.title || '新对话', messages: conv.messages || [] } });
+});
+
+// 新建会话
+app.post('/api/ai/conversations', requireLogin, requireRateLimit('ai'), requireCSRF, async (req, res) => {
+    const conv = {
+        id: 'ai_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8),
+        user_id: String(req.currentUser.id),
+        title: (req.body && req.body.title) ? String(req.body.title).slice(0, 30) : '新对话',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        messages: []
+    };
+    if (!Array.isArray(db.data.ai_conversations)) db.data.ai_conversations = [];
+    db.data.ai_conversations.push(conv);
+    await db.write();
+    res.json({ success: true, data: { id: conv.id, title: conv.title } });
+});
+
+// 删除会话
+app.delete('/api/ai/conversations/:id', requireLogin, requireRateLimit('ai'), requireCSRF, async (req, res) => {
+    const before = (db.data.ai_conversations || []).length;
+    db.data.ai_conversations = (db.data.ai_conversations || []).filter(c => !(c.id === req.params.id && c.user_id === String(req.currentUser.id)));
+    await db.write();
+    if (db.data.ai_conversations.length === before) {
+        return res.status(404).json({ success: false, message: '会话不存在' });
+    }
+    res.json({ success: true });
+});
+
 // AI 对话：流式转发 SenseNova（OpenAI 兼容接口），仅登录用户可用
+// 支持：thinking 模式（deep/fast）、多模态图片消息、会话历史保存
 app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, async (req, res) => {
-    console.log('[AI] 收到对话请求, model=', req.body && req.body.model);
+    console.log('[AI] 收到对话请求, model=', req.body && req.body.model, 'conv=', req.body && req.body.conversationId, 'thinking=', req.body && req.body.thinking);
     try {
         if (!SENSENOVA_API_KEY) {
             return res.status(500).json({ success: false, message: '服务器尚未配置 SenseNova API Key（SENSENOVA_API_KEY）' });
         }
-        const { messages, model } = req.body || {};
+        const { messages, model, conversationId, thinking } = req.body || {};
         if (!Array.isArray(messages) || !messages.length) {
             return res.status(400).json({ success: false, message: '缺少对话内容' });
         }
-        const chosenModel = AI_ALLOWED_MODELS.includes(model) ? model : SENSENOVA_DEFAULT_MODEL;
-        let safeMessages = messages
-            .slice(-AI_MAX_MESSAGES)
-            .map(m => ({
-                role: m.role === 'assistant' ? 'assistant' : 'user',
-                content: typeof m.content === 'string' ? m.content.slice(0, AI_MAX_CONTENT) : ''
-            }))
-            .filter(m => m.content);
+
+        // thinking 模式：deep 优先带推理链的模型；fast 优先更快的模型
+        let chosenModel;
+        if (model && AI_ALLOWED_MODELS.includes(model)) {
+            chosenModel = model;
+        } else {
+            chosenModel = (thinking === 'fast') ? 'deepseek-v4-flash' : SENSENOVA_DEFAULT_MODEL;
+        }
+
+        const safeMessages = normalizeAIMessages(messages);
 
         // 总字符超限时只保留最近的消息（保证 system 提示词始终在前）
-        let totalChars = safeMessages.reduce((s, m) => s + m.content.length, 0);
+        let totalChars = safeMessages.reduce((s, m) => {
+            if (typeof m.content === 'string') return s + m.content.length;
+            return s + m.content.reduce((x, part) => x + (part.text ? part.text.length : 0), 0);
+        }, 0);
         while (totalChars > AI_MAX_TOTAL && safeMessages.length > 2) {
             const dropped = safeMessages.splice(1, 1)[0];  // 丢掉最旧的非 system 消息
-            totalChars -= dropped ? dropped.content.length : 0;
+            const droppedLen = typeof dropped.content === 'string' ? dropped.content.length
+                : dropped.content.reduce((x, part) => x + (part.text ? part.text.length : 0), 0);
+            totalChars -= droppedLen;
         }
 
         // 使用 https 模块转发上游（长驻进程下 fetch/undici 不稳定，改用核心模块）
@@ -2185,6 +2270,17 @@ app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, asyn
             temperature: 0.7,
             stream: true
         });
+
+        // 待保存的会话消息（流式结束后写入）
+        let userText = '';
+        let userImages = [];
+        const userMsg = Array.isArray(messages) && messages.length ? messages[messages.length - 1] : null;
+        if (userMsg && userMsg.role !== 'assistant') {
+            userText = typeof userMsg.content === 'string' ? userMsg.content : '';
+            userImages = Array.isArray(userMsg.images) ? userMsg.images.slice(0, 4) : [];
+        }
+        let fullContent = '';
+        let fullReasoning = '';
 
         await new Promise((resolve) => {
             const uReq = https.request(`${SENSENOVA_BASE_URL}/chat/completions`, {
@@ -2197,7 +2293,7 @@ app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, asyn
                 timeout: 60000
             }, (uRes) => {
                 if (uRes.statusCode >= 200 && uRes.statusCode < 300) {
-                    // 流式透传 SSE
+                    // 流式透传 SSE，同时累积正文与推理链
                     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
                     res.setHeader('Cache-Control', 'no-cache, no-transform');
                     res.setHeader('Connection', 'keep-alive');
@@ -2205,9 +2301,40 @@ app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, asyn
                     res.flushHeaders();
                     uRes.on('data', (chunk) => {
                         try { res.write(chunk); } catch (e) {}
+                        try {
+                            const lines = chunk.toString('utf-8').split('\n');
+                            for (const line of lines) {
+                                if (!line.startsWith('data:') || line.includes('[DONE]')) continue;
+                                const payload = line.slice(5).trim();
+                                if (!payload) continue;
+                                const j = JSON.parse(payload);
+                                const delta = j.choices && j.choices[0] && j.choices[0].delta;
+                                if (delta) {
+                                    if (delta.content) fullContent += delta.content;
+                                    if (delta.reasoning) fullReasoning += delta.reasoning;
+                                }
+                            }
+                        } catch (e) { /* 忽略解析失败 */ }
                     });
-                    uRes.on('end', () => {
+                    uRes.on('end', async () => {
                         try { res.end(); } catch (e) {}
+                        // 流结束：保存会话
+                        if (conversationId && (userText || userImages.length || fullContent)) {
+                            try {
+                                const conv = findAIConv(req, conversationId);
+                                if (conv) {
+                                    if (!Array.isArray(conv.messages)) conv.messages = [];
+                                    if (conv.messages.length === 0 && (conv.title === '新对话' || !conv.title)) {
+                                        conv.title = (userText || '新对话').slice(0, 20);
+                                    }
+                                    conv.messages.push({ role: 'user', content: userText, images: userImages, ts: Date.now() });
+                                    conv.messages.push({ role: 'assistant', content: fullContent, thinking: fullReasoning || undefined, ts: Date.now() });
+                                    conv.updated_at = new Date().toISOString();
+                                    if (conv.messages.length > 200) conv.messages = conv.messages.slice(-200);
+                                    await db.write();
+                                }
+                            } catch (e) { console.error('[AI] 保存会话失败:', e.message); }
+                        }
                         resolve();
                     });
                 } else {
