@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STC - 产品中心</title>
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+    <link rel="stylesheet" href="css/style.css">
+    <script src="js/lang.js"></script>
+    <script src="js/config.js"></script>
+    <style>
+        /* 与关于我们页面一致的清爽蓝白风格 */
+        body.about-page {
+            background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 50%, #ffffff 100%);
+            min-height: 100vh;
+        }
+        body.about-page .navbar {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(15px);
+            border-bottom: 1px solid rgba(14, 165, 233, 0.15);
+        }
+        body.about-page .navbar a {
+            color: #0c4a6e;
+        }
+        body.about-page .navbar a.active {
+            color: #0284c7;
+        }
+        body.about-page .nav-brand a {
+            color: #0284c7;
+            font-weight: 700;
+        }
+        body.about-page .section-title {
+            color: #0c4a6e;
+        }
+        body.about-page .footer {
+            background: rgba(255, 255, 255, 0.8);
+            color: #475569;
+            border-top: 1px solid rgba(14, 165, 233, 0.15);
+        }
+
+        /* 产品页 Hero */
+        .products-hero {
+            padding: 6rem 0 3rem;
+            text-align: center;
+        }
+        .products-hero .hero-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+        .products-hero h1 {
+            color: #0c4a6e;
+            font-size: 2.5rem;
+            margin: 0 0 0.75rem;
+            font-weight: 800;
+        }
+        .products-hero .hero-subtitle {
+            color: #64748b;
+            font-size: 1.1rem;
+            margin: 0;
+        }
+
+        /* 开发中提示横幅 */
+        .dev-banner {
+            padding: 0 0 2rem;
+        }
+        .dev-banner-box {
+            background: linear-gradient(135deg, rgba(250, 204, 21, 0.15), rgba(251, 191, 36, 0.08));
+            border: 1px solid rgba(250, 204, 21, 0.35);
+            border-radius: 16px;
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            color: #854d0e;
+            font-size: 0.95rem;
+        }
+        .dev-banner-box .dev-icon {
+            font-size: 1.3rem;
+            flex-shrink: 0;
+        }
+
+        /* 产品网格 */
+        .products-section {
+            padding: 1rem 0 4rem;
+        }
+        .products-section .section-desc {
+            color: #64748b;
+            font-size: 1rem;
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+        .product-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+        .product-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(14, 165, 233, 0.15);
+            border-radius: 20px;
+            padding: 2rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            transition: all 0.4s;
+        }
+        .product-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(14, 165, 233, 0.15);
+            border-color: rgba(14, 165, 233, 0.3);
+        }
+        .product-card .product-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            background: linear-gradient(135deg, #e0f2fe, #bae6fd);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8rem;
+            margin-bottom: 1.25rem;
+        }
+        .product-card h3 {
+            color: #0c4a6e;
+            font-size: 1.2rem;
+            margin: 0 0 0.5rem;
+            font-weight: 700;
+        }
+        .product-card .product-desc {
+            color: #475569;
+            font-size: 0.92rem;
+            line-height: 1.6;
+            margin: 0 0 1.25rem;
+            flex: 1;
+        }
+        .product-card .product-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .product-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 0.3rem 0.75rem;
+            border-radius: 999px;
+        }
+        .product-status.status-live {
+            background: rgba(34, 197, 94, 0.12);
+            color: #15803d;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        .product-status.status-wip {
+            background: rgba(250, 204, 21, 0.15);
+            color: #a16207;
+            border: 1px solid rgba(250, 204, 21, 0.35);
+        }
+        .product-status.status-plan {
+            background: rgba(148, 163, 184, 0.15);
+            color: #64748b;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+        }
+        .product-card .btn {
+            font-size: 0.85rem;
+            padding: 0.4rem 1rem;
+        }
+        .product-card .coming-soon {
+            color: #94a3b8;
+            font-size: 0.85rem;
+        }
+
+        /* 加入/反馈区 */
+        .join-section {
+            padding: 3rem 0 4rem;
+        }
+        .join-section .join-content {
+            background: rgba(255, 255, 255, 0.7);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+            border-radius: 20px;
+            padding: 2.5rem 2rem;
+            text-align: center;
+        }
+        .join-section .join-content p {
+            color: #475569;
+            font-size: 1rem;
+            margin: 0 0 1.5rem;
+            line-height: 1.6;
+        }
+        .join-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+    </style>
+</head>
+<body class="about-page">
+    <div class="aurora-bg">
+        <div class="aurora-blob aurora-blob-1"></div>
+        <div class="aurora-blob aurora-blob-2"></div>
+    </div>
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <a href="/home">STC</a>
+            </div>
+            <ul class="nav-menu" id="navMenu">
+                <li><a href="/home" data-lang="nav.home">首页</a></li>
+                <li><a href="/about" data-lang="nav.about">关于我们</a></li>
+                <li><a href="/products" class="active" data-lang="nav.products">产品</a></li>
+                <li><a href="/home#tasks" data-lang="nav.tasks">任务</a></li>
+                <li><a href="/reaction">测试</a></li>
+                <li><a href="/home#messages" data-lang="nav.messages">留言</a></li>
+                <li><button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">🌙</button></li>
+                <li id="nav-user"><a href="/login" data-lang="nav.login">登录</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <section class="products-hero">
+            <div class="container">
+                <div class="hero-icon">💻</div>
+                <h1>STC 产品中心</h1>
+                <p class="hero-subtitle">我们自主开发的软件产品</p>
+            </div>
+        </section>
+
+        <section class="dev-banner">
+            <div class="container">
+                <div class="dev-banner-box">
+                    <span class="dev-icon">🚧</span>
+                    <span>多个产品正在开发中，敬请期待。开发完成后将在此页面展示与下载。</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="products-section">
+            <div class="container">
+                <h2 class="section-title">产品列表</h2>
+                <p class="section-desc">以下为 STC 团队自研软件，持续更新中</p>
+                <div class="product-grid">
+                    <div class="product-card">
+                        <div class="product-icon">🛠️</div>
+                        <h3>STC任务平台</h3>
+                        <p class="product-desc">本网站即为我们自主开发的产品：一个支持账号体系、任务发布与接取、留言板、成员管理的社区平台。</p>
+                        <div class="product-footer">
+                            <span class="product-status status-live">✅ 已上线</span>
+                            <a href="/home" class="btn btn-primary">立即使用</a>
+                        </div>
+                    </div>
+
+                    <div class="product-card">
+                        <div class="product-icon">🧰</div>
+                        <h3>STC 工具箱</h3>
+                        <p class="product-desc">面向 MC 玩家与团队管理员的实用小工具集合，正在开发中，敬请期待。</p>
+                        <div class="product-footer">
+                            <span class="product-status status-wip">🚧 开发中</span>
+                            <span class="coming-soon">敬请期待</span>
+                        </div>
+                    </div>
+
+                    <div class="product-card">
+                        <div class="product-icon">💬</div>
+                        <h3>STC 通讯软件</h3>
+                        <p class="product-desc">工会内部即时通讯与语音工具，规划中。</p>
+                        <div class="product-footer">
+                            <span class="product-status status-plan">🔧 规划中</span>
+                            <span class="coming-soon">敬请期待</span>
+                        </div>
+                    </div>
+
+                    <div class="product-card">
+                        <div class="product-icon">🚀</div>
+                        <h3>更多产品</h3>
+                        <p class="product-desc">如果你有想法或需求，欢迎告诉我们，说不定下一个产品就是为你打造！</p>
+                        <div class="product-footer">
+                            <span class="product-status status-plan">📝 征集想法</span>
+                            <a href="/home#messages" class="btn btn-secondary">去留言</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="join-section">
+            <div class="container">
+                <div class="join-content">
+                    <h2 class="section-title">反馈与建议</h2>
+                    <p>对已有产品有建议，或希望我们开发新软件？欢迎通过留言板告诉我们！</p>
+                    <div class="join-buttons">
+                        <a href="/home#messages" class="btn btn-primary">去留言板</a>
+                        <a href="https://qm.qq.com/q/Hggklu4OOW" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">联系QQ群</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>
+                &copy; 2025-2026 STC工会. All rights reserved. | 
+                <a href="#" onclick="showTerms('service')">使用条款</a> | 
+                <a href="#" onclick="showTerms('privacy')">隐私协议</a>
+            </p>
+            <p class="footer-note">一切解释权归STC团队</p>
+        </div>
+    </footer>
+
+    <div class="copyright-watermark">© 2025-2026 STC 版权所有</div>
+
+    <script src="js/main.js"></script>
+    <script src="js/animations.js"></script>
+</body>
+</html>

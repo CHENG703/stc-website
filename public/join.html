@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STC工会 - 加入我们</title>
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            min-height: 100vh;
+            background: #1a1a1d;
+            background: linear-gradient(160deg, #121214 0%, #1e1e22 60%, #242427 100%);
+            color: #f5f5f7;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 30px 16px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 560px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 20px;
+            padding: 40px 36px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: #9a9aa3;
+            font-size: 14px;
+        }
+
+        .version-select {
+            display: flex;
+            gap: 14px;
+            margin-bottom: 26px;
+        }
+
+        .version-card {
+            flex: 1;
+            padding: 16px 0;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            color: #c9c9d1;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+
+        .version-card:hover {
+            border-color: rgba(59, 130, 246, 0.6);
+            color: #fff;
+        }
+
+        .version-card.selected {
+            background: rgba(59, 130, 246, 0.12);
+            border-color: #3b82f6;
+            color: #ffffff;
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+        }
+
+        .panel {
+            animation: fadeIn 0.3s ease;
+        }
+
+        .panel.hidden {
+            display: none;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .placeholder {
+            text-align: center;
+            padding: 60px 20px;
+            color: #9a9aa3;
+        }
+
+        .placeholder h2 {
+            font-size: 22px;
+            margin-bottom: 10px;
+            color: #e5e5ea;
+        }
+
+        .placeholder p {
+            font-size: 14px;
+            color: #7a7a85;
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            color: #c9c9d1;
+            margin-bottom: 8px;
+        }
+
+        .form-group label .required {
+            color: #f87171;
+            margin-left: 2px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 14px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            color: #ffffff;
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .form-group input::placeholder {
+            color: #6b6b76;
+        }
+
+        .form-group input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        }
+
+        .form-group .hint {
+            font-size: 12px;
+            color: #7a7a85;
+            margin-top: 6px;
+        }
+
+        .submit-btn {
+            width: 100%;
+            margin-top: 10px;
+            padding: 14px 0;
+            background: #2563eb;
+            border: none;
+            border-radius: 10px;
+            color: #ffffff;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+            box-shadow: 0 4px 18px rgba(37, 99, 235, 0.35);
+        }
+
+        .submit-btn:hover {
+            background: #3b82f6;
+            box-shadow: 0 6px 24px rgba(59, 130, 246, 0.45);
+        }
+
+        .submit-btn:active {
+            transform: translateY(1px);
+        }
+
+        .submit-btn:disabled {
+            background: #3a3a44;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+
+        .msg {
+            display: none;
+            margin-top: 18px;
+            padding: 14px 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            text-align: center;
+        }
+
+        .msg.success {
+            display: block;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            color: #34d399;
+        }
+
+        .msg.error {
+            display: block;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            color: #f87171;
+        }
+
+        .back-link {
+            display: block;
+            text-align: center;
+            margin-top: 22px;
+            color: #7a7a85;
+            font-size: 13px;
+            text-decoration: none;
+        }
+
+        .back-link:hover {
+            color: #c9c9d1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>加入我们</h1>
+            <p>欢迎加入 STC 工会，请先选择你的游戏版本</p>
+        </div>
+
+        <div class="version-select">
+            <button id="bedrock-btn" class="version-card">基岩版</button>
+            <button id="java-btn" class="version-card selected">Java版</button>
+        </div>
+
+        <!-- 基岩版：暂未开发 -->
+        <div id="bedrock-panel" class="panel hidden">
+            <div class="placeholder">
+                <h2>暂未开发</h2>
+                <p>基岩版申请功能正在开发中，敬请期待！<br>请先选择 Java 版提交申请。</p>
+            </div>
+        </div>
+
+        <!-- Java版表单 -->
+        <div id="java-panel" class="panel">
+            <form id="join-form" novalidate>
+                <div class="form-group">
+                    <label>QQ号码（纯数字）<span class="required">*</span></label>
+                    <input type="text" id="f-qq" placeholder="例如：1968550760" maxlength="15" autocomplete="off">
+                    <div class="hint">只填数字，审核通过后将向该 QQ 邮箱（qq号@qq.com）发送通知</div>
+                </div>
+                <div class="form-group">
+                    <label>游戏ID<span class="required">*</span></label>
+                    <input type="text" id="f-gameid" placeholder="你的游戏内昵称" maxlength="30" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label>年龄大小（可以不是数字也可以是年级）<span class="required">*</span></label>
+                    <input type="text" id="f-age" placeholder="例如：15 或 初二" maxlength="20" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label>是否会使用投影（填会或者不会）<span class="required">*</span></label>
+                    <input type="text" id="f-projection" placeholder="会 / 不会" maxlength="10" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label>日常上线时间<span class="required">*</span></label>
+                    <input type="text" id="f-playtime" placeholder="例如：每天晚上 19:00 - 22:00" maxlength="50" autocomplete="off">
+                </div>
+                <button type="submit" id="submit-btn" class="submit-btn">提交</button>
+            </form>
+            <div id="msg" class="msg"></div>
+        </div>
+
+        <a href="/" class="back-link">← 返回首页</a>
+    </div>
+
+    <script>
+        // 版本切换
+        const bedrockBtn = document.getElementById('bedrock-btn');
+        const javaBtn = document.getElementById('java-btn');
+        const bedrockPanel = document.getElementById('bedrock-panel');
+        const javaPanel = document.getElementById('java-panel');
+
+        function selectVersion(type) {
+            const isJava = type === 'java';
+            javaBtn.classList.toggle('selected', isJava);
+            bedrockBtn.classList.toggle('selected', !isJava);
+            javaPanel.classList.toggle('hidden', !isJava);
+            bedrockPanel.classList.toggle('hidden', isJava);
+            hideMsg();
+        }
+        bedrockBtn.addEventListener('click', () => selectVersion('bedrock'));
+        javaBtn.addEventListener('click', () => selectVersion('java'));
+
+        // CSRF
+        let _csrfCache = null;
+        async function getCSRFTokenOnce() {
+            try {
+                const resp = await fetch('/api/csrf-token', { credentials: 'include' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    _csrfCache = data.csrfToken;
+                    return data.csrfToken;
+                }
+            } catch (e) { console.error('获取CSRF token失败:', e); }
+            return null;
+        }
+
+        // 一次性 nonce（防重放）
+        function genNonce() {
+            return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
+        }
+
+        function showMsg(text, type) {
+            const msg = document.getElementById('msg');
+            msg.textContent = text;
+            msg.className = 'msg ' + type;
+        }
+
+        function hideMsg() {
+            const msg = document.getElementById('msg');
+            msg.textContent = '';
+            msg.className = 'msg';
+        }
+
+        document.getElementById('join-form').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            hideMsg();
+
+            const qq = document.getElementById('f-qq').value.trim();
+            const gameId = document.getElementById('f-gameid').value.trim();
+            const age = document.getElementById('f-age').value.trim();
+            const projection = document.getElementById('f-projection').value.trim();
+            const playTime = document.getElementById('f-playtime').value.trim();
+
+            if (!/^\d+$/.test(qq)) {
+                return showMsg('QQ号码必须为纯数字', 'error');
+            }
+            if (!gameId) return showMsg('请填写游戏ID', 'error');
+            if (!age) return showMsg('请填写年龄或年级', 'error');
+            if (!projection) return showMsg('请填写是否会使用投影', 'error');
+            if (!playTime) return showMsg('请填写日常上线时间', 'error');
+
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true;
+            btn.textContent = '提交中...';
+
+            try {
+                const token = await getCSRFTokenOnce();
+                const resp = await fetch('/api/join/apply', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? { 'X-CSRF-Token': token } : {}),
+                        'X-Request-Nonce': genNonce()
+                    },
+                    body: JSON.stringify({ qq, gameId, age, projection, playTime })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showMsg('申请已提交，管理员审核通过后会通过邮件通知你！', 'success');
+                    document.getElementById('join-form').reset();
+                } else {
+                    showMsg(data.message || '提交失败，请稍后再试', 'error');
+                }
+            } catch (err) {
+                console.error('提交申请失败:', err);
+                showMsg('网络错误，请稍后再试', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '提交';
+            }
+        });
+    </script>
+</body>
+</html>

@@ -9,6 +9,7 @@ const LANGUAGES = {
                 brand: 'STC工会任务平台',
                 home: '首页',
                 about: '关于我们',
+                products: '产品',
                 tasks: '任务',
                 messages: '留言',
                 login: '登录',
@@ -269,6 +270,7 @@ const LANGUAGES = {
                 brand: 'STC Union Task Platform',
                 home: 'Home',
                 about: 'About Us',
+                products: 'Products',
                 tasks: 'Tasks',
                 messages: 'Messages',
                 login: 'Login',
@@ -396,6 +398,7 @@ const LANGUAGES = {
                 brand: 'Платформа задач STC',
                 home: 'Главная',
                 about: 'О нас',
+                products: 'Продукты',
                 tasks: 'Задачи',
                 messages: 'Сообщения',
                 login: 'Войти',
@@ -523,6 +526,7 @@ const LANGUAGES = {
                 brand: 'Plateforme de tâches STC',
                 home: 'Accueil',
                 about: 'À propos',
+                products: 'Produits',
                 tasks: 'Tâches',
                 messages: 'Messages',
                 login: 'Connexion',
@@ -852,13 +856,16 @@ const LangManager = {
         if (navMenu) {
             const items = navMenu.querySelectorAll('li a');
             items.forEach(item => {
-                if (item.getAttribute('href') === '/home' || item.classList.contains('active')) {
+                if (item.getAttribute('href') === '/home' || (item.classList.contains('active') && item.hasAttribute('data-lang'))) {
                     if (!item.closest('#nav-user')) {
                         item.textContent = this.getTranslation('nav.home');
                     }
                 }
                 if (item.getAttribute('href') === '/about') {
                     item.textContent = this.getTranslation('nav.about');
+                }
+                if (item.getAttribute('href') === '/products') {
+                    item.textContent = this.getTranslation('nav.products');
                 }
                 if (item.getAttribute('href') === '#tasks') {
                     item.textContent = this.getTranslation('nav.tasks');

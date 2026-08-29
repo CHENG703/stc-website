@@ -32,12 +32,31 @@ const fs = require('fs');
 let kv = null;
 const KV_KEY = 'stc:database';
 const KV_ENABLED = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+const KV_READ_TTL = 1500; // 从 KV 刷新数据的间隔（毫秒），避免每个请求都读 KV
 if (KV_ENABLED) {
     try {
-        kv = require('@vercel/kv');
-        console.log('[KV] Vercel KV 已启用');
+        // 优先 @upstash/redis（@vercel/kv 的底层，已随依赖安装）。
+        // 必须禁用 auto-pipelining：默认批量发送会在 nextTick 才执行，
+        // Serverless 响应返回后进程可能被冻结，导致数据没真正写入 KV。
+        const { Redis } = require('@upstash/redis');
+        kv = new Redis({
+            url: process.env.KV_REST_API_URL,
+            token: process.env.KV_REST_API_TOKEN,
+            enableAutoPipelining: false
+        });
+        console.log('[KV] Vercel KV 已启用（@upstash/redis，auto-pipelining 已禁用）');
     } catch (e) {
-        console.warn('[KV] @vercel/kv 加载失败，回退到文件存储:', e.message);
+        try {
+            // 兜底：@vercel/kv 命名导出
+            const vercelKv = require('@vercel/kv');
+            const _kv = vercelKv.kv || vercelKv;
+            if (typeof _kv.get === 'function' && typeof _kv.set === 'function') {
+                kv = _kv;
+                console.log('[KV] Vercel KV 已启用（@vercel/kv 命名导出）');
+            }
+        } catch (e2) {
+            console.warn('[KV] KV 客户端加载失败，回退到文件存储:', e2.message);
+        }
     }
 }
 
@@ -188,7 +207,8 @@ const defaults = {
     emailFolders: [],
     inviteApplications: [],
     inviteCodes: [],
-    bannedIPs: []
+    bannedIPs: [],
+    join_applications: []
 };
 
 const ARRAY_MUTATING_METHODS = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin'];
@@ -202,7 +222,8 @@ class SimpleJSONDB {
         this._pendingKvSave = Promise.resolve();
         this._lastModified = null;
         this._kvLoaded = false;
-        this._kvSaveTimer = null;
+        this._kvReadAt = 0;
+        this._kvReadInFlight = null;
 
         this._loadFileSync();
     }
@@ -216,9 +237,9 @@ class SimpleJSONDB {
                 this._data = kvData;
                 this._ensureDefaults();
                 this._kvLoaded = true;
-                console.log('[KV] 数据已从 Vercel KV 加载');
-                // 同步到本地文件（作为缓存）
-                this._saveFile();
+                console.log(`[KV] 数据已从 Vercel KV 加载（users=${(kvData.users || []).length}, tasks=${(kvData.tasks || []).length}）`);
+                // 同步到本地文件（仅作缓存，不回写 KV）
+                this._writeFileSync();
             } else {
                 // KV 中没有数据，把本地数据上传到 KV
                 console.log('[KV] KV 中无数据，上传本地数据');
@@ -237,16 +258,22 @@ class SimpleJSONDB {
             await kv.set(KV_KEY, this._data);
         } catch (e) {
             console.warn('[KV] 写入 KV 失败:', e.message);
+            // 失败重试一次（KV 网络抖动兜底）
+            try {
+                await kv.set(KV_KEY, this._data);
+            } catch (e2) {
+                console.error('[KV] 写入 KV 再次失败:', e2.message);
+            }
         }
     }
 
     _scheduleKvSave() {
         if (!this._kvEnabled) return;
-        // 防抖：500ms 内多次修改只保存一次
-        if (this._kvSaveTimer) clearTimeout(this._kvSaveTimer);
-        this._kvSaveTimer = setTimeout(() => {
-            this._pendingKvSave = this._saveKv();
-        }, 500);
+        // 立即排队保存（不依赖 setTimeout：Serverless 响应后定时器可能不执行）
+        // promise 链保证多次写入按顺序执行，最终落库最新数据
+        this._pendingKvSave = this._pendingKvSave
+            .catch(() => {})
+            .then(() => this._saveKv());
     }
 
     _loadFileSync() {
@@ -273,7 +300,8 @@ class SimpleJSONDB {
         }
     }
 
-    _saveFile() {
+    // 仅写本地缓存文件（不同步 KV，用于 KV 读回数据的缓存）
+    _writeFileSync() {
         try {
             fs.writeFileSync(this.filePath, JSON.stringify(this._data, null, 2));
             const stats = fs.statSync(this.filePath);
@@ -281,7 +309,11 @@ class SimpleJSONDB {
         } catch (e) {
             console.error('[DB] 写入本地文件失败:', e.message);
         }
-        // 同时异步保存到 KV（带防抖）
+    }
+
+    _saveFile() {
+        this._writeFileSync();
+        // 同时保存到 KV（立即排队，见 _scheduleKvSave）
         this._scheduleKvSave();
     }
 
@@ -375,11 +407,40 @@ class SimpleJSONDB {
     }
 
     async read() {
-        // KV 模式：首次读取时从 KV 加载
-        if (this._kvEnabled && !this._kvLoaded) {
-            await this._loadKv();
+        // KV 模式：以 KV 为唯一事实源。首次从 KV 加载，之后按 KV_READ_TTL
+        // 周期性刷新，解决 Vercel 多实例之间数据不一致（A 实例写入、B 实例读不到）的问题。
+        if (this._kvEnabled) {
+            const now = Date.now();
+            if (!this._kvLoaded) {
+                await this._loadKv();
+                this._kvReadAt = now;
+            } else if (now - this._kvReadAt > KV_READ_TTL) {
+                // 刷新去重：多个并发请求共享同一次刷新
+                if (!this._kvReadInFlight) {
+                    this._kvReadInFlight = (async () => {
+                        try {
+                            const kvData = await kv.get(KV_KEY);
+                            if (kvData && typeof kvData === 'object') {
+                                this._data = kvData;
+                                this._ensureDefaults();
+                                this._writeFileSync();
+                            }
+                        } catch (e) {
+                            console.warn('[KV] 刷新数据失败，沿用当前数据:', e.message);
+                        }
+                        this._kvReadAt = Date.now();
+                    })();
+                }
+                try {
+                    await this._kvReadInFlight;
+                } finally {
+                    this._kvReadInFlight = null;
+                }
+            }
+            return this;
         }
-        // 检查文件是否被修改，避免不必要的重新加载
+
+        // 非 KV 模式：检查文件是否被修改，避免不必要的重新加载
         try {
             if (fs.existsSync(this.filePath)) {
                 const stats = fs.statSync(this.filePath);
@@ -398,6 +459,9 @@ class SimpleJSONDB {
 
     async write() {
         this._saveFile();
+        // 关键：等待 KV 保存完成，确保响应返回前数据已落库
+        // （Serverless 实例可能在响应后立即冻结，不能依赖后台定时器）
+        await this.flush();
     }
 
     async flush() {
@@ -1107,8 +1171,16 @@ if (IS_VERCEL) {
     console.log('[SESSION] Vercel 环境：使用默认内存存储 + token 认证');
 } else if (FileStore) {
     // 本地环境：使用文件存储
-    sessionConfig.store = FileStore;
-    console.log('[SESSION] 本地环境：使用文件存储');
+    try {
+        sessionConfig.store = new FileStore({
+            path: path.join(__dirname, 'sessions'),
+            ttl: 7 * 24 * 60 * 60,
+            reapInterval: 3600
+        });
+        console.log('[SESSION] 本地环境：使用文件存储');
+    } catch (e) {
+        console.warn('[SESSION] FileStore 初始化失败，降级为内存存储:', e.message);
+    }
 } else {
     console.log('[SESSION] 默认内存存储');
 }
@@ -1134,6 +1206,14 @@ app.use(async (req, res, next) => {
     } catch (e) {
         console.warn('[DB] 加载失败:', e.message);
     }
+    next();
+});
+
+// 响应结束后兜底刷新 KV 写入：覆盖通过 Proxy 隐式触发保存（未显式调用 db.write）的写操作
+app.use((req, res, next) => {
+    res.on('finish', () => {
+        db.flush().catch(() => {});
+    });
     next();
 });
 
@@ -1512,6 +1592,10 @@ app.get('/about', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'about.html'));
 });
 
+app.get('/products', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'products.html'));
+});
+
 app.get('/members', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'members.html'));
 });
@@ -1635,8 +1719,11 @@ app.get('/api/debug', async (req, res) => {
         res.json({
             status: 'ok',
             vercel: IS_VERCEL,
+            kvEnabled: db._kvEnabled,
+            kvLoaded: db._kvLoaded,
             dbFileExists: require('fs').existsSync(dbPath),
             dbFilePath: dbPath,
+            taskCount: (db.data.tasks || []).length,
             userCount: users.length,
             hasSuperAdmin: hasAdmin,
             hasAdminUsername: hasAdminUsername,
@@ -2017,6 +2104,14 @@ app.post('/api/logout', requireCSRF, (req, res) => {
 });
 
 app.get('/api/csrf-token', (req, res) => {
+    // 强制创建/保持 session：saveUninitialized:false 下仅 touch 不会下发 cookie，
+    // 必须给 session 赋值才会触发 Set-Cookie，否则 CSRF token 绑定的 sessionID
+    // 在两次请求间不一致，导致校验永远失败。
+    try {
+        if (req.session) req.session._csrfAt = Date.now();
+    } catch (e) {
+        // 忽略失败
+    }
     const token = generateCSRFToken(req.sessionID);
     res.json({ success: true, csrfToken: token });
 });
@@ -2862,6 +2957,305 @@ app.post('/api/invite/requests/:id/reject', requireAdmin, requireRateLimit('admi
     }
     
     res.json({ success: true, message: '申请已驳回' });
+});
+
+// ============================================================
+// 加入申请 API（JOIN）
+// ============================================================
+// 审批邮件链接的站点域名：优先 SITE_URL，其次 Vercel/Zeabur 环境，最后回落到请求 host
+function getSiteBaseUrl(req) {
+    if (process.env.SITE_URL) {
+        return process.env.SITE_URL.replace(/\/$/, '');
+    }
+    if (process.env.VERCEL && process.env.VERCEL_URL) {
+        return `https://${process.env.VERCEL_URL}`;
+    }
+    if (process.env.VERCEL_BRANCH_URL) {
+        return `https://${process.env.VERCEL_BRANCH_URL}`;
+    }
+    if (process.env.ZEABUR && process.env.ZEABUR_DOMAIN) {
+        return `https://${process.env.ZEABUR_DOMAIN}`;
+    }
+    return `${req.protocol}://${req.get('host')}`;
+}
+
+// 接收加入申请的管理员邮箱（1968550760 为首位，可用环境变量 JOIN_ADMIN_EMAILS 覆盖）
+const JOIN_ADMIN_EMAILS = (process.env.JOIN_ADMIN_EMAILS || 'REDACTED@example.com,3209989525@qq.com,3587933806@qq.com')
+    .split(',').map(s => s.trim()).filter(Boolean);
+
+// 提交加入申请
+app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, async (req, res) => {
+    const { qq, gameId, age, projection, playTime } = req.body || {};
+
+    if (!qq || !/^\d+$/.test(qq)) {
+        return res.status(400).json({ success: false, message: 'QQ号码必须为纯数字' });
+    }
+    if (qq.length < 5 || qq.length > 12) {
+        return res.status(400).json({ success: false, message: 'QQ号码长度不正确' });
+    }
+    if (!gameId || !String(gameId).trim()) {
+        return res.status(400).json({ success: false, message: '请填写游戏ID' });
+    }
+    if (!age || !String(age).trim()) {
+        return res.status(400).json({ success: false, message: '请填写年龄或年级' });
+    }
+    if (!projection || !String(projection).trim()) {
+        return res.status(400).json({ success: false, message: '请填写是否会使用投影' });
+    }
+    if (!playTime || !String(playTime).trim()) {
+        return res.status(400).json({ success: false, message: '请填写日常上线时间' });
+    }
+
+    const email = String(qq) + '@qq.com';
+
+    if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
+
+    // 防止重复申请
+    const existing = db.data.join_applications.find(a => a.qq === String(qq) && a.status === 'pending');
+    if (existing) {
+        return res.status(400).json({ success: false, message: '已有待处理的申请，请等待管理员审批' });
+    }
+
+    // 该 QQ 邮箱已注册过账号
+    if (db.data.users.find(u => u.email === email)) {
+        return res.status(400).json({ success: false, message: '该QQ邮箱已注册过账号，请直接登录' });
+    }
+
+    const application = {
+        id: Date.now(),
+        qq: String(qq),
+        gameId: String(gameId).trim(),
+        age: String(age).trim(),
+        projection: String(projection).trim(),
+        playTime: String(playTime).trim(),
+        email: email,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        approval_token: crypto.randomBytes(24).toString('hex'),
+        reject_token: crypto.randomBytes(24).toString('hex')
+    };
+    db.data.join_applications.push(application);
+    await db.write();
+
+    const host = getSiteBaseUrl(req);
+    const approveUrl = `${host}/api/join/approve/${application.approval_token}`;
+    const rejectUrl = `${host}/api/join/reject/${application.reject_token}`;
+
+    // 发审批邮件给管理员们（1968550760 为主收件人，其余抄送）
+    try {
+        const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置');
+        const adminTo = JOIN_ADMIN_EMAILS[0];
+        const adminCc = JOIN_ADMIN_EMAILS.slice(1);
+        await _t.sendMail({
+            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            to: adminTo,
+            cc: adminCc.join(','),
+            subject: `【STC】新的加入申请：${application.gameId} (QQ ${application.qq})`,
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #2563eb, #3b82f6); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">新的加入申请</h1>
+                    </div>
+                    <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #dbeafe;">
+                        <p style="color: #475569; font-size: 16px;">管理员您好，</p>
+                        <p style="color: #475569; font-size: 16px;">有玩家申请加入 STC 工会，申请信息如下：</p>
+                        <div style="background: white; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #bfdbfe;">
+                            <p style="margin: 0 0 10px;"><strong>QQ号码：</strong> ${application.qq}</p>
+                            <p style="margin: 0 0 10px;"><strong>游戏ID：</strong> ${application.gameId}</p>
+                            <p style="margin: 0 0 10px;"><strong>年龄/年级：</strong> ${application.age}</p>
+                            <p style="margin: 0 0 10px;"><strong>是否会使用投影：</strong> ${application.projection}</p>
+                            <p style="margin: 0 0 10px;"><strong>日常上线时间：</strong> ${application.playTime}</p>
+                            <p style="margin: 0;"><strong>申请时间：</strong> ${new Date().toLocaleString('zh-CN')}</p>
+                        </div>
+                        <p style="color: #64748b; font-size: 14px; margin: 20px 0;">直接点击下方按钮审批，无需登录管理面板：</p>
+                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 10px 0 20px;">
+                            <tr>
+                                <td align="center" style="padding: 6px;">
+                                    <a href="${approveUrl}" style="display:inline-block;padding:14px 32px;font-size:16px;font-weight:bold;color:white;text-decoration:none;border-radius:12px;background:#10b981;">✅ 批准加入</a>
+                                </td>
+                                <td align="center" style="padding: 6px;">
+                                    <a href="${rejectUrl}" style="display:inline-block;padding:14px 32px;font-size:16px;font-weight:bold;color:white;text-decoration:none;border-radius:12px;background:#ef4444;">❌ 驳回申请</a>
+                                </td>
+                            </tr>
+                        </table>
+                        <p style="color: #94a3b8; font-size: 12px;">如按钮无法点击，可复制链接在浏览器中打开：<br>批准：<span style="word-break:break-all;color:#64748b;">${approveUrl}</span><br>驳回：<span style="word-break:break-all;color:#64748b;">${rejectUrl}</span></p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        });
+        console.log(`[JOIN-ADMIN] 加入申请通知邮件已发送: ${JOIN_ADMIN_EMAILS.join(', ')}, 申请人: ${application.gameId} (${application.qq})`);
+    } catch (error) {
+        console.error('[JOIN-ADMIN] 加入申请通知邮件发送失败:', error.message);
+    }
+
+    res.json({ success: true, message: '申请已提交，审核通过后会通过邮件通知你' });
+});
+
+// 批准加入申请：创建账号 + 发邮件给申请人
+app.get('/api/join/approve/:token', async (req, res) => {
+    const token = req.params.token;
+    if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
+
+    const application = db.data.join_applications.find(a => a.approval_token === token);
+    if (!application) {
+        return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+    }
+    if (application.status !== 'pending') {
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${application.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+    }
+
+    const email = application.email;
+    const password = '123456';
+
+    // 该 QQ 邮箱已注册过账号：标记已处理，并提示
+    if (db.data.users.find(u => u.email === email)) {
+        application.status = 'approved';
+        application.approved_at = new Date().toISOString();
+        application.note = 'QQ邮箱已存在账号，未重复创建';
+        await db.write();
+        return res.send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;"><h1 style="color:#f59e0b;">⚠️ 该QQ已注册过账号</h1><p>申请人 <strong>${application.gameId}</strong>（QQ ${application.qq}）的邮箱已存在账号，请让其直接登录。</p><a href="/admin.html" style="color:#6366f1;">返回管理面板</a></div>`);
+    }
+
+    // 用户名使用游戏ID；若冲突则加 QQ 号后缀
+    let username = application.gameId;
+    if (db.data.users.find(u => u.username === username)) {
+        username = `${application.gameId}_${application.qq}`;
+    }
+    if (db.data.users.find(u => u.username === username)) {
+        username = `${application.gameId}_${application.qq}_${Math.random().toString(36).slice(2, 6)}`;
+    }
+
+    const hash = bcrypt.hashSync(password, 10);
+    db.data.users.push({
+        id: Date.now(),
+        username: username,
+        email: email,
+        password: hash,
+        is_admin: false,
+        is_super_admin: false,
+        is_banned: false,
+        login_attempts: 0,
+        created_at: new Date().toISOString(),
+        join_from: 'join-application'
+    });
+
+    application.status = 'approved';
+    application.approved_at = new Date().toISOString();
+    application.created_username = username;
+    await db.write();
+
+    // 发邮件给申请人：审核通过 + 加群链接 + 账号密码
+    try {
+        const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置');
+        await _t.sendMail({
+            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: '【STC】恭喜你通过审核，欢迎加入STC工会！',
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #10b981, #34d399); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">审核通过 ✅</h1>
+                    </div>
+                    <div style="background: #ecfdf5; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #a7f3d0;">
+                        <p style="color: #475569; font-size: 16px;">您好，${application.gameId}！</p>
+                        <p style="color: #475569; font-size: 16px;">恭喜你通过了 STC 工会的加入审核，欢迎你的到来！</p>
+                        <p style="color: #475569; font-size: 16px;">请点击加入我们的QQ群：</p>
+                        <div style="text-align:center;margin: 24px 0;">
+                            <a href="https://qm.qq.com/q/12Gs3NNm2c" style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:bold;color:white;text-decoration:none;border-radius:12px;background:#2563eb;">加入QQ群</a>
+                        </div>
+                        <div style="background: white; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px solid #a7f3d0;">
+                            <p style="margin: 0 0 10px; color:#475569;"><strong>你的账号信息：</strong></p>
+                            <p style="margin: 0 0 8px; color:#475569;">用户名：<strong>${username}</strong></p>
+                            <p style="margin: 0 0 8px; color:#475569;">邮箱：<strong>${email}</strong></p>
+                            <p style="margin: 0; color:#475569;">密码：<strong>${password}</strong></p>
+                        </div>
+                        <p style="color: #64748b; font-size: 14px;">请使用以上账号密码在网站 <a href="${getSiteBaseUrl(req)}/login" style="color:#047857;">登录</a>，建议登录后及时修改密码。</p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        });
+        console.log(`[JOIN-APPROVE] 审核通过邮件已发送: ${email}`);
+    } catch (error) {
+        console.error('[JOIN-APPROVE] 审核通过邮件发送失败:', error.message);
+    }
+
+    res.send(`
+        <div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;">
+            <div style="background:linear-gradient(135deg,#10b981,#34d399);padding:30px;border-radius:16px 16px 0 0;">
+                <h1 style="color:white;margin:0;font-size:24px;">✅ 已批准加入</h1>
+            </div>
+            <div style="background:#ecfdf5;padding:30px;border-radius:0 0 16px 16px;border:1px solid #a7f3d0;">
+                <p style="color:#475569;font-size:16px;">已批准 <strong>${application.gameId}</strong>（QQ ${application.qq}）加入 STC 工会。</p>
+                <p style="color:#475569;font-size:16px;">账号已自动创建：</p>
+                <div style="background:white;padding:16px;border-radius:12px;margin:16px 0;border:2px dashed #10b981;text-align:left;">
+                    <p style="margin:4px 0;color:#475569;">用户名：<strong>${username}</strong></p>
+                    <p style="margin:4px 0;color:#475569;">邮箱：<strong>${email}</strong></p>
+                    <p style="margin:4px 0;color:#475569;">密码：<strong>${password}</strong></p>
+                </div>
+                <p style="color:#64748b;font-size:14px;">审核通过邮件（含加群链接）已发送到申请人邮箱。</p>
+                <p><a href="/admin.html" style="color:#047857;font-weight:bold;">返回管理面板</a></p>
+            </div>
+        </div>
+    `);
+});
+
+// 驳回加入申请
+app.get('/api/join/reject/:token', async (req, res) => {
+    const token = req.params.token;
+    if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
+
+    const application = db.data.join_applications.find(a => a.reject_token === token);
+    if (!application) {
+        return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+    }
+    if (application.status !== 'pending') {
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${application.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+    }
+
+    application.status = 'rejected';
+    application.rejected_at = new Date().toISOString();
+    await db.write();
+
+    // 通知申请人被驳回
+    try {
+        const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置');
+        await _t.sendMail({
+            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            to: application.email,
+            subject: '【STC】加入申请未通过',
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #ef4444, #f87171); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">申请未通过</h1>
+                    </div>
+                    <div style="background: #fef2f2; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #fecaca;">
+                        <p style="color: #475569; font-size: 16px;">您好，${application.gameId}！</p>
+                        <p style="color: #475569; font-size: 16px;">很遗憾，您的 STC 工会加入申请未通过管理员审批。</p>
+                        <p style="color: #64748b; font-size: 14px;">如有疑问，请与管理员联系。</p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        });
+        console.log(`[JOIN-REJECT] 驳回通知邮件已发送: ${application.email}`);
+    } catch (error) {
+        console.error('[JOIN-REJECT] 驳回通知邮件发送失败:', error.message);
+    }
+
+    res.send(`
+        <div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;">
+            <div style="background:linear-gradient(135deg,#ef4444,#f87171);padding:30px;border-radius:16px 16px 0 0;">
+                <h1 style="color:white;margin:0;font-size:24px;">❌ 已驳回申请</h1>
+            </div>
+            <div style="background:#fef2f2;padding:30px;border-radius:0 0 16px 16px;border:1px solid #fecaca;">
+                <p style="color:#475569;font-size:16px;">已驳回 <strong>${application.gameId}</strong>（QQ ${application.qq}）的加入申请。</p>
+                <p style="color:#64748b;font-size:14px;">驳回通知邮件已发送到申请人邮箱。</p>
+                <p><a href="/admin.html" style="color:#b91c1c;font-weight:bold;">返回管理面板</a></p>
+            </div>
+        </div>
+    `);
 });
 
 function canModifyUser(currentUser, targetUser, action) {
@@ -3768,6 +4162,17 @@ app.use((req, res, next) => {
 const startPromise = (async () => {
     await initDatabase();
     await loadBannedIPs();
+
+    // 持久化警告：Vercel 上必须配置 KV，否则数据只存在于 /tmp 临时文件系统，实例回收即丢失
+    if (IS_VERCEL && !KV_ENABLED) {
+        console.warn('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+        console.warn('!! [WARN] Vercel 环境未检测到 KV 配置（KV_REST_API_URL / KV_REST_API_TOKEN）');
+        console.warn('!! 数据将只写入 /tmp 临时文件，实例回收后任务/用户等数据会丢失！');
+        console.warn('!! 请在 Vercel 控制台创建 KV Database 并绑定环境变量后再部署。');
+        console.warn('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+    } else if (KV_ENABLED) {
+        console.log('[KV] 持久化已启用（Vercel KV），数据将以 KV 为准');
+    }
     
     if (!process.env.VERCEL && !process.env.RAILWAY) {
         app.listen(PORT, () => {
@@ -3814,7 +4219,7 @@ app.post('/api/db/import', requireSuperAdmin, express.json({ limit: '10mb' }), r
         }
         db._data = newData;
         db._ensureDefaults();
-        db._saveFile();
+        await db.write();
         res.json({ success: true, message: '数据库导入成功' });
     } catch (error) {
         res.status(500).json({ success: false, message: '导入失败: ' + error.message });
