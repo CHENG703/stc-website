@@ -3454,8 +3454,9 @@ function getSiteBaseUrl(req) {
     return `${req.protocol}://${req.get('host')}`;
 }
 
-// 接收加入申请的管理员邮箱（1968550760 为首位，可用环境变量 JOIN_ADMIN_EMAILS 覆盖）
-const JOIN_ADMIN_EMAILS = (process.env.JOIN_ADMIN_EMAILS || 'REDACTED@example.com,3587933806@qq.com')
+// 接收加入申请的管理员邮箱（通过环境变量 JOIN_ADMIN_EMAILS 配置，多个邮箱用逗号分隔）
+// 安全：不再内置默认邮箱，未配置时跳过审批邮件通知
+const JOIN_ADMIN_EMAILS = (process.env.JOIN_ADMIN_EMAILS || '')
     .split(',').map(s => s.trim()).filter(Boolean);
 
 // 提交加入申请
@@ -3516,9 +3517,13 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, async (req,
     const approveUrl = `${host}/api/join/approve/${application.approval_token}`;
     const rejectUrl = `${host}/api/join/reject/${application.reject_token}`;
 
-    // 发审批邮件给管理员们（1968550760 为主收件人，其余抄送）
+    // 发审批邮件给管理员们（按 JOIN_ADMIN_EMAILS 配置，首邮箱为主收件人，其余抄送）
     try {
         const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置');
+        if (JOIN_ADMIN_EMAILS.length === 0) {
+            console.warn('[JOIN] JOIN_ADMIN_EMAILS 未配置，跳过审批邮件通知');
+            return res.json({ success: true, message: '申请已提交，请耐心等待管理员审批' });
+        }
         const adminTo = JOIN_ADMIN_EMAILS[0];
         const adminCc = JOIN_ADMIN_EMAILS.slice(1);
         await _t.sendMail({
