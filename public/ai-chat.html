@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>STC - AI 助手</title>
+    <title>STC AI 助手</title>
     <script src="js/config.js"></script>
     <style>
         * {
@@ -13,67 +13,48 @@
         }
 
         body {
-            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-            min-height: 100vh;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 16px;
-            position: relative;
-        }
-
-        body::before {
-            content: '';
-            position: fixed;
-            top: -30%;
-            left: -30%;
-            width: 160%;
-            height: 160%;
-            background: radial-gradient(circle at 30% 30%, rgba(102, 126, 234, 0.22) 0%, transparent 50%),
-                        radial-gradient(circle at 70% 70%, rgba(118, 75, 162, 0.22) 0%, transparent 50%);
-            z-index: -1;
-        }
-
-        .chat-app {
-            position: relative;
-            z-index: 10;
-            width: 100%;
-            max-width: 860px;
-            height: calc(100vh - 32px);
-            min-height: 520px;
-            background: rgba(255, 255, 255, 0.08);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 24px;
-            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.4);
-            display: flex;
-            flex-direction: column;
+            font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+            background: #000;
+            color: #fff;
+            height: 100vh;
             overflow: hidden;
         }
 
-        /* ---------- 头部 ---------- */
+        /* ---------- 整体布局 ---------- */
+        .chat-app {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        /* ---------- 顶部栏 ---------- */
         .chat-header {
             display: flex;
             align-items: center;
             gap: 12px;
-            padding: 16px 20px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            background: rgba(255, 255, 255, 0.05);
+            padding: 14px 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            flex-shrink: 0;
         }
 
         .chat-logo {
-            width: 44px;
-            height: 44px;
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            background: conic-gradient(from 0deg, #ff4e4e, #ff9f43, #ffe066, #2ed573, #1e90ff, #7c5cff, #ff4e4e);
+            padding: 3px;
             flex-shrink: 0;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 22px;
-            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+        }
+
+        .chat-logo::before {
+            content: '';
+            display: block;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: #000;
         }
 
         .chat-title {
@@ -82,41 +63,48 @@
         }
 
         .chat-title h1 {
-            font-size: 17px;
-            font-weight: 700;
+            font-size: 16px;
+            font-weight: 600;
             color: #fff;
             line-height: 1.3;
         }
 
         .chat-title p {
             font-size: 11px;
-            color: rgba(255, 255, 255, 0.55);
+            color: rgba(255, 255, 255, 0.4);
         }
 
         .model-select {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
             color: #fff;
-            border-radius: 10px;
-            padding: 8px 10px;
-            font-size: 13px;
+            border-radius: 999px;
+            padding: 7px 14px;
+            font-size: 12.5px;
             cursor: pointer;
             outline: none;
-            max-width: 220px;
+            max-width: 180px;
+            flex-shrink: 0;
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+        .model-select:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.25);
         }
 
         .model-select option {
-            background: #16213e;
+            background: #1a1a1a;
             color: #fff;
         }
 
         .icon-btn {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            color: #fff;
-            border-radius: 10px;
-            width: 38px;
-            height: 38px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: rgba(255, 255, 255, 0.8);
+            border-radius: 999px;
+            width: 36px;
+            height: 36px;
             cursor: pointer;
             font-size: 15px;
             transition: all 0.2s;
@@ -124,87 +112,98 @@
         }
 
         .icon-btn:hover {
-            background: rgba(255, 82, 82, 0.3);
-            border-color: rgba(255, 82, 82, 0.5);
+            background: rgba(255, 255, 255, 0.14);
+            color: #fff;
         }
 
         /* ---------- 消息区 ---------- */
         .chat-box {
             flex: 1;
             overflow-y: auto;
-            padding: 20px;
+            padding: 32px 24px;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 24px;
             scroll-behavior: smooth;
         }
 
         .chat-box::-webkit-scrollbar {
-            width: 6px;
+            width: 5px;
         }
 
         .chat-box::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.15);
             border-radius: 3px;
         }
 
-        .welcome {
-            text-align: center;
-            color: rgba(255, 255, 255, 0.5);
-            padding: 40px 20px;
+        .chat-box::-webkit-scrollbar-track {
+            background: transparent;
         }
 
-        .welcome .w-icon {
-            font-size: 46px;
-            margin-bottom: 12px;
-            display: block;
+        /* 欢迎页 */
+        .welcome {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            gap: 14px;
+            padding: 20px;
+            animation: fadeIn 0.4s ease;
         }
 
         .welcome h2 {
-            font-size: 20px;
-            color: rgba(255, 255, 255, 0.85);
-            margin-bottom: 8px;
+            font-size: 30px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 0.5px;
         }
 
-        .welcome p {
-            font-size: 13px;
-            line-height: 1.8;
+        .welcome .sub {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.45);
+            line-height: 1.7;
         }
 
-        .welcome .tips {
+        .tips {
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: 12px;
             justify-content: center;
-            margin-top: 18px;
+            margin-top: 26px;
+            max-width: 640px;
         }
 
-        .welcome .tips span {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 20px;
-            padding: 6px 14px;
-            font-size: 12px;
+        .tips .tip-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 14px;
+            padding: 14px 20px;
+            font-size: 13.5px;
+            color: rgba(255, 255, 255, 0.75);
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.25s;
+            user-select: none;
         }
 
-        .welcome .tips span:hover {
-            background: rgba(102, 126, 234, 0.3);
-            border-color: rgba(102, 126, 234, 0.6);
+        .tips .tip-card:hover {
+            background: rgba(255, 255, 255, 0.09);
+            border-color: rgba(255, 255, 255, 0.3);
             color: #fff;
+            transform: translateY(-2px);
         }
 
         /* 消息气泡 */
         .msg {
             display: flex;
-            gap: 10px;
+            gap: 14px;
             max-width: 100%;
             animation: fadeIn 0.25s ease;
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(6px); }
+            from { opacity: 0; transform: translateY(8px); }
             to { opacity: 1; transform: translateY(0); }
         }
 
@@ -217,84 +216,93 @@
         }
 
         .msg .avatar {
-            width: 34px;
-            height: 34px;
+            width: 32px;
+            height: 32px;
             flex-shrink: 0;
-            border-radius: 10px;
+            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 13px;
-            font-weight: 700;
+            font-size: 12px;
+            font-weight: 600;
             margin-top: 2px;
         }
 
         .msg-user .avatar {
-            background: linear-gradient(135deg, #667eea, #764ba2);
+            background: #333;
             color: #fff;
             order: 2;
         }
 
         .msg-ai .avatar {
-            background: rgba(255, 255, 255, 0.15);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            font-size: 17px;
+            background: conic-gradient(from 0deg, #ff4e4e, #ff9f43, #ffe066, #2ed573, #1e90ff, #7c5cff, #ff4e4e);
+            padding: 2.5px;
+        }
+
+        .msg-ai .avatar::before {
+            content: '';
+            display: block;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: #000;
         }
 
         .msg .bubble {
             max-width: 78%;
-            padding: 12px 16px;
+            padding: 12px 18px;
             border-radius: 16px;
-            font-size: 14px;
-            line-height: 1.7;
+            font-size: 14.5px;
+            line-height: 1.75;
             word-break: break-word;
             white-space: pre-wrap;
         }
 
         .msg-user .bubble {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: #fff;
+            background: #fff;
+            color: #111;
             border-bottom-right-radius: 4px;
-            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.25);
         }
 
         .msg-ai .bubble {
-            background: rgba(255, 255, 255, 0.12);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            color: #eaeaf5;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            color: #f2f2f2;
             border-bottom-left-radius: 4px;
         }
 
         .msg-system .bubble {
-            background: rgba(255, 170, 60, 0.15);
-            border: 1px solid rgba(255, 170, 60, 0.3);
+            background: rgba(255, 170, 60, 0.12);
+            border: 1px solid rgba(255, 170, 60, 0.25);
             color: #ffd9a8;
         }
 
         /* AI 气泡里的 markdown 样式 */
         .msg-ai .msg-text code {
-            background: rgba(0, 0, 0, 0.3);
+            background: rgba(0, 0, 0, 0.4);
             padding: 2px 6px;
             border-radius: 4px;
             font-family: Consolas, 'Courier New', monospace;
-            font-size: 12.5px;
+            font-size: 13px;
+            color: #7fd1ff;
         }
 
         .msg-ai .msg-text pre.code-block {
-            background: rgba(0, 0, 0, 0.35);
+            background: rgba(0, 0, 0, 0.45);
             border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 10px;
-            padding: 12px;
+            padding: 14px;
             overflow-x: auto;
-            margin: 8px 0;
+            margin: 10px 0;
         }
 
         .msg-ai .msg-text pre.code-block code {
             background: none;
             padding: 0;
-            font-size: 12.5px;
+            font-size: 13px;
             line-height: 1.6;
             white-space: pre;
+            color: #e8e8e8;
         }
 
         .msg-ai .msg-text strong {
@@ -312,7 +320,7 @@
             width: 7px;
             height: 7px;
             border-radius: 50%;
-            background: rgba(255, 255, 255, 0.6);
+            background: rgba(255, 255, 255, 0.5);
             animation: blink 1.2s infinite;
         }
 
@@ -325,82 +333,92 @@
         }
 
         /* ---------- 输入区 ---------- */
+        .chat-input-wrap {
+            flex-shrink: 0;
+            padding: 12px 24px 22px;
+        }
+
         .chat-input-bar {
             display: flex;
             align-items: flex-end;
             gap: 10px;
-            padding: 14px 20px 18px;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-            background: rgba(255, 255, 255, 0.04);
+            max-width: 780px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.07);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 24px;
+            padding: 10px 10px 10px 18px;
+            transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+        }
+
+        .chat-input-bar:focus-within {
+            border-color: rgba(255, 255, 255, 0.35);
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
         }
 
         .chat-input-bar textarea {
             flex: 1;
             resize: none;
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 14px;
+            background: transparent;
+            border: none;
             color: #fff;
             font-family: inherit;
-            font-size: 14px;
+            font-size: 14.5px;
             line-height: 1.6;
-            padding: 12px 14px;
+            padding: 6px 0;
             outline: none;
             max-height: 140px;
-            min-height: 48px;
-            transition: border-color 0.2s;
+            min-height: 28px;
         }
 
         .chat-input-bar textarea::placeholder {
-            color: rgba(255, 255, 255, 0.4);
-        }
-
-        .chat-input-bar textarea:focus {
-            border-color: rgba(102, 126, 234, 0.7);
+            color: rgba(255, 255, 255, 0.35);
         }
 
         .send-btn {
-            background: linear-gradient(135deg, #667eea, #764ba2);
+            background: linear-gradient(135deg, #4d8dff, #7c5cff);
             color: #fff;
             border: none;
-            border-radius: 14px;
-            height: 48px;
-            padding: 0 24px;
-            font-size: 14px;
-            font-weight: 600;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            font-size: 16px;
             cursor: pointer;
             transition: all 0.2s;
             flex-shrink: 0;
-            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 14px rgba(76, 141, 255, 0.35);
         }
 
         .send-btn:hover:not(:disabled) {
-            transform: translateY(-1px);
-            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.45);
+            transform: scale(1.06);
+            box-shadow: 0 6px 18px rgba(76, 141, 255, 0.5);
         }
 
         .send-btn:disabled {
-            opacity: 0.5;
+            opacity: 0.45;
             cursor: not-allowed;
+            box-shadow: none;
         }
 
         .input-hint {
             font-size: 11px;
-            color: rgba(255, 255, 255, 0.35);
-            padding: 0 4px;
-            margin-top: -6px;
-            padding-bottom: 14px;
+            color: rgba(255, 255, 255, 0.28);
             text-align: center;
+            margin-top: 10px;
         }
 
         /* ---------- 未登录遮罩 ---------- */
         .login-mask {
-            position: absolute;
+            position: fixed;
             inset: 0;
             z-index: 30;
-            background: rgba(13, 17, 30, 0.78);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
             display: none;
             align-items: center;
             justify-content: center;
@@ -414,18 +432,30 @@
         .login-mask-box {
             text-align: center;
             max-width: 360px;
-            padding: 40px 36px;
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.15);
+            padding: 44px 38px;
+            background: #141414;
+            border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 20px;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
             animation: fadeIn 0.3s ease;
         }
 
-        .login-mask-box .w-icon {
-            font-size: 44px;
+        .login-mask-box .logo-big {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: conic-gradient(from 0deg, #ff4e4e, #ff9f43, #ffe066, #2ed573, #1e90ff, #7c5cff, #ff4e4e);
+            padding: 4px;
+            margin: 0 auto 16px;
+        }
+
+        .login-mask-box .logo-big::before {
+            content: '';
             display: block;
-            margin-bottom: 14px;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: #141414;
         }
 
         .login-mask-box h2 {
@@ -436,16 +466,16 @@
 
         .login-mask-box p {
             font-size: 13px;
-            color: rgba(255, 255, 255, 0.6);
+            color: rgba(255, 255, 255, 0.5);
             line-height: 1.7;
-            margin-bottom: 24px;
+            margin-bottom: 26px;
         }
 
         .login-mask-box .btn-login,
         .login-mask-box .btn-home {
             display: inline-block;
             padding: 11px 34px;
-            border-radius: 12px;
+            border-radius: 999px;
             font-size: 14px;
             font-weight: 600;
             text-decoration: none;
@@ -454,44 +484,47 @@
         }
 
         .login-mask-box .btn-login {
-            background: linear-gradient(135deg, #667eea, #764ba2);
+            background: linear-gradient(135deg, #4d8dff, #7c5cff);
             color: #fff;
-            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.35);
+            box-shadow: 0 6px 16px rgba(76, 141, 255, 0.35);
         }
 
         .login-mask-box .btn-login:hover {
             transform: translateY(-1px);
-            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.5);
+            box-shadow: 0 8px 22px rgba(76, 141, 255, 0.5);
         }
 
         .login-mask-box .btn-home {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.18);
             color: #fff;
         }
 
         .login-mask-box .btn-home:hover {
-            background: rgba(255, 255, 255, 0.18);
+            background: rgba(255, 255, 255, 0.15);
         }
 
         @media (max-width: 600px) {
-            body { padding: 0; }
-            .chat-app { height: 100vh; border-radius: 0; border: none; }
-            .model-select { max-width: 150px; font-size: 12px; }
+            .chat-header { padding: 12px 16px; }
+            .chat-box { padding: 20px 14px; }
+            .welcome h2 { font-size: 24px; }
+            .model-select { max-width: 130px; font-size: 11.5px; }
             .chat-title p { display: none; }
-            .msg .bubble { max-width: 85%; }
+            .msg .bubble { max-width: 86%; }
+            .tips .tip-card { padding: 11px 16px; font-size: 12.5px; }
+            .chat-input-wrap { padding: 10px 12px 16px; }
         }
     </style>
 </head>
 <body>
 
     <div class="chat-app">
-        <!-- 头部 -->
+        <!-- 顶部栏 -->
         <header class="chat-header">
-            <div class="chat-logo">🤖</div>
+            <div class="chat-logo"></div>
             <div class="chat-title">
-                <h1>AI 助手</h1>
-                <p>Powered by SenseNova · 日日新</p>
+                <h1>STC AI 助手</h1>
+                <p>SenseNova 大模型驱动</p>
             </div>
             <select id="model-select" class="model-select" title="选择模型"></select>
             <button class="icon-btn" id="clear-btn" title="清空对话">🗑️</button>
@@ -500,31 +533,30 @@
         <!-- 消息区 -->
         <main class="chat-box" id="chat-box">
             <div class="welcome" id="welcome">
-                <span class="w-icon">🤖</span>
-                <h2>你好，我是 STC AI 助手</h2>
-                <p>由商汤日日新（SenseNova）大模型驱动<br>可以聊天、写作、编程、解答问题</p>
+                <h2>Hi，今天从哪里开始</h2>
+                <p class="sub">由商汤日日新（SenseNova）大模型驱动<br>可以聊天、写作、编程、解答问题</p>
                 <div class="tips">
-                    <span>写一段工作周报</span>
-                    <span>帮我解释一下什么是线程池</span>
-                    <span>用 Python 写个贪吃蛇</span>
-                    <span>讲个冷笑话</span>
+                    <span class="tip-card">✍️ 写一段工作周报</span>
+                    <span class="tip-card">💡 帮我解释什么是线程池</span>
+                    <span class="tip-card">🐍 用 Python 写个贪吃蛇</span>
+                    <span class="tip-card">😄 讲个冷笑话</span>
                 </div>
             </div>
         </main>
 
         <!-- 输入区 -->
-        <footer>
+        <div class="chat-input-wrap">
             <div class="chat-input-bar">
                 <textarea id="input" placeholder="输入你的问题，Enter 发送，Shift+Enter 换行"></textarea>
-                <button class="send-btn" id="send-btn">发送</button>
+                <button class="send-btn" id="send-btn" title="发送">➤</button>
             </div>
             <div class="input-hint">内容由 AI 生成，仅供参考 · 支持流式输出</div>
-        </footer>
+        </div>
 
         <!-- 未登录遮罩 -->
         <div class="login-mask" id="login-mask">
             <div class="login-mask-box">
-                <span class="w-icon">🔒</span>
+                <div class="logo-big"></div>
                 <h2>请先登录</h2>
                 <p>AI 助手仅对已登录的 STC 成员开放</p>
                 <a class="btn-login" href="/login">去登录</a>
@@ -612,7 +644,7 @@
 
             const avatar = document.createElement('div');
             avatar.className = 'avatar';
-            avatar.textContent = role === 'user' ? '你' : '🤖';
+            avatar.textContent = role === 'user' ? '我' : '';
 
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
@@ -645,7 +677,6 @@
             wrap.id = 'thinking-msg';
             const avatar = document.createElement('div');
             avatar.className = 'avatar';
-            avatar.textContent = '🤖';
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
             for (let i = 0; i < 3; i++) {
@@ -675,6 +706,8 @@
 
         // ==================== CSRF / Nonce ====================
         async function getCSRFToken() {
+            // 已缓存的 token 直接复用，避免每次提问都多一次网络往返
+            if (_csrfCache) return _csrfCache;
             try {
                 const resp = await fetch('/api/csrf-token', { credentials: 'include' });
                 if (resp.ok) {
@@ -709,40 +742,41 @@
             sending = true;
             sendBtn.disabled = true;
 
-            let resp = null;
-            let retried = false;
-            for (;;) {
-                const token = await getCSRFToken();
-                resp = await fetch('/api/ai/chat', {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(token ? { 'X-CSRF-Token': token } : {}),
-                        'X-Request-Nonce': genNonce()
-                    },
-                    body: JSON.stringify({
-                        messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
-                        model: modelSelect.value
-                    })
-                });
+            try {
+                let resp = null;
+                let retried = false;
+                for (;;) {
+                    const token = await getCSRFToken();
+                    resp = await fetch('/api/ai/chat', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...(token ? { 'X-CSRF-Token': token } : {}),
+                            'X-Request-Nonce': genNonce()
+                        },
+                        body: JSON.stringify({
+                            messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
+                            model: modelSelect.value
+                        })
+                    });
 
-                // CSRF token 过期时清缓存重试一次
-                if (resp.status === 403 && !retried) {
-                    _csrfCache = null;
-                    retried = true;
-                    continue;
+                    // CSRF token 过期时清缓存重试一次
+                    if (resp.status === 403 && !retried) {
+                        _csrfCache = null;
+                        retried = true;
+                        continue;
+                    }
+                    break;
                 }
-                break;
-            }
 
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}));
-                if (resp.status === 403 && (err.error === '请先登录' || err.message === '请先登录')) {
-                    showLoginMask();
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    if (resp.status === 403 && (err.error === '请先登录' || err.message === '请先登录')) {
+                        showLoginMask();
+                    }
+                    throw new Error(err.message || err.error || ('请求失败 (' + resp.status + ')，请稍后重试'));
                 }
-                throw new Error(err.message || err.error || ('请求失败 (' + resp.status + ')，请稍后重试'));
-            }
 
                 // 把"思考中"气泡升级为正式 AI 气泡
                 removeThinking();
@@ -783,7 +817,6 @@
                 aiTextEl.innerHTML = full ? renderMarkdown(full) : '（未收到回复，请重试）';
                 messages.push({ role: 'assistant', content: full });
                 saveHistory();
-
             } catch (e) {
                 removeThinking();
                 appendBubble('system', '❌ ' + e.message);
@@ -831,7 +864,7 @@
         // 欢迎页快捷提问
         welcomeEl.querySelectorAll('.tips span').forEach(span => {
             span.addEventListener('click', () => {
-                inputEl.value = span.textContent;
+                inputEl.value = span.textContent.replace(/^[^\u4e00-\u9fa5a-zA-Z0-9]+/, '');
                 autoResize();
                 inputEl.focus();
             });
@@ -861,6 +894,7 @@
                 showLoginMask();
                 return;
             }
+            getCSRFToken(); // 预取 CSRF token，首次提问更快
             renderAll();
             inputEl.focus();
         })();

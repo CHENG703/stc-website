@@ -2147,8 +2147,9 @@ const SENSENOVA_BASE_URL = process.env.SENSENOVA_BASE_URL || 'https://token.sens
 const SENSENOVA_API_KEY = process.env.SENSENOVA_API_KEY || '';
 const SENSENOVA_DEFAULT_MODEL = process.env.SENSENOVA_MODEL || 'sensenova-6.7-flash-lite';
 const AI_ALLOWED_MODELS = ['sensenova-6.7-flash-lite', 'sensenova-6.8-flash-lite', 'glm-5.2', 'deepseek-v4-flash'];
-const AI_MAX_MESSAGES = 30;   // 最多携带的历史消息条数
-const AI_MAX_CONTENT = 4000;  // 单条消息最长字符数
+const AI_MAX_MESSAGES = 12;   // 最多携带的历史消息条数（控制请求体大小，加快响应）
+const AI_MAX_CONTENT = 2000;  // 单条消息最长字符数
+const AI_MAX_TOTAL = 8000;    // 所有消息总字符上限（超出只保留最近）
 
 // AI 对话：流式转发 SenseNova（OpenAI 兼容接口），仅登录用户可用
 app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, async (req, res) => {
@@ -2162,13 +2163,20 @@ app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, asyn
             return res.status(400).json({ success: false, message: '缺少对话内容' });
         }
         const chosenModel = AI_ALLOWED_MODELS.includes(model) ? model : SENSENOVA_DEFAULT_MODEL;
-        const safeMessages = messages
+        let safeMessages = messages
             .slice(-AI_MAX_MESSAGES)
             .map(m => ({
                 role: m.role === 'assistant' ? 'assistant' : 'user',
                 content: typeof m.content === 'string' ? m.content.slice(0, AI_MAX_CONTENT) : ''
             }))
             .filter(m => m.content);
+
+        // 总字符超限时只保留最近的消息（保证 system 提示词始终在前）
+        let totalChars = safeMessages.reduce((s, m) => s + m.content.length, 0);
+        while (totalChars > AI_MAX_TOTAL && safeMessages.length > 2) {
+            const dropped = safeMessages.splice(1, 1)[0];  // 丢掉最旧的非 system 消息
+            totalChars -= dropped ? dropped.content.length : 0;
+        }
 
         // 使用 https 模块转发上游（长驻进程下 fetch/undici 不稳定，改用核心模块）
         const upstreamBody = JSON.stringify({
@@ -2186,7 +2194,7 @@ app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, asyn
                     'Authorization': `Bearer ${SENSENOVA_API_KEY}`,
                     'Content-Length': Buffer.byteLength(upstreamBody)
                 },
-                timeout: 30000
+                timeout: 60000
             }, (uRes) => {
                 if (uRes.statusCode >= 200 && uRes.statusCode < 300) {
                     // 流式透传 SSE
@@ -2217,8 +2225,14 @@ app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, asyn
             uReq.on('timeout', () => uReq.destroy(new Error('上游请求超时')));
             uReq.on('error', (e) => {
                 console.error('[AI] 上游连接失败:', e.message);
+                const timedOut = /超时|timeout/i.test(e.message);
                 if (!res.headersSent) {
-                    res.status(502).json({ success: false, message: 'AI 服务连接失败，请稍后重试' });
+                    res.status(502).json({
+                        success: false,
+                        message: timedOut
+                            ? 'AI 服务响应超时（上游较慢），请稍后重试，或尝试在右上角切换其他模型'
+                            : 'AI 服务连接失败，请稍后重试'
+                    });
                 } else {
                     try { res.end(); } catch (ignored) {}
                 }
