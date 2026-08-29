@@ -180,6 +180,29 @@
             background: rgba(255, 255, 255, 0.08);
         }
 
+        .sidebar-footer {
+            padding: 10px 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            flex-shrink: 0;
+        }
+
+        .skill-market-btn {
+            width: 100%;
+            padding: 9px 0;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .skill-market-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.25);
+        }
+
         .sidebar-mask {
             display: none;
             position: fixed;
@@ -192,10 +215,11 @@
         .chat-header {
             display: flex;
             align-items: center;
-            gap: 12px;
-            padding: 12px 20px;
+            gap: 10px;
+            padding: 12px 18px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.08);
             flex-shrink: 0;
+            flex-wrap: wrap;
         }
 
         .menu-btn {
@@ -265,7 +289,28 @@
             box-shadow: 0 2px 10px rgba(76, 141, 255, 0.35);
         }
 
-        .model-select {
+        .code-btn {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: rgba(255, 255, 255, 0.65);
+            border-radius: 999px;
+            padding: 7px 14px;
+            font-size: 12.5px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .code-btn.active {
+            background: rgba(46, 204, 113, 0.18);
+            border-color: rgba(46, 204, 113, 0.55);
+            color: #2ecc71;
+            box-shadow: 0 0 0 1px rgba(46, 204, 113, 0.2);
+        }
+
+        .model-select,
+        .skill-select {
             background: rgba(255, 255, 255, 0.06);
             border: 1px solid rgba(255, 255, 255, 0.12);
             color: #fff;
@@ -279,12 +324,20 @@
             transition: border-color 0.2s, background 0.2s;
         }
 
-        .model-select:hover {
+        .skill-select {
+            max-width: 150px;
+            color: #ffd166;
+            border-color: rgba(255, 209, 102, 0.25);
+        }
+
+        .model-select:hover,
+        .skill-select:hover {
             background: rgba(255, 255, 255, 0.1);
             border-color: rgba(255, 255, 255, 0.25);
         }
 
-        .model-select option {
+        .model-select option,
+        .skill-select option {
             background: #1a1a1a;
             color: #fff;
         }
@@ -354,7 +407,7 @@
             gap: 10px;
             justify-content: center;
             margin-top: 22px;
-            max-width: 620px;
+            max-width: 640px;
         }
 
         .tips .tip-card {
@@ -455,9 +508,11 @@
         }
 
         .msg-system .bubble {
-            background: rgba(255, 170, 60, 0.12);
-            border: 1px solid rgba(255, 170, 60, 0.25);
-            color: #ffd9a8;
+            background: rgba(255, 170, 60, 0.1);
+            border: 1px solid rgba(255, 170, 60, 0.2);
+            color: rgba(255, 217, 168, 0.9);
+            font-size: 13px;
+            padding: 8px 14px;
         }
 
         /* 用户消息里的图片 */
@@ -487,6 +542,15 @@
             color: #7fd1ff;
         }
 
+        .code-head {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.4);
+            font-family: Consolas, monospace;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
         .msg-ai .msg-text pre.code-block {
             background: rgba(0, 0, 0, 0.45);
             border: 1px solid rgba(255, 255, 255, 0.1);
@@ -508,6 +572,12 @@
         .msg-ai .msg-text strong {
             color: #fff;
         }
+
+        /* 代码高亮 token */
+        .tok-kw { color: #ff7b9c; font-weight: 600; }
+        .tok-str { color: #a3e97c; }
+        .tok-com { color: rgba(255, 255, 255, 0.35); font-style: italic; }
+        .tok-num { color: #79b8ff; }
 
         /* 深度思考过程 */
         .think-box {
@@ -587,6 +657,93 @@
             40% { opacity: 1; transform: scale(1); }
         }
 
+        /* ---------- 生成卡片（AI 绘画 / AI 视频） ---------- */
+        .gen-card {
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .gen-loading {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 22px 16px;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #4d8dff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            flex-shrink: 0;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .gen-img {
+            display: block;
+            width: 100%;
+            max-width: 480px;
+            border-radius: 8px;
+            margin: 8px;
+        }
+
+        .video-stage {
+            padding: 10px;
+        }
+
+        .video-stage canvas {
+            width: 100%;
+            max-width: 420px;
+            border-radius: 8px;
+            display: block;
+            margin: 0 auto;
+            background: #000;
+        }
+
+        .video-ctrl {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            justify-content: center;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .v-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            color: #fff;
+            border-radius: 999px;
+            padding: 6px 16px;
+            font-size: 12.5px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .v-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .v-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .v-progress {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+
         /* ---------- 输入区 ---------- */
         .chat-input-wrap {
             flex-shrink: 0;
@@ -601,7 +758,7 @@
         .chat-input-bar {
             display: flex;
             align-items: flex-end;
-            gap: 8px;
+            gap: 6px;
             background: rgba(255, 255, 255, 0.07);
             border: 1px solid rgba(255, 255, 255, 0.15);
             border-radius: 22px;
@@ -640,8 +797,8 @@
             color: rgba(255, 255, 255, 0.55);
             font-size: 18px;
             cursor: pointer;
-            width: 34px;
-            height: 34px;
+            width: 32px;
+            height: 32px;
             border-radius: 10px;
             flex-shrink: 0;
             transition: all 0.2s;
@@ -653,6 +810,10 @@
         .img-btn:hover {
             background: rgba(255, 255, 255, 0.1);
             color: #fff;
+        }
+
+        .img-btn.gen-btn {
+            font-size: 16px;
         }
 
         .send-btn {
@@ -732,11 +893,220 @@
             margin-top: 10px;
         }
 
+        /* ---------- 弹窗 ---------- */
+        .modal-mask {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 60;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal-mask.show {
+            display: flex;
+        }
+
+        .modal-box {
+            background: #161616;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 18px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+            max-width: 620px;
+            width: 100%;
+            max-height: 84vh;
+            overflow-y: auto;
+            padding: 22px;
+            animation: fadeIn 0.25s ease;
+        }
+
+        .modal-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .modal-head h3 {
+            font-size: 18px;
+        }
+
+        .modal-close {
+            background: rgba(255, 255, 255, 0.08);
+            border: none;
+            color: rgba(255, 255, 255, 0.7);
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.16);
+            color: #fff;
+        }
+
+        .modal-sub {
+            font-size: 12.5px;
+            color: rgba(255, 255, 255, 0.5);
+            margin-bottom: 16px;
+            line-height: 1.6;
+        }
+
+        /* 技能卡片 */
+        .skill-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .skill-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 14px;
+            padding: 14px;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .skill-card:hover {
+            background: rgba(255, 255, 255, 0.07);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .skill-card.installed {
+            border-color: rgba(76, 141, 255, 0.4);
+        }
+
+        .skill-card .skill-icon {
+            font-size: 26px;
+            margin-bottom: 8px;
+        }
+
+        .skill-card .skill-name {
+            font-size: 14.5px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .skill-card .skill-desc {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+
+        .skill-card .skill-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .skill-btn {
+            flex: 1;
+            padding: 6px 0;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            background: rgba(255, 255, 255, 0.06);
+            color: #fff;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .skill-btn:hover {
+            background: rgba(255, 255, 255, 0.14);
+        }
+
+        .skill-btn.primary {
+            background: linear-gradient(135deg, #4d8dff, #7c5cff);
+            border-color: transparent;
+        }
+
+        .skill-btn.primary:hover {
+            filter: brightness(1.1);
+        }
+
+        .skill-btn.danger {
+            background: transparent;
+            border-color: rgba(255, 107, 107, 0.35);
+            color: #ff6b6b;
+        }
+
+        .skill-btn.danger:hover {
+            background: rgba(255, 107, 107, 0.12);
+        }
+
+        .skill-btn.active-btn {
+            background: rgba(46, 204, 113, 0.15);
+            border-color: rgba(46, 204, 113, 0.4);
+            color: #2ecc71;
+        }
+
+        /* 生成弹窗 */
+        .gen-box {
+            max-width: 520px;
+        }
+
+        .gen-box textarea {
+            width: 100%;
+            min-height: 96px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 12px;
+            color: #fff;
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.6;
+            padding: 12px;
+            outline: none;
+            resize: vertical;
+        }
+
+        .gen-box textarea:focus {
+            border-color: rgba(255, 255, 255, 0.35);
+        }
+
+        .gen-box textarea::placeholder {
+            color: rgba(255, 255, 255, 0.3);
+        }
+
+        .gen-modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 14px;
+            justify-content: flex-end;
+        }
+
+        .gen-confirm {
+            padding: 10px 28px;
+            border-radius: 999px;
+            border: none;
+            background: linear-gradient(135deg, #4d8dff, #7c5cff);
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .gen-confirm:hover {
+            filter: brightness(1.12);
+            transform: translateY(-1px);
+        }
+
         /* ---------- 未登录遮罩 ---------- */
         .login-mask {
             position: fixed;
             inset: 0;
-            z-index: 50;
+            z-index: 80;
             background: rgba(0, 0, 0, 0.85);
             backdrop-filter: blur(14px);
             -webkit-backdrop-filter: blur(14px);
@@ -826,7 +1196,7 @@
         }
 
         /* ---------- 移动端 ---------- */
-        @media (max-width: 860px) {
+        @media (max-width: 900px) {
             .sidebar {
                 position: fixed;
                 top: 0;
@@ -853,17 +1223,19 @@
             .chat-input-wrap { padding: 10px 12px 14px; }
             .welcome h2 { font-size: 22px; }
             .mode-btn { padding: 5px 10px; font-size: 11.5px; }
-            .model-select { max-width: 110px; font-size: 11px; padding: 6px 10px; }
+            .model-select, .skill-select { max-width: 105px; font-size: 11px; padding: 6px 10px; }
             .chat-title p { display: none; }
             .msg .bubble { max-width: 86%; }
             .tips .tip-card { padding: 10px 14px; font-size: 12px; }
+            .skill-grid { grid-template-columns: 1fr; }
+            .code-btn { padding: 6px 10px; font-size: 11.5px; }
         }
     </style>
 </head>
 <body>
 
     <div class="app">
-        <!-- 侧边栏（历史记录） -->
+        <!-- 侧边栏（历史记录 + 技能入口） -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="sidebar-brand">
@@ -875,6 +1247,9 @@
             <div class="conv-list" id="conv-list">
                 <div class="conv-empty">暂无历史对话<br>开始你的第一个问题吧</div>
             </div>
+            <div class="sidebar-footer">
+                <button class="skill-market-btn" id="skill-market-btn">🧩 技能市场</button>
+            </div>
         </aside>
         <div class="sidebar-mask" id="sidebar-mask"></div>
 
@@ -885,12 +1260,14 @@
                 <div class="chat-logo"></div>
                 <div class="chat-title">
                     <h1>STC AI 助手</h1>
-                    <p id="header-sub">深度思考 · 图片识别 · 流式输出</p>
+                    <p id="header-sub">深度思考 · 图片识别 · 生成能力</p>
                 </div>
                 <div class="mode-switch">
                     <button class="mode-btn active" id="mode-deep">深度思考</button>
                     <button class="mode-btn" id="mode-fast">快速思考</button>
                 </div>
+                <button class="code-btn" id="code-btn" title="编程模式：以代码优先回复">💻 编程</button>
+                <select id="skill-select" class="skill-select" title="当前启用的技能"><option value="">🧩 无技能</option></select>
                 <select id="model-select" class="model-select" title="选择模型"></select>
             </header>
 
@@ -899,12 +1276,13 @@
                 <div class="chat-box-inner" id="chat-box-inner">
                     <div class="welcome" id="welcome">
                         <h2>Hi，今天从哪里开始</h2>
-                        <p class="sub">由商汤日日新（SenseNova）大模型驱动<br>支持深度思考、图片识别、连续对话</p>
+                        <p class="sub">由商汤日日新（SenseNova）大模型驱动<br>支持深度思考、编程模式、技能市场、图片视频生成</p>
                         <div class="tips">
                             <span class="tip-card">✍️ 写一段工作周报</span>
                             <span class="tip-card">💡 帮我解释什么是线程池</span>
-                            <span class="tip-card">🐍 用 Python 写个贪吃蛇</span>
-                            <span class="tip-card">😄 讲个冷笑话</span>
+                            <span class="tip-card">💻 用 Python 写个贪吃蛇</span>
+                            <span class="tip-card">🎨 画一只戴帽子的橘猫</span>
+                            <span class="tip-card">🎬 视频：海浪拍打沙滩</span>
                         </div>
                     </div>
                 </div>
@@ -916,11 +1294,39 @@
                     <div class="img-preview" id="img-preview"></div>
                     <div class="chat-input-bar">
                         <button class="img-btn" id="img-btn" title="上传图片（支持粘贴/拖拽）">🖼️</button>
+                        <button class="img-btn gen-btn" id="gen-img-btn" title="AI 绘画">🎨</button>
+                        <button class="img-btn gen-btn" id="gen-video-btn" title="AI 视频（动画）">🎬</button>
                         <input type="file" id="file-input" accept="image/*" multiple hidden>
                         <textarea id="input" placeholder="输入你的问题，Enter 发送，Shift+Enter 换行"></textarea>
                         <button class="send-btn" id="send-btn" title="发送">➤</button>
                     </div>
-                    <div class="input-hint">内容由 AI 生成，仅供参考 · 支持图片识别与思考过程展示</div>
+                    <div class="input-hint">内容由 AI 生成，仅供参考 · 支持「画：xxx」「视频：xxx」快捷生成</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 技能市场弹窗 -->
+        <div class="modal-mask" id="skill-modal">
+            <div class="modal-box">
+                <div class="modal-head">
+                    <h3>🧩 技能市场</h3>
+                    <button class="modal-close" id="skill-modal-close">✕</button>
+                </div>
+                <p class="modal-sub">安装技能后，AI 将以对应身份与专长为你服务。安装后可在顶部下拉选择启用，同一时间启用 1 个。</p>
+                <div class="skill-grid" id="skill-grid"></div>
+            </div>
+        </div>
+
+        <!-- 生成弹窗 -->
+        <div class="modal-mask" id="gen-modal">
+            <div class="modal-box gen-box">
+                <div class="modal-head">
+                    <h3 id="gen-modal-title">🎨 AI 绘画</h3>
+                    <button class="modal-close" id="gen-modal-close">✕</button>
+                </div>
+                <textarea id="gen-prompt" placeholder="描述你想生成的画面…"></textarea>
+                <div class="gen-modal-actions">
+                    <button class="gen-confirm" id="gen-confirm">开始生成</button>
                 </div>
             </div>
         </div>
@@ -955,6 +1361,11 @@
         let pendingImages = [];     // 待发送图片 [{data, mime}]
         let sending = false;
         let thinkingMode = localStorage.getItem('stc_ai_thinking') || 'deep';
+        let codeMode = localStorage.getItem('stc_ai_code') === '1';
+        let skills = [];
+        let installedSkills = [];
+        let activeSkillId = null;
+        let genType = 'image';
 
         // DOM
         const chatBox = document.getElementById('chat-box');
@@ -962,11 +1373,16 @@
         const inputEl = document.getElementById('input');
         const sendBtn = document.getElementById('send-btn');
         const modelSelect = document.getElementById('model-select');
+        const skillSelect = document.getElementById('skill-select');
+        const codeBtn = document.getElementById('code-btn');
         const welcomeEl = document.getElementById('welcome');
         const convListEl = document.getElementById('conv-list');
         const imgPreviewEl = document.getElementById('img-preview');
         const sidebarEl = document.getElementById('sidebar');
         const sidebarMask = document.getElementById('sidebar-mask');
+        const skillModal = document.getElementById('skill-modal');
+        const skillGrid = document.getElementById('skill-grid');
+        const genModal = document.getElementById('gen-modal');
 
         // ==================== 工具函数 ====================
         function authHeaders() {
@@ -1013,14 +1429,31 @@
             return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
+        // 轻量代码高亮
+        const LANG_NAMES = { js: 'JavaScript', jsx: 'JavaScript', ts: 'TypeScript', py: 'Python', html: 'HTML', css: 'CSS', json: 'JSON', java: 'Java', c: 'C', cpp: 'C++', csharp: 'C#', go: 'Go', rust: 'Rust', sql: 'SQL', sh: 'Bash', bash: 'Bash', shell: 'Bash', php: 'PHP', rb: 'Ruby', swift: 'Swift', kt: 'Kotlin', vue: 'Vue', xml: 'XML', yml: 'YAML', yaml: 'YAML' };
+
+        function highlightCode(code) {
+            let html = escapeHtml(code);
+            html = html
+                .replace(/(&quot;(?:[^&]|&[^;]*;)*?&quot;|&#39;(?:[^&]|&[^;]*;)*?&#39;)/g, '<span class="tok-str">$1</span>')
+                .replace(/(\/\/[^\n<]*|#[^\n<]*|<!--[^]*?-->|\/\*[^]*?\*\/)/g, '<span class="tok-com">$1</span>')
+                .replace(/\b(const|let|var|function|return|if|else|for|while|do|class|new|import|from|export|default|async|await|try|catch|finally|throw|extends|typeof|instanceof|switch|case|break|continue|in|of|this|super|null|true|false|undefined|def|print|lambda|with|pass|elif|None|True|False|pub|fn|let mut|impl|use|mod|static|void|int|float|double|char|bool|string|package|public|private|protected|interface|enum|struct|var|fun|val|select|from|where|join|group by|order by)\b/g, '<span class="tok-kw">$1</span>')
+                .replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="tok-num">$1</span>');
+            return html;
+        }
+
         function renderMarkdown(text) {
             const escaped = escapeHtml(text);
             const parts = escaped.split(/```/);
             let html = '';
             for (let i = 0; i < parts.length; i++) {
                 if (i % 2 === 1) {
-                    const code = parts[i].replace(/^[a-zA-Z]+\n/, '').replace(/\n$/, '');
-                    html += '<pre class="code-block"><code>' + code + '</code></pre>';
+                    const raw = parts[i];
+                    const langMatch = raw.match(/^([a-zA-Z]+)\n/);
+                    const lang = langMatch ? langMatch[1].toLowerCase() : '';
+                    const code = raw.replace(/^[a-zA-Z]+\n/, '').replace(/\n$/, '');
+                    html += '<div class="code-head">' + (LANG_NAMES[lang] || lang || 'code') + '</div>';
+                    html += '<pre class="code-block"><code>' + highlightCode(code) + '</code></pre>';
                 } else {
                     html += parts[i]
                         .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -1162,6 +1595,26 @@
             scrollBottom();
         }
 
+        // 创建生成气泡骨架
+        function createGenBubble(icon, label, promptText) {
+            welcomeEl.style.display = 'none';
+            const wrap = document.createElement('div');
+            wrap.className = 'msg msg-ai';
+
+            const avatar = document.createElement('div');
+            avatar.className = 'avatar';
+
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            bubble.innerHTML = '<div class="gen-card"></div><div class="msg-text">' + icon + ' <strong>' + label + '</strong>：' + escapeHtml(promptText) + '</div>';
+
+            wrap.appendChild(avatar);
+            wrap.appendChild(bubble);
+            chatBoxInner.appendChild(wrap);
+            scrollBottom();
+            return wrap;
+        }
+
         // ==================== 侧边栏：会话历史 ====================
         async function loadConvs() {
             try {
@@ -1221,16 +1674,11 @@
                     thinking: m.thinking || ''
                 }));
                 renderAll();
-                renderConvList2();
+                loadConvs();
                 closeSidebar();
             } catch (e) {
                 console.error('[AI] 加载会话失败:', e.message);
             }
-        }
-
-        // 刷新当前高亮（复用已拉取的列表不现实，直接重新加载一次）
-        function renderConvList2() {
-            loadConvs();
         }
 
         function newChat() {
@@ -1266,7 +1714,120 @@
             sidebarMask.classList.remove('show');
         }
 
-        // ==================== 图片处理 ====================
+        // ==================== 技能市场 ====================
+        async function loadSkills() {
+            try {
+                const data = await api('/api/ai/skills');
+                skills = data.data.skills || [];
+                installedSkills = skills.filter(s => s.installed);
+                activeSkillId = data.data.activeSkillId;
+                renderSkillSelect();
+            } catch (e) {
+                console.error('[AI] 加载技能失败:', e.message);
+            }
+        }
+
+        function renderSkillSelect() {
+            skillSelect.innerHTML = '<option value="">🧩 无技能</option>';
+            for (const s of installedSkills) {
+                const o = document.createElement('option');
+                o.value = s.id;
+                o.textContent = s.icon + ' ' + s.name;
+                skillSelect.appendChild(o);
+            }
+            skillSelect.value = activeSkillId || '';
+        }
+
+        function openSkillModal() {
+            renderSkillGrid();
+            skillModal.classList.add('show');
+            closeSidebar();
+        }
+
+        function renderSkillGrid() {
+            skillGrid.innerHTML = '';
+            for (const s of skills) {
+                const card = document.createElement('div');
+                card.className = 'skill-card' + (s.installed ? ' installed' : '');
+
+                const icon = document.createElement('div');
+                icon.className = 'skill-icon';
+                icon.textContent = s.icon;
+
+                const name = document.createElement('div');
+                name.className = 'skill-name';
+                name.textContent = s.name;
+                if (s.installed && activeSkillId === s.id) {
+                    const tag = document.createElement('span');
+                    tag.style.cssText = 'font-size:10px;color:#2ecc71;border:1px solid rgba(46,204,113,.4);border-radius:99px;padding:1px 8px;';
+                    tag.textContent = '使用中';
+                    name.appendChild(tag);
+                }
+
+                const desc = document.createElement('div');
+                desc.className = 'skill-desc';
+                desc.textContent = s.desc;
+
+                const actions = document.createElement('div');
+                actions.className = 'skill-actions';
+
+                if (s.installed) {
+                    const useBtn = document.createElement('button');
+                    useBtn.className = 'skill-btn primary';
+                    useBtn.textContent = (activeSkillId === s.id) ? '使用中' : '启用';
+                    useBtn.disabled = (activeSkillId === s.id);
+                    useBtn.style.opacity = (activeSkillId === s.id) ? '0.6' : '1';
+                    useBtn.addEventListener('click', () => activateSkill(s.id));
+                    actions.appendChild(useBtn);
+
+                    const unBtn = document.createElement('button');
+                    unBtn.className = 'skill-btn danger';
+                    unBtn.textContent = '卸载';
+                    unBtn.addEventListener('click', () => uninstallSkill(s.id));
+                    actions.appendChild(unBtn);
+                } else {
+                    const instBtn = document.createElement('button');
+                    instBtn.className = 'skill-btn primary';
+                    instBtn.textContent = '安装';
+                    instBtn.addEventListener('click', () => installSkill(s.id));
+                    actions.appendChild(instBtn);
+                }
+
+                card.appendChild(icon);
+                card.appendChild(name);
+                card.appendChild(desc);
+                card.appendChild(actions);
+                skillGrid.appendChild(card);
+            }
+        }
+
+        async function installSkill(id) {
+            try {
+                await api('/api/ai/skills/' + id + '/install', { method: 'POST' });
+                await loadSkills();
+                renderSkillGrid();
+            } catch (e) { alert(e.message); }
+        }
+
+        async function activateSkill(id) {
+            try {
+                const r = await api('/api/ai/skills/' + id + '/activate', { method: 'POST' });
+                activeSkillId = r.data.activeSkillId;
+                await loadSkills();
+                renderSkillGrid();
+            } catch (e) { alert(e.message); }
+        }
+
+        async function uninstallSkill(id) {
+            if (!confirm('确定卸载该技能吗？')) return;
+            try {
+                await api('/api/ai/skills/' + id + '/uninstall', { method: 'POST' });
+                await loadSkills();
+                renderSkillGrid();
+            } catch (e) { alert(e.message); }
+        }
+
+        // ==================== 图片处理（上传识别） ====================
         async function handleFiles(files) {
             const fileList = Array.from(files || []).filter(f => f && f.type && f.type.startsWith('image/'));
             if (!fileList.length) return;
@@ -1333,10 +1894,209 @@
             });
         }
 
+        // ==================== AI 绘画 / AI 视频 ====================
+        function openGenModal(type) {
+            genType = type;
+            document.getElementById('gen-modal-title').textContent = type === 'image' ? '🎨 AI 绘画' : '🎬 AI 视频生成';
+            document.getElementById('gen-prompt').placeholder = type === 'image'
+                ? '描述你想生成的画面，例如：一只戴帽子的橘猫坐在海边看日落'
+                : '描述你想生成的动态场景，例如：海浪拍打沙滩、星空下的帐篷';
+            genModal.classList.add('show');
+            setTimeout(() => document.getElementById('gen-prompt').focus(), 50);
+        }
+
+        function closeGenModal() {
+            genModal.classList.remove('show');
+            document.getElementById('gen-prompt').value = '';
+        }
+
+        async function confirmGen() {
+            const p = document.getElementById('gen-prompt').value.trim();
+            if (!p) return;
+            closeGenModal();
+            if (genType === 'image') await startGenImage(p);
+            else await startGenVideo(p);
+        }
+
+        // 生成图片：气泡内显示加载动画，图片生成完成后自动显示
+        async function startGenImage(prompt) {
+            const wrap = createGenBubble('🎨', 'AI 绘画', prompt);
+            const card = wrap.querySelector('.gen-card');
+            card.innerHTML = '<div class="gen-loading"><span class="spinner"></span>🎨 正在生成图片，约 10-30 秒…</div>';
+
+            try {
+                const data = await api('/api/ai/generate-image', { method: 'POST', body: { prompt } });
+                const img = document.createElement('img');
+                img.className = 'gen-img';
+                img.style.display = 'none';
+                img.alt = 'AI 生成图片';
+                img.addEventListener('load', () => {
+                    card.querySelector('.gen-loading').remove();
+                    img.style.display = 'block';
+                    scrollBottom();
+                });
+                img.addEventListener('error', () => {
+                    const l = card.querySelector('.gen-loading');
+                    l.innerHTML = '❌ 图片生成失败，请重新尝试';
+                    l.querySelector && l.remove();
+                });
+                card.appendChild(img);
+                img.src = data.data.url; // 浏览器加载该 URL 时实时生成
+            } catch (e) {
+                const l = card.querySelector('.gen-loading');
+                if (l) l.innerHTML = '❌ ' + escapeHtml(e.message);
+            }
+        }
+
+        // 生成视频：多帧动画（canvas 播放 + 录制 WebM 下载）
+        async function startGenVideo(prompt) {
+            const wrap = createGenBubble('🎬', 'AI 视频', prompt);
+            const card = wrap.querySelector('.gen-card');
+
+            let data;
+            try {
+                data = await api('/api/ai/generate-video', { method: 'POST', body: { prompt } });
+            } catch (e) {
+                card.innerHTML = '<div class="gen-loading">❌ ' + escapeHtml(e.message) + '</div>';
+                return;
+            }
+
+            const frames = data.data.frames || [];
+            const fps = data.data.fps || 8;
+            if (!frames.length) {
+                card.innerHTML = '<div class="gen-loading">❌ 未获得视频帧</div>';
+                return;
+            }
+
+            card.innerHTML = '<div class="gen-loading"><span class="spinner"></span>🎬 正在生成动画帧…</div>';
+            const loading = card.querySelector('.gen-loading');
+
+            // 逐帧预加载（Pollinations URL 加载时实时生成）
+            const imgs = [];
+            for (let i = 0; i < frames.length; i++) {
+                loading.textContent = '🎬 正在生成动画帧 ' + (i + 1) + '/' + frames.length + '…';
+                const im = new Image();
+                await new Promise(res => {
+                    im.onload = res;
+                    im.onerror = res;
+                    im.src = frames[i];
+                });
+                if (im.width > 0) imgs.push(im);
+                scrollBottom();
+            }
+            if (!imgs.length) {
+                loading.innerHTML = '❌ 动画帧生成失败，请重新尝试';
+                return;
+            }
+
+            // 搭建播放舞台
+            card.innerHTML = '';
+            const stage = document.createElement('div');
+            stage.className = 'video-stage';
+            const canvas = document.createElement('canvas');
+            canvas.className = 'gen-canvas';
+            canvas.width = Math.min(imgs[0].width || 768, 480);
+            canvas.height = Math.round(canvas.width * ((imgs[0].height || 768) / (imgs[0].width || 768)));
+            const ctx = canvas.getContext('2d');
+            const ctrl = document.createElement('div');
+            ctrl.className = 'video-ctrl';
+            const playBtn = document.createElement('button');
+            playBtn.className = 'v-btn';
+            playBtn.textContent = '▶ 播放';
+            const recBtn = document.createElement('button');
+            recBtn.className = 'v-btn';
+            recBtn.textContent = '⬇ 下载 WebM';
+            ctrl.appendChild(playBtn);
+            ctrl.appendChild(recBtn);
+            stage.appendChild(canvas);
+            stage.appendChild(ctrl);
+            card.appendChild(stage);
+
+            let idx = 0;
+            let timer = null;
+
+            function drawFrame(i) {
+                ctx.drawImage(imgs[i], 0, 0, canvas.width, canvas.height);
+            }
+            drawFrame(0);
+
+            playBtn.addEventListener('click', () => {
+                if (timer) {
+                    clearInterval(timer);
+                    timer = null;
+                    playBtn.textContent = '▶ 播放';
+                    return;
+                }
+                playBtn.textContent = '⏸ 暂停';
+                timer = setInterval(() => {
+                    idx = (idx + 1) % imgs.length;
+                    drawFrame(idx);
+                }, 1000 / fps);
+            });
+
+            // 播放一遍（供录制使用）
+            function playOnce() {
+                return new Promise(res => {
+                    if (timer) { clearInterval(timer); timer = null; playBtn.textContent = '▶ 播放'; }
+                    let i = 0;
+                    const iv = setInterval(() => {
+                        drawFrame(i);
+                        i++;
+                        if (i >= imgs.length) { clearInterval(iv); res(); }
+                    }, 1000 / fps);
+                });
+            }
+
+            recBtn.addEventListener('click', async () => {
+                if (timer) { clearInterval(timer); timer = null; playBtn.textContent = '▶ 播放'; }
+                recBtn.disabled = true;
+                recBtn.textContent = '⏳ 正在录制…';
+                try {
+                    const stream = canvas.captureStream(fps);
+                    const rec = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                    const chunks = [];
+                    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+                    const done = new Promise(r => { rec.onstop = r; });
+                    rec.start();
+                    await playOnce();
+                    rec.stop();
+                    await done;
+                    const blob = new Blob(chunks, { type: 'video/webm' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'stc-ai-video.webm';
+                    a.click();
+                    recBtn.textContent = '✅ 已下载';
+                } catch (e) {
+                    recBtn.textContent = '❌ 录制失败';
+                }
+                recBtn.disabled = false;
+                setTimeout(() => { recBtn.textContent = '⬇ 下载 WebM'; }, 3000);
+            });
+
+            scrollBottom();
+        }
+
         // ==================== 发送消息（流式） ====================
         async function send() {
             const text = inputEl.value.trim();
             if ((!text && !pendingImages.length) || sending) return;
+
+            // 自然语言触发 AI 绘画 / 视频
+            const mImg = text.match(/^(画|画一张|帮我画|生成图片|生成一张图片|绘图)[:：\s]+([\s\S]+)/);
+            const mVid = text.match(/^(生成视频|做个视频|做视频|视频)[:：\s]+([\s\S]+)/);
+            if (mImg && !pendingImages.length) {
+                inputEl.value = '';
+                autoResize();
+                await startGenImage(mImg[2].trim());
+                return;
+            }
+            if (mVid && !pendingImages.length) {
+                inputEl.value = '';
+                autoResize();
+                await startGenVideo(mVid[2].trim());
+                return;
+            }
 
             const userMsg = { role: 'user', content: text, images: pendingImages.slice() };
             inputEl.value = '';
@@ -1373,10 +2133,12 @@
                             'X-Request-Nonce': genNonce()
                         },
                         body: JSON.stringify({
-                            messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
+                            messages: messages,
                             model: modelSelect.value,
                             conversationId: convId,
-                            thinking: thinkingMode
+                            thinking: thinkingMode,
+                            mode: codeMode ? 'code' : 'chat',
+                            skillId: activeSkillId || undefined
                         })
                     });
                     if (resp.status === 403 && !retried) {
@@ -1407,6 +2169,7 @@
                 let reasoning = '';
                 let thinkBox = null;
                 let thinkContentEl = null;
+                let ctxNoticed = false;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -1422,6 +2185,21 @@
                         if (!data || data === '[DONE]') continue;
                         try {
                             const json = JSON.parse(data);
+
+                            // 上下文压缩通知
+                            if (json.type === 'ctx_compressed' && !ctxNoticed) {
+                                ctxNoticed = true;
+                                const note = document.createElement('div');
+                                note.className = 'msg msg-system';
+                                const nb = document.createElement('div');
+                                nb.className = 'bubble';
+                                nb.textContent = json.message || '📦 已自动压缩早前对话';
+                                note.appendChild(nb);
+                                chatBoxInner.insertBefore(note, aiEl);
+                                scrollBottom();
+                                continue;
+                            }
+
                             const delta = json.choices && json.choices[0] && json.choices[0].delta;
                             if (!delta) continue;
 
@@ -1489,7 +2267,15 @@
             inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px';
         }
 
-        // ==================== 思考模式切换 ====================
+        // ==================== 模式切换 ====================
+        function updateHeaderSub() {
+            const parts = [];
+            if (codeMode) parts.push('💻 编程模式');
+            parts.push(thinkingMode === 'deep' ? '深度思考' : '快速响应');
+            parts.push('图片识别', '生成能力');
+            document.getElementById('header-sub').textContent = parts.join(' · ');
+        }
+
         function setThinkingMode(mode, forceModel = true) {
             thinkingMode = mode;
             localStorage.setItem('stc_ai_thinking', mode);
@@ -1499,9 +2285,14 @@
             }
             document.getElementById('mode-deep').classList.toggle('active', mode === 'deep');
             document.getElementById('mode-fast').classList.toggle('active', mode === 'fast');
-            document.getElementById('header-sub').textContent = mode === 'deep'
-                ? '深度思考 · 图片识别 · 流式输出'
-                : '快速响应 · 图片识别 · 流式输出';
+            updateHeaderSub();
+        }
+
+        function setCodeMode(on) {
+            codeMode = on;
+            localStorage.setItem('stc_ai_code', on ? '1' : '0');
+            codeBtn.classList.toggle('active', on);
+            updateHeaderSub();
         }
 
         // ==================== 事件绑定 ====================
@@ -1538,8 +2329,40 @@
             localStorage.setItem('stc_ai_model', modelSelect.value);
         });
 
+        skillSelect.addEventListener('change', async () => {
+            const id = skillSelect.value;
+            if (!id) { activeSkillId = null; return; }
+            try {
+                const r = await api('/api/ai/skills/' + id + '/activate', { method: 'POST' });
+                activeSkillId = r.data.activeSkillId;
+            } catch (e) { alert(e.message); }
+        });
+
         document.getElementById('mode-deep').addEventListener('click', () => setThinkingMode('deep'));
         document.getElementById('mode-fast').addEventListener('click', () => setThinkingMode('fast'));
+        codeBtn.addEventListener('click', () => setCodeMode(!codeMode));
+
+        // 技能市场
+        document.getElementById('skill-market-btn').addEventListener('click', openSkillModal);
+        document.getElementById('skill-modal-close').addEventListener('click', () => skillModal.classList.remove('show'));
+        skillModal.addEventListener('click', (e) => {
+            if (e.target === skillModal) skillModal.classList.remove('show');
+        });
+
+        // 生成弹窗
+        document.getElementById('gen-img-btn').addEventListener('click', () => openGenModal('image'));
+        document.getElementById('gen-video-btn').addEventListener('click', () => openGenModal('video'));
+        document.getElementById('gen-modal-close').addEventListener('click', closeGenModal);
+        document.getElementById('gen-confirm').addEventListener('click', confirmGen);
+        document.getElementById('gen-prompt').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                confirmGen();
+            }
+        });
+        genModal.addEventListener('click', (e) => {
+            if (e.target === genModal) closeGenModal();
+        });
 
         // 图片上传
         const fileInput = document.getElementById('file-input');
@@ -1629,10 +2452,12 @@
             }
             const savedModel = localStorage.getItem('stc_ai_model');
             modelSelect.value = MODELS[savedModel] ? savedModel : (thinkingMode === 'deep' ? DEEP_MODEL : FAST_MODEL);
+
             setThinkingMode(thinkingMode, false);
+            setCodeMode(codeMode);
 
             getCSRFToken(); // 预取 CSRF token，首次提问更快
-            await loadConvs();
+            await Promise.all([loadConvs(), loadSkills()]);
             renderAll();
             inputEl.focus();
         })();

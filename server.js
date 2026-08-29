@@ -2179,6 +2179,203 @@ function normalizeAIMessages(messages) {
     });
 }
 
+// ==================== AI 技能市场 ====================
+const AI_SKILLS = [
+    { id: 'code', name: '编程专家', icon: '💻', desc: '编写、调试、优化代码，讲解算法与架构', system: '你是资深软件工程师。优先给出完整、可直接运行的代码示例，并解释关键实现。涉及技术选型时给出对比和建议。' },
+    { id: 'translate', name: '翻译官', icon: '🌐', desc: '中英互译，提供地道自然的表达', system: '你是专业翻译。逐句提供准确、地道的翻译，必要时附上简短的语法或文化注释。中译英时追求自然，英译中时保持原意。' },
+    { id: 'writer', name: '文案写手', icon: '✍️', desc: '周报、通知、宣传文案、演讲稿', system: '你是资深文案。能撰写周报、通知、宣传文案、演讲稿等。文字简洁有感染力，结构清晰，符合中文职场表达习惯。' },
+    { id: 'idea', name: '点子王', icon: '💡', desc: '头脑风暴、创意策划、方案建议', system: '你是创意策划专家。面对问题时给出多个有差异化的方案，并简要评估优劣。思维活跃但不脱离实际，鼓励大胆想法。' },
+    { id: 'study', name: '学习导师', icon: '📚', desc: '深入浅出讲解概念，举一反三', system: '你是耐心的学习导师。用生活化的类比讲解概念，由浅入深，并出练习题帮助巩固，最后给出总结。' },
+    { id: 'life', name: '生活助手', icon: '🎯', desc: '日程规划、健康饮食、生活小妙招', system: '你是贴心的生活助手。帮助规划日程、推荐健康饮食、提供实用生活技巧。建议具体、可执行。' }
+];
+
+// 用户技能状态（存储在用户对象上）
+function getUserAISkills(user) {
+    if (!user.ai_skills || typeof user.ai_skills !== 'object') user.ai_skills = { installed: [], active: null };
+    if (!Array.isArray(user.ai_skills.installed)) user.ai_skills.installed = [];
+    return user.ai_skills;
+}
+
+// 获取用户当前启用的技能定义
+function getActiveSkill(user) {
+    const st = getUserAISkills(user);
+    if (!st.active || !st.installed.includes(st.active)) return null;
+    return AI_SKILLS.find(k => k.id === st.active) || null;
+}
+
+app.get('/api/ai/skills', requireLogin, (req, res) => {
+    const st = getUserAISkills(req.currentUser);
+    const skills = AI_SKILLS.map(k => ({ id: k.id, name: k.name, icon: k.icon, desc: k.desc, installed: st.installed.includes(k.id) }));
+    res.json({ success: true, data: { skills, activeSkillId: (st.installed.includes(st.active) ? st.active : null) } });
+});
+
+app.post('/api/ai/skills/:id/install', requireLogin, requireRateLimit('ai'), requireCSRF, async (req, res) => {
+    const skill = AI_SKILLS.find(k => k.id === req.params.id);
+    if (!skill) return res.status(404).json({ success: false, message: '技能不存在' });
+    const st = getUserAISkills(req.currentUser);
+    if (!st.installed.includes(skill.id)) {
+        st.installed.push(skill.id);
+        if (!st.active) st.active = skill.id;
+        await db.write();
+    }
+    res.json({ success: true, data: { installed: st.installed, activeSkillId: st.active } });
+});
+
+app.post('/api/ai/skills/:id/uninstall', requireLogin, requireRateLimit('ai'), requireCSRF, async (req, res) => {
+    const skill = AI_SKILLS.find(k => k.id === req.params.id);
+    if (!skill) return res.status(404).json({ success: false, message: '技能不存在' });
+    const st = getUserAISkills(req.currentUser);
+    st.installed = st.installed.filter(x => x !== skill.id);
+    if (st.active === skill.id) st.active = null;
+    await db.write();
+    res.json({ success: true, data: { installed: st.installed, activeSkillId: st.active } });
+});
+
+app.post('/api/ai/skills/:id/activate', requireLogin, requireRateLimit('ai'), requireCSRF, async (req, res) => {
+    const st = getUserAISkills(req.currentUser);
+    if (!st.installed.includes(req.params.id)) return res.status(400).json({ success: false, message: '请先安装该技能' });
+    st.active = req.params.id;
+    await db.write();
+    res.json({ success: true, data: { activeSkillId: st.active } });
+});
+
+// ==================== AI 图片/视频生成（Pollinations 免 Key） ====================
+const POLLINATIONS_IMAGE = 'https://image.pollinations.ai/prompt/';
+const AI_IMAGE_BLOCK = ['裸体', '裸照', '色情', '性感写真', '儿童色情', '血腥', '暴力', '恐怖袭击', '枪支', '毒品', '自杀', '赌博'];
+const AI_GEN_MODEL = process.env.AI_GEN_MODEL || 'flux';
+
+// 构造 Pollinations 图片 URL（图片在浏览器加载时实时生成）
+function aiImageUrl(prompt, size, seed) {
+    const parts = (size || '1024x1024').toLowerCase().split('x');
+    const params = ['nologo=true', 'safe=true', 'model=' + AI_GEN_MODEL];
+    if (parts[0] && /^\d+$/.test(parts[0])) params.push('width=' + parseInt(parts[0]));
+    if (parts[1] && /^\d+$/.test(parts[1])) params.push('height=' + parseInt(parts[1]));
+    if (seed !== undefined) params.push('seed=' + seed);
+    return POLLINATIONS_IMAGE + encodeURIComponent(prompt) + '?' + params.join('&');
+}
+
+// 生成内容安全检查
+function checkGenPrompt(prompt) {
+    const p = (prompt || '').trim();
+    if (!p) return '缺少内容描述';
+    if (p.length > 300) return '描述过长（最多 300 字）';
+    for (const w of AI_IMAGE_BLOCK) {
+        if (p.toLowerCase().includes(w)) return '内容涉及不适宜生成的主题，请重新描述';
+    }
+    return null;
+}
+
+app.post('/api/ai/generate-image', requireLogin, requireRateLimit('ai'), requireCSRF, (req, res) => {
+    const { prompt, size } = req.body || {};
+    const err = checkGenPrompt(prompt);
+    if (err) return res.status(400).json({ success: false, message: err });
+    const url = aiImageUrl(prompt.trim().slice(0, 300), size || '1024x1024');
+    res.json({ success: true, data: { url, size: size || '1024x1024' } });
+});
+
+// 视频生成：返回多帧动画序列（前端 canvas 合成播放 / 录制 WebM）
+app.post('/api/ai/generate-video', requireLogin, requireRateLimit('ai'), requireCSRF, (req, res) => {
+    const { prompt } = req.body || {};
+    const err = checkGenPrompt(prompt);
+    if (err) return res.status(400).json({ success: false, message: err });
+    const p = prompt.trim().slice(0, 200);
+    const FRAMES = 8;
+    const frames = [];
+    for (let i = 0; i < FRAMES; i++) {
+        const fp = 'cinematic AI animation of ' + p + ', motion frame ' + (i + 1) + ' of ' + FRAMES + ', smooth subtle motion, film still';
+        frames.push(aiImageUrl(fp, '768x768', 1000 + i));
+    }
+    res.json({ success: true, data: { frames, fps: 8 } });
+});
+
+// ==================== 上下文压缩（长对话自动摘要） ====================
+const AI_COMPRESS_THRESHOLD = 6000; // 超过该字符数触发压缩
+const ctxSummaryCache = new Map();  // 指纹 -> 摘要（避免重复压缩调用）
+
+function aiMsgTextLen(m) {
+    if (typeof m.content === 'string') return m.content.length;
+    if (Array.isArray(m.content)) return m.content.reduce((s, p) => s + (p && p.text ? p.text.length : 0), 0);
+    return 0;
+}
+
+// 单条消息标准化（不截断条数，压缩用）
+function stdAIMessage(m) {
+    const role = m.role === 'assistant' ? 'assistant' : 'user';
+    const text = typeof m.content === 'string' ? m.content : (m.content || '');
+    const images = Array.isArray(m.images) ? m.images.slice(0, 4) : [];
+    if (role === 'user' && images.length) {
+        const content = [{ type: 'text', text: text.slice(0, AI_MAX_CONTENT) }];
+        for (const img of images) {
+            const url = typeof img === 'string' ? img : (img.data ? `data:${img.mime || 'image/jpeg'};base64,${img.data}` : '');
+            if (url && url.length < 4 * 1024 * 1024) content.push({ type: 'image_url', image_url: { url } });
+        }
+        return { role, content };
+    }
+    return { role, content: text.slice(0, AI_MAX_CONTENT) };
+}
+
+// 调用上游模型生成历史摘要（非流式）
+function aiSummarize(history) {
+    return new Promise((resolve, reject) => {
+        const transcript = history.map(m =>
+            (m.role === 'user' ? '用户' : '助手') + '：' +
+            (typeof m.content === 'string' ? m.content : (m.content || []).map(p => (p && p.text) || '[图片]').join(' '))
+        ).join('\n');
+        const body = JSON.stringify({
+            model: SENSENOVA_DEFAULT_MODEL,
+            messages: [{ role: 'user', content: '请把下面的对话历史压缩成一段简洁的中文摘要，保留用户需求、关键结论、重要数据与代码要点。只输出摘要，不要任何解释和前缀：\n\n' + transcript.slice(-16000) }],
+            temperature: 0.3,
+            max_tokens: 500,
+            stream: false
+        });
+        const uReq = https.request(`${SENSENOVA_BASE_URL}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SENSENOVA_API_KEY}`, 'Content-Length': Buffer.byteLength(body) },
+            timeout: 30000
+        }, (uRes) => {
+            let buf = '';
+            uRes.on('data', c => buf += c);
+            uRes.on('end', () => {
+                try {
+                    const j = JSON.parse(buf);
+                    const c = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+                    resolve(c ? c.trim() : '');
+                } catch (e) { resolve(''); }
+            });
+        });
+        uReq.on('timeout', () => uReq.destroy(new Error('上游摘要请求超时')));
+        uReq.on('error', (e) => reject(e));
+        uReq.write(body);
+        uReq.end();
+    });
+}
+
+// 智能压缩历史：超长时把早期消息压成摘要
+async function compressAIHistory(msgs) {
+    let total = 0;
+    for (const m of msgs) total += aiMsgTextLen(m);
+    if (total <= AI_COMPRESS_THRESHOLD || msgs.length <= 4) return { messages: msgs, compressed: false };
+
+    const keep = msgs.slice(-2);      // 保留最近 2 条
+    const hist = msgs.slice(0, -2);   // 更早的用于压缩
+    if (!hist.length) return { messages: msgs, compressed: false };
+
+    const key = crypto.createHash('md5').update(hist.map(m => m.role + ':' + aiMsgTextLen(m)).join('|')).digest('hex');
+    let summary = ctxSummaryCache.get(key);
+    if (!summary) {
+        try { summary = await aiSummarize(hist); } catch (e) { summary = ''; }
+        if (summary) {
+            ctxSummaryCache.set(key, summary);
+            if (ctxSummaryCache.size > 80) ctxSummaryCache.delete(ctxSummaryCache.keys().next().value);
+        }
+    }
+    if (!summary) return { messages: msgs, compressed: false };
+    return {
+        messages: [{ role: 'user', content: '【以下为更早对话的自动摘要，请视为真实对话上下文】' + summary.slice(0, 1200) }, ...keep],
+        compressed: true
+    };
+}
+
 // 会话列表（不携带完整消息，避免数据量过大）
 app.get('/api/ai/conversations', requireLogin, async (req, res) => {
     const list = (db.data.ai_conversations || [])
@@ -2236,7 +2433,7 @@ app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, asyn
         if (!SENSENOVA_API_KEY) {
             return res.status(500).json({ success: false, message: '服务器尚未配置 SenseNova API Key（SENSENOVA_API_KEY）' });
         }
-        const { messages, model, conversationId, thinking } = req.body || {};
+        const { messages, model, conversationId, thinking, mode, skillId } = req.body || {};
         if (!Array.isArray(messages) || !messages.length) {
             return res.status(400).json({ success: false, message: '缺少对话内容' });
         }
@@ -2249,24 +2446,51 @@ app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, asyn
             chosenModel = (thinking === 'fast') ? 'deepseek-v4-flash' : SENSENOVA_DEFAULT_MODEL;
         }
 
-        const safeMessages = normalizeAIMessages(messages);
+        // 组装系统提示词（基础人格 + 技能 + 编程模式）
+        let systemPrompt = '你是STC工会任务平台的AI助手，由商汤日日新（SenseNova）大模型提供技术支持。请用简洁、友好的中文回答问题，涉及代码时给出完整可运行的示例。可以分析用户上传的图片。';
+        const activeSkill = (skillId && AI_SKILLS.find(k => k.id === skillId && getUserAISkills(req.currentUser).installed.includes(skillId)))
+            || getActiveSkill(req.currentUser);
+        if (activeSkill) {
+            systemPrompt += '\n\n【当前启用技能：' + activeSkill.name + '】\n' + activeSkill.system;
+        }
+        if (mode === 'code') {
+            systemPrompt += '\n\n【编程模式】请以资深工程师的方式工作：优先给出完整可运行的代码，注意边界情况与安全性，必要时给出调用示例与测试。';
+        }
 
-        // 总字符超限时只保留最近的消息（保证 system 提示词始终在前）
+        // 规范化消息（过滤前端传入的 system，系统提示词由后端统一组装）
+        const stdMsgs = messages.filter(m => m.role !== 'system').map(stdAIMessage).filter(m => {
+            if (typeof m.content === 'string') return m.content.length > 0;
+            return Array.isArray(m.content) && m.content.length > 0;
+        });
+
+        // 智能上下文压缩：长对话自动摘要（压缩后通过 SSE 通知前端）
+        let ctxCompressed = false;
+        let safeMessages = stdMsgs;
+        try {
+            const c = await compressAIHistory(stdMsgs);
+            safeMessages = c.messages;
+            ctxCompressed = c.compressed;
+        } catch (e) {
+            console.error('[AI] 上下文压缩失败:', e.message);
+        }
+
+        // 总字符超限兜底：只保留最近的消息
         let totalChars = safeMessages.reduce((s, m) => {
             if (typeof m.content === 'string') return s + m.content.length;
             return s + m.content.reduce((x, part) => x + (part.text ? part.text.length : 0), 0);
         }, 0);
         while (totalChars > AI_MAX_TOTAL && safeMessages.length > 2) {
-            const dropped = safeMessages.splice(1, 1)[0];  // 丢掉最旧的非 system 消息
+            const dropped = safeMessages.splice(1, 1)[0];
             const droppedLen = typeof dropped.content === 'string' ? dropped.content.length
                 : dropped.content.reduce((x, part) => x + (part.text ? part.text.length : 0), 0);
             totalChars -= droppedLen;
         }
+        safeMessages = safeMessages.slice(-AI_MAX_MESSAGES);
 
         // 使用 https 模块转发上游（长驻进程下 fetch/undici 不稳定，改用核心模块）
         const upstreamBody = JSON.stringify({
             model: chosenModel,
-            messages: safeMessages,
+            messages: [{ role: 'system', content: systemPrompt }, ...safeMessages],
             temperature: 0.7,
             stream: true
         });
@@ -2299,6 +2523,12 @@ app.post('/api/ai/chat', requireLogin, requireRateLimit('ai'), requireCSRF, asyn
                     res.setHeader('Connection', 'keep-alive');
                     res.setHeader('X-Accel-Buffering', 'no');
                     res.flushHeaders();
+                    // 通知前端：已自动压缩早前对话
+                    if (ctxCompressed) {
+                        try {
+                            res.write('data: ' + JSON.stringify({ type: 'ctx_compressed', message: '📦 对话较长，已自动压缩早前内容并保留关键信息' }) + '\n\n');
+                        } catch (e) {}
+                    }
                     uRes.on('data', (chunk) => {
                         try { res.write(chunk); } catch (e) {}
                         try {
