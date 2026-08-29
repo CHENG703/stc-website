@@ -10,3 +10,5 @@ ngrok.zip
 sessions/
 debug-*.md
 debug-*.js
+cookies.txt
+github_oauth.txt

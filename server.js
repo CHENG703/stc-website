@@ -60,11 +60,11 @@ if (KV_ENABLED) {
     }
 }
 
-// Logto 配置
+// Logto 配置（安全修复：appId/appSecret 必须由环境变量提供，不再内置默认凭据）
 const LOGTO_CONFIG = {
     endpoint: process.env.LOGTO_ENDPOINT || 'https://auth.manymice.cn',
-    appId: process.env.LOGTO_APP_ID || '4rffjd8k4tvznc89u8ja9',
-    appSecret: process.env.LOGTO_APP_SECRET || 'aaK7xTKFM9HlfM2FZd8mOya07EFYf1PD',
+    appId: process.env.LOGTO_APP_ID || '',
+    appSecret: process.env.LOGTO_APP_SECRET || '',
     baseUrl: process.env.LOGTO_BASE_URL || 'https://stcwork.top',
     authRoutesPrefix: 'logto',
 };
@@ -839,7 +839,8 @@ if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-const dangerousExtensions = ['.exe', '.bat', '.cmd', '.sh', '.ps1', '.vbs', '.js', '.jar', '.msi', '.dll', '.scr', '.pif', '.com'];
+// 安全修复：补充 .html/.htm/.svg 等可被浏览器直接执行/包含脚本的类型，防止上传后形成存储型 XSS
+const dangerousExtensions = ['.exe', '.bat', '.cmd', '.sh', '.ps1', '.vbs', '.js', '.jar', '.msi', '.dll', '.scr', '.pif', '.com', '.html', '.htm', '.svg', '.xhtml', '.shtml']; 
 
 // 修复文件名编码（latin1 → utf8）
 function fixFilenameEncoding(filename) {
@@ -1002,7 +1003,10 @@ if (!fs.existsSync(sessionDir)) {
     try { fs.mkdirSync(sessionDir, { recursive: true }); } catch (e) {}
 }
 
-const SESSION_SECRET = process.env.SESSION_SECRET || 'STC_SECRET_KEY_2025';
+// 安全修复：所有密钥必须通过环境变量提供，未设置时使用进程内随机值。
+// 生产环境请务必配置 SESSION_SECRET / TOKEN_SECRET 环境变量，否则重启/多实例会导致会话与 token 失效。
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+const TOKEN_SECRET = process.env.TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
 
 // 自定义 Session Store：将 session 数据加密后存储在客户端 cookie 中
 // 解决 Vercel Serverless 跨实例 session 不共享的问题
@@ -1010,7 +1014,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || 'STC_SECRET_KEY_2025';
 class CookieStore extends session.Store {
     constructor(options = {}) {
         super(options);
-        this.secret = options.secret || 'default-secret';
+        this.secret = options.secret || SESSION_SECRET;
     }
 
     async get(sid, callback) {
@@ -1338,17 +1342,30 @@ app.use((req, res, next) => {
         const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
         try {
             const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
-            if (decoded.userId && decoded.ts && (Date.now() - decoded.ts < 24 * 60 * 60 * 1000)) {
-                authUser = {
-                    id: decoded.userId,
-                    username: decoded.username,
-                    email: decoded.email || '',
-                    is_admin: decoded.isAdmin,
-                    is_super_admin: decoded.isSuperAdmin
-                };
+            // 安全修复：token 必须携带由 TOKEN_SECRET 生成的 HMAC-SHA256 签名。
+            // 无签名 / 签名不匹配 / 篡改过权限字段的 token 一律拒绝，防止伪造管理员。
+            const { sig, ...payload } = decoded;
+            if (!sig || !payload.userId || !payload.ts) {
+                throw new Error('missing signature or fields');
             }
+            const expectedSig = crypto.createHmac('sha256', TOKEN_SECRET)
+                .update(JSON.stringify(payload))
+                .digest('base64url');
+            if (sig !== expectedSig) {
+                throw new Error('invalid signature');
+            }
+            if (Date.now() - payload.ts >= 24 * 60 * 60 * 1000) {
+                throw new Error('expired');
+            }
+            authUser = {
+                id: payload.userId,
+                username: payload.username,
+                email: payload.email || '',
+                is_admin: !!payload.isAdmin,
+                is_super_admin: !!payload.isSuperAdmin
+            };
         } catch (e) {
-            console.warn('[AUTH] token 解析失败:', e.message);
+            console.warn('[AUTH] token 验证失败:', e.message);
         }
     }
     
@@ -1363,7 +1380,7 @@ app.use((req, res, next) => {
         req.session.isSuperAdmin = authUser.is_super_admin;
     }
     
-    // 生成 token 的辅助函数
+    // 生成 token 的辅助函数（HMAC-SHA256 签名，防伪造）
     req.generateAuthToken = (user) => {
         const tokenData = {
             userId: user.id,
@@ -1373,6 +1390,9 @@ app.use((req, res, next) => {
             isSuperAdmin: user.is_super_admin,
             ts: Date.now()
         };
+        tokenData.sig = crypto.createHmac('sha256', TOKEN_SECRET)
+            .update(JSON.stringify(tokenData))
+            .digest('base64url');
         return Buffer.from(JSON.stringify(tokenData)).toString('base64');
     };
     
@@ -1439,29 +1459,9 @@ async function initDatabase() {
     if (!Array.isArray(db.data.ai_conversations)) db.data.ai_conversations = [];
     await db.write();
     
-    const adminUser = db.data.users.find(u => u.username === 'REDACTED_USER');
-    if (!adminUser) {
-        const hash = bcrypt.hashSync('REDACTED', 10);
-        db.data.users.push({
-            id: Date.now(),
-            username: 'REDACTED_USER',
-            email: 'REDACTED@example.com',
-            password: hash,
-            is_admin: true,
-            is_super_admin: true,
-            is_banned: false,
-            login_attempts: 0,
-            created_at: new Date().toISOString()
-        });
-        await db.write();
-        console.log('[INIT] 超级管理员账号已创建: REDACTED_USER');
-    } else {
-        if (adminUser.email !== 'REDACTED@example.com') {
-            adminUser.email = 'REDACTED@example.com';
-            await db.write();
-        }
-        console.log('[INIT] 超级管理员账号已存在: REDACTED_USER');
-    }
+    // 安全修复：不再自动创建硬编码管理员账号（原 REDACTED_USER/REDACTED 凭据已从源码移除）。
+    // 超级管理员统一由 ensureAdminUser() 根据环境变量 ADMIN_USERNAME/ADMIN_PASSWORD 创建。
+    // 注意：数据库中已存在的旧账号不会自动删除，请登录后在管理后台修改密码，或修改对应数据。
     
     if (!db.data.verification_codes) {
         db.data.verification_codes = [];
@@ -1509,28 +1509,10 @@ async function getCurrentUser(req) {
             return user;
         }
 
-        // 数据库中找不到用户，直接从 token 构建用户对象
-        // token 已经验证了用户身份，不需要依赖数据库
-        console.log('[AUTH] 数据库中未找到用户，使用 token 信息构建用户:', req.authUser.username);
-        const tokenUser = {
-            id: req.authUser.id,
-            username: req.authUser.username,
-            email: req.authUser.email || '',
-            is_admin: req.authUser.is_admin,
-            is_super_admin: req.authUser.is_super_admin,
-            status: 'active',
-            password: ''
-        };
-
-        // 仅在 session 缺失时同步，避免每次请求都触发 Set-Cookie
-        if (!req.session.userId) {
-            req.session.userId = tokenUser.id;
-            req.session.username = tokenUser.username;
-            req.session.isAdmin = tokenUser.is_admin;
-            req.session.isSuperAdmin = tokenUser.is_super_admin;
-        }
-
-        return tokenUser;
+        // 安全修复：数据库中找不到用户时拒绝认证。
+        // 绝不能信任 token 中携带的 isAdmin/isSuperAdmin 字段，否则可伪造任意管理员 token。
+        console.warn('[AUTH] 数据库中未找到用户，拒绝认证:', req.authUser.id, req.authUser.username);
+        return null;
     }
     
     // 如果没有 authUser，尝试用 session
@@ -4712,7 +4694,8 @@ app.post('/api/db/import', requireSuperAdmin, express.json({ limit: '10mb' }), r
 // ============================================================
 // AstrBot 机器人集成 API
 // ============================================================
-const BOT_API_KEY = process.env.BOT_API_KEY || 'stc_bot_secret_key_change_me';
+// 安全修复：机器人 API Key 必须由环境变量提供，未设置时使用进程内随机值
+const BOT_API_KEY = process.env.BOT_API_KEY || crypto.randomBytes(16).toString('hex');
 
 // 机器人状态缓存（跨Vercel实例通过数据库共享）
 async function ensureBotCollections() {
