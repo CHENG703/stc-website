@@ -2601,7 +2601,9 @@ app.post('/api/invite/request', requireRateLimit('invite'), requireCSRF, async (
 
     // 邮件里的审批链接域名优先使用环境变量 SITE_URL，没有就检测部署环境，没有就回落到请求 host
     function getPublicSiteUrl(req) {
-        if (process.env.SITE_URL) {
+        // 本地开发环境：不使用 SITE_URL（否则邮件审批链接会指向生产域名，本地点击打不开）
+        const isLocalDev = !process.env.VERCEL && !process.env.ZEABUR && !process.env.RAILWAY && process.env.NODE_ENV !== 'production';
+        if (!isLocalDev && process.env.SITE_URL) {
             const url = process.env.SITE_URL.replace(/\/$/, '');
             console.log(`[DEBUG-SITEURL] 使用 SITE_URL 环境变量: ${url}`);
             return url;
@@ -2964,7 +2966,9 @@ app.post('/api/invite/requests/:id/reject', requireAdmin, requireRateLimit('admi
 // ============================================================
 // 审批邮件链接的站点域名：优先 SITE_URL，其次 Vercel/Zeabur 环境，最后回落到请求 host
 function getSiteBaseUrl(req) {
-    if (process.env.SITE_URL) {
+    // 本地开发环境：不使用 SITE_URL（否则邮件审批链接会指向生产域名，本地点击打不开）
+    const isLocalDev = !process.env.VERCEL && !process.env.ZEABUR && !process.env.RAILWAY && process.env.NODE_ENV !== 'production';
+    if (!isLocalDev && process.env.SITE_URL) {
         return process.env.SITE_URL.replace(/\/$/, '');
     }
     if (process.env.VERCEL && process.env.VERCEL_URL) {
