@@ -352,6 +352,25 @@
     <script>
         let pendingEmail = '';
 
+        // CSRF
+        let _csrfCache = null;
+        async function getCSRFTokenOnce() {
+            try {
+                const resp = await fetch('/api/csrf-token', { credentials: 'include' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    _csrfCache = data.csrfToken;
+                    return data.csrfToken;
+                }
+            } catch (e) { console.error('获取CSRF token失败:', e); }
+            return null;
+        }
+
+        // 一次性 nonce（防重放）
+        function genNonce() {
+            return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
+        }
+
         // 检查是否是QQ邮箱
         function isQQEmail(email) {
             return /^[1-9][0-9]{4,10}@qq\.com$/i.test(email);
@@ -393,10 +412,14 @@
             const btn = document.getElementById('apply-btn');
             
             try {
+                const token = await getCSRFTokenOnce();
                 const response = await fetch('/api/invite/request', {
                     method: 'POST',
+                    credentials: 'include',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        ...(token ? { 'X-CSRF-Token': token } : {}),
+                        'X-Request-Nonce': genNonce()
                     },
                     body: JSON.stringify({ email: pendingEmail })
                 });
