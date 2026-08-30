@@ -1023,9 +1023,29 @@ async function loadQuote() {
     const sourceEl = document.getElementById('quote-source');
     if (!textEl || !sourceEl) return;
 
-    const showQuote = (text, source) => {
-        textEl.textContent = text;
-        sourceEl.textContent = source;
+    // 打字机逐字显示名言，完成后淡入出处
+    const typeQuote = (text, source) => {
+        textEl.textContent = '';
+        sourceEl.textContent = '';
+        sourceEl.classList.remove('show');
+        textEl.classList.add('typing');
+        let index = 0;
+        const speed = 110; // 每字间隔（毫秒）
+        let typingTimer;
+        const tick = () => {
+            index++;
+            textEl.textContent = text.slice(0, index);
+            if (index >= text.length) {
+                clearInterval(typingTimer);
+                textEl.classList.remove('typing');
+                setTimeout(() => {
+                    sourceEl.textContent = source;
+                    sourceEl.classList.add('show');
+                }, 250);
+            }
+        };
+        typingTimer = setInterval(tick, speed);
+        setTimeout(tick, 60); // 稍作停顿后打出第一个字
     };
 
     // 优先从一言(Hitokoto) API 获取：https://github.com/hitokoto-osc/hitokoto
@@ -1041,11 +1061,11 @@ async function loadQuote() {
         const from = data.from || '';
         let source = from ? '《' + from + '》' : '';
         if (fromWho) source = fromWho + source;
-        showQuote(data.hitokoto, source);
+        typeQuote(data.hitokoto, source);
     } catch (e) {
         // API 不可用时使用内置名言
         const fallback = FALLBACK_QUOTES[Math.floor(Math.random() * FALLBACK_QUOTES.length)];
-        showQuote(fallback.text, fallback.source);
+        typeQuote(fallback.text, fallback.source);
     }
 }
 
