@@ -340,7 +340,7 @@ body::after {
     position: absolute;
     right: 22px;
     bottom: 14px;
-    font-size: 14px;
+    font-size: 18px;
     font-weight: 500;
     color: var(--text-tertiary);
     opacity: 0;
@@ -2944,7 +2944,7 @@ body.light-theme .lang-option:hover {
     .hero-quote .quote-source {
         right: 16px;
         bottom: 12px;
-        font-size: 12px;
+        font-size: 15px;
     }
     .hero h1 {
         font-size: 32px;
