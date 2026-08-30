@@ -501,6 +501,7 @@ const NONCE_TTL = 5 * 60 * 1000;        // nonce 5分钟过期
 const _localCsrf = new Map();
 const _localRateLimit = new Map();
 const _localNonces = new Map();
+const _localCaptcha = new Map();
 
 // ---------- KV 辅助：统一封装 set/get/del，自动降级 ----------
 async function _kvGet(key) {
@@ -542,6 +543,11 @@ function _localMapGet(key) {
         if (r && Date.now() < r.expires) return r;
         _localNonces.delete(key); return null;
     }
+    if (key.startsWith('captcha:')) {
+        const r = _localCaptcha.get(key);
+        if (r && Date.now() < r.expires) return r;
+        _localCaptcha.delete(key); return null;
+    }
     return null;
 }
 function _localMapSet(key, value, ttlMs) {
@@ -549,11 +555,94 @@ function _localMapSet(key, value, ttlMs) {
     if (key.startsWith('csrf:')) _localCsrf.set(key, { ...value, expires });
     else if (key.startsWith('rate:')) _localRateLimit.set(key, { ...value, expires });
     else if (key.startsWith('nonce:')) _localNonces.set(key, { ...value, expires });
+    else if (key.startsWith('captcha:')) _localCaptcha.set(key, { ...value, expires });
 }
 function _localMapDel(key) {
     if (key.startsWith('csrf:')) _localCsrf.delete(key);
     else if (key.startsWith('rate:')) _localRateLimit.delete(key);
     else if (key.startsWith('nonce:')) _localNonces.delete(key);
+    else if (key.startsWith('captcha:')) _localCaptcha.delete(key);
+}
+
+// ---------- 人机验证（图形验证码，KV 存储，支持多实例） ----------
+const CAPTCHA_TTL = 5 * 60 * 1000;          // 验证码有效期 5 分钟
+const CAPTCHA_CHARSET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去除易混淆字符 I/L/O/0/1
+const CAPTCHA_LEN = 4;
+
+// 生成随机验证码文本
+function generateCaptchaCode() {
+    let code = '';
+    for (let i = 0; i < CAPTCHA_LEN; i++) {
+        code += CAPTCHA_CHARSET[Math.floor(Math.random() * CAPTCHA_CHARSET.length)];
+    }
+    return code;
+}
+
+// 生成 SVG 验证码图片（无需第三方图形库）
+function generateCaptchaSVG(code) {
+    const w = 150, h = 50;
+    const chars = code.split('');
+    const colors = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#db2777'];
+
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`;
+    // 背景
+    svg += `<rect width="${w}" height="${h}" fill="#f1f5f9" rx="8"/>`;
+    // 干扰线
+    for (let i = 0; i < 5; i++) {
+        const x1 = Math.floor(Math.random() * w), y1 = Math.floor(Math.random() * h);
+        const x2 = Math.floor(Math.random() * w), y2 = Math.floor(Math.random() * h);
+        svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${colors[Math.floor(Math.random() * colors.length)]}" stroke-width="${(Math.random() * 1.5 + 0.5).toFixed(1)}" opacity="0.5"/>`;
+    }
+    // 噪点
+    for (let i = 0; i < 30; i++) {
+        const x = Math.floor(Math.random() * w), y = Math.floor(Math.random() * h);
+        svg += `<circle cx="${x}" cy="${y}" r="${(Math.random() * 1.5 + 0.5).toFixed(1)}" fill="${colors[Math.floor(Math.random() * colors.length)]}" opacity="0.6"/>`;
+    }
+    // 字符（随机位置、旋转、颜色）
+    const step = w / (chars.length + 1);
+    chars.forEach((ch, i) => {
+        const x = step * (i + 1) + (Math.random() * 8 - 4);
+        const y = 33 + Math.random() * 8;
+        const rot = Math.random() * 40 - 20;
+        const size = 28 + Math.random() * 6;
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        svg += `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="${size.toFixed(1)}" font-family="Arial, sans-serif" font-weight="bold" fill="${color}" transform="rotate(${rot.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)})">${ch}</text>`;
+    });
+    svg += '</svg>';
+    return svg;
+}
+
+// 生成验证码：存入 KV（绑定 sessionID），返回 SVG 字符串
+async function createCaptcha(sessionId) {
+    const code = generateCaptchaCode();
+    const key = `captcha:${sessionId}`;
+    await _kvSet(key, { code, expires: Date.now() + CAPTCHA_TTL }, CAPTCHA_TTL);
+    return generateCaptchaSVG(code);
+}
+
+// 校验验证码：单次使用（无论对错都销毁，防暴力）
+async function verifyCaptcha(sessionId, input) {
+    if (!input || typeof input !== 'string') return false;
+    const key = `captcha:${sessionId}`;
+    const record = await _kvGet(key);
+    await _kvDel(key); // 单次使用：校验一次即作废
+    if (!record) return false;
+    if (Date.now() > record.expires) return false;
+    return record.code.toUpperCase() === input.trim().toUpperCase();
+}
+
+// 中间件：要求请求携带正确的验证码
+function requireCaptcha(req, res, next) {
+    const sid = req.sessionID || (req.cookies && req.cookies['connect.sid']) || crypto.randomUUID();
+    verifyCaptcha(sid, req.body && req.body.captcha).then(ok => {
+        if (!ok) {
+            return res.status(400).json({ success: false, message: '人机验证失败，请重新输入图形验证码' });
+        }
+        next();
+    }).catch(err => {
+        console.error('[CAPTCHA] 校验异常:', err);
+        res.status(500).json({ success: false, message: '验证码校验失败，请重试' });
+    });
 }
 
 // ---------- 通用 Rate Limit（KV 存储，支持多实例） ----------
@@ -1797,7 +1886,7 @@ app.get('/api/auth-test', async (req, res) => {
     });
 });
 
-app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) => {
+app.post('/api/login', requireRateLimit('login'), requireCSRF, requireCaptcha, async (req, res) => {
     const { username, password, code, loginType } = req.body;
     
     if (!username && loginType !== 'code') {
@@ -2032,7 +2121,7 @@ app.use('/api/', (req, res, next) => {
     next();
 });
 
-app.post('/api/register', requireRateLimit('register'), requireCSRF, async (req, res) => {
+app.post('/api/register', requireRateLimit('register'), requireCSRF, requireCaptcha, async (req, res) => {
     const { username, email, password, invite_code, verify_code } = req.body;
     
     if (!username || !email || !password || !verify_code) {
@@ -2122,6 +2211,25 @@ app.get('/api/csrf-token', (req, res) => {
     }
     const token = generateCSRFToken(req.sessionID);
     res.json({ success: true, csrfToken: token });
+});
+
+// 人机验证码图片（SVG，无 cookie 依赖，答案存 KV 绑定 sessionID）
+app.get('/api/captcha', (req, res) => {
+    // 强制保持 sessionID 稳定（同 csrf-token 的原因）
+    try {
+        if (req.session) req.session._captchaAt = Date.now();
+    } catch (e) { /* 忽略 */ }
+    const sid = req.sessionID || (req.cookies && req.cookies['connect.sid']) || crypto.randomUUID();
+    createCaptcha(sid).then(svg => {
+        res.set('Content-Type', 'image/svg+xml; charset=utf-8');
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+        res.send(svg);
+    }).catch(err => {
+        console.error('[CAPTCHA] 生成失败:', err);
+        res.status(500).send('captcha error');
+    });
 });
 
 // ==================== AI 对话（SenseNova） ====================
@@ -2658,7 +2766,7 @@ app.put('/api/user/password', requireLogin, requireRateLimit('password'), requir
     }
 });
 
-app.post('/api/send-code', requireRateLimit('verifyCode'), requireCSRF, async (req, res) => {
+app.post('/api/send-code', requireRateLimit('verifyCode'), requireCSRF, requireCaptcha, async (req, res) => {
     const { email, type } = req.body;
     
     if (!validateEmail(email)) {
@@ -3048,7 +3156,7 @@ app.get('/api/tasks/:id/download', async (req, res) => {
     res.download(task.file_path, task.file_name || 'download');
 });
 
-app.post('/api/invite/request', requireRateLimit('invite'), requireCSRF, async (req, res) => {
+app.post('/api/invite/request', requireRateLimit('invite'), requireCSRF, requireCaptcha, async (req, res) => {
     const { email } = req.body;
     
     if (!validateEmail(email)) {
@@ -3460,7 +3568,7 @@ const JOIN_ADMIN_EMAILS = (process.env.JOIN_ADMIN_EMAILS || '')
     .split(',').map(s => s.trim()).filter(Boolean);
 
 // 提交加入申请
-app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, async (req, res) => {
+app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCaptcha, async (req, res) => {
     const { qq, gameId, age, projection, playTime } = req.body || {};
 
     if (!qq || !/^\d+$/.test(qq)) {

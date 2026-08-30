@@ -156,6 +156,35 @@
             margin-top: 6px;
         }
 
+        /* 人机验证码 */
+        .captcha-row {
+            display: flex;
+            gap: 10px;
+            align-items: stretch;
+        }
+
+        .captcha-row input {
+            flex: 1;
+            width: auto;
+        }
+
+        .captcha-img {
+            width: 120px;
+            height: 50px;
+            border-radius: 10px;
+            cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: rgba(255, 255, 255, 0.05);
+            flex-shrink: 0;
+            object-fit: cover;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .captcha-img:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
+        }
+
         .submit-btn {
             width: 100%;
             margin-top: 10px;
@@ -268,6 +297,14 @@
                     <label>日常上线时间<span class="required">*</span></label>
                     <input type="text" id="f-playtime" placeholder="例如：每天晚上 19:00 - 22:00" maxlength="50" autocomplete="off">
                 </div>
+                <div class="form-group">
+                    <label>人机验证<span class="required">*</span></label>
+                    <div class="captcha-row">
+                        <input type="text" id="captcha-input" placeholder="请输入图形中的字符" maxlength="4" autocomplete="off" autocapitalize="off">
+                        <img class="captcha-img" id="captcha-img" src="/api/captcha" alt="验证码" title="点击刷新" onclick="refreshCaptcha()">
+                    </div>
+                    <div class="hint">看不清？点击图片刷新</div>
+                </div>
                 <button type="submit" id="submit-btn" class="submit-btn">提交</button>
             </form>
             <div id="msg" class="msg"></div>
@@ -313,6 +350,12 @@
             return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
         }
 
+        // 刷新人机验证码
+        function refreshCaptcha() {
+            const img = document.getElementById('captcha-img');
+            img.src = '/api/captcha?t=' + Date.now();
+        }
+
         function showMsg(text, type) {
             const msg = document.getElementById('msg');
             msg.textContent = text;
@@ -334,6 +377,7 @@
             const age = document.getElementById('f-age').value.trim();
             const projection = document.getElementById('f-projection').value.trim();
             const playTime = document.getElementById('f-playtime').value.trim();
+            const captcha = document.getElementById('captcha-input').value.trim();
 
             if (!/^\d+$/.test(qq)) {
                 return showMsg('QQ号码必须为纯数字', 'error');
@@ -342,6 +386,7 @@
             if (!age) return showMsg('请填写年龄或年级', 'error');
             if (!projection) return showMsg('请填写是否会使用投影', 'error');
             if (!playTime) return showMsg('请填写日常上线时间', 'error');
+            if (!captcha) return showMsg('请先输入人机验证码', 'error');
 
             const btn = document.getElementById('submit-btn');
             btn.disabled = true;
@@ -357,13 +402,16 @@
                         ...(token ? { 'X-CSRF-Token': token } : {}),
                         'X-Request-Nonce': genNonce()
                     },
-                    body: JSON.stringify({ qq, gameId, age, projection, playTime })
+                    body: JSON.stringify({ qq, gameId, age, projection, playTime, captcha })
                 });
                 const data = await resp.json();
                 if (data.success) {
                     showMsg('申请已提交，管理员审核通过后会通过邮件通知你！', 'success');
                     document.getElementById('join-form').reset();
                 } else {
+                    // 验证码为单次使用，提交失败后刷新验证码
+                    refreshCaptcha();
+                    document.getElementById('captcha-input').value = '';
                     showMsg(data.message || '提交失败，请稍后再试', 'error');
                 }
             } catch (err) {

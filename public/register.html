@@ -242,6 +242,40 @@
             display: block;
         }
 
+        /* 人机验证码 */
+        .captcha-row {
+            display: flex;
+            gap: 10px;
+            align-items: stretch;
+        }
+
+        .captcha-row .form-input {
+            flex: 1;
+        }
+
+        .captcha-img {
+            width: 120px;
+            height: 50px;
+            border-radius: 12px;
+            cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.05);
+            flex-shrink: 0;
+            object-fit: cover;
+            transition: all 0.3s;
+        }
+
+        .captcha-img:hover {
+            border-color: #667eea;
+            box-shadow: 0 0 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .captcha-hint {
+            margin-top: 6px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+
         .login-link {
             text-align: center;
             margin-top: 24px;
@@ -369,6 +403,15 @@
                 </div>
 
                 <div class="form-group">
+                    <label class="form-label">人机验证</label>
+                    <div class="captcha-row">
+                        <input type="text" class="form-input" id="captcha-input" name="captcha" placeholder="请输入图形中的字符" maxlength="4" autocomplete="off" autocapitalize="off">
+                        <img class="captcha-img" id="captcha-img" src="/api/captcha" alt="验证码" title="点击刷新" onclick="refreshCaptcha()">
+                    </div>
+                    <div class="captcha-hint">看不清？点击图片刷新</div>
+                </div>
+
+                <div class="form-group">
                     <label class="form-label">邀请码</label>
                     <input type="text" class="form-input" id="invite-code" name="invite-code" placeholder="请输入邀请码（选填）">
                     <div class="no-invite-link">
@@ -410,6 +453,12 @@
             return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
         }
 
+        // 刷新人机验证码
+        function refreshCaptcha() {
+            const img = document.getElementById('captcha-img');
+            img.src = '/api/captcha?t=' + Date.now();
+        }
+
         // 检查URL参数
         const urlParams = new URLSearchParams(window.location.search);
         const error = urlParams.get('error');
@@ -434,6 +483,7 @@
         let codeTimer = null;
         function sendEmailCode() {
             const email = document.getElementById('email').value.trim();
+            const captcha = document.getElementById('captcha-input').value.trim();
             const btn = document.getElementById('send-code-btn');
             
             if (!email) {
@@ -443,6 +493,11 @@
             
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
                 showError('请输入有效的邮箱地址');
+                return;
+            }
+            
+            if (!captcha) {
+                showError('请先输入人机验证码');
                 return;
             }
             
@@ -458,7 +513,7 @@
                         ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
                         'X-Request-Nonce': nonce
                     },
-                    body: JSON.stringify({ email: email, type: 'register' })
+                    body: JSON.stringify({ email: email, type: 'register', captcha })
                 });
             })
             .then(response => {
@@ -489,6 +544,8 @@
                     showError(data.message || '发送验证码失败');
                     btn.disabled = false;
                     btn.textContent = '发送验证码';
+                    refreshCaptcha();
+                    document.getElementById('captcha-input').value = '';
                 }
             })
             .catch(error => {
@@ -508,11 +565,17 @@
             const confirmPassword = document.getElementById('confirm-password').value;
             const emailCode = document.getElementById('email-code').value.trim();
             const inviteCode = document.getElementById('invite-code').value.trim();
+            const captcha = document.getElementById('captcha-input').value.trim();
             const btn = document.getElementById('register-btn');
             
             // 验证
             if (!username || !email || !password || !confirmPassword || !emailCode) {
                 showError('请填写所有必填项');
+                return;
+            }
+
+            if (!captcha) {
+                showError('请先输入人机验证码');
                 return;
             }
             
@@ -549,7 +612,7 @@
                         ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
                         'X-Request-Nonce': nonce
                     },
-                    body: JSON.stringify({ username, email, password, verify_code: emailCode, invite_code: inviteCode })
+                    body: JSON.stringify({ username, email, password, verify_code: emailCode, invite_code: inviteCode, captcha })
                 });
                 
                 const data = await response.json();
@@ -560,6 +623,9 @@
                         window.location.href = '/login?message=' + encodeURIComponent('注册成功，请登录');
                     }, 1000);
                 } else {
+                    // 验证码为单次使用，注册失败后刷新验证码
+                    refreshCaptcha();
+                    document.getElementById('captcha-input').value = '';
                     showError(data.message || '注册失败');
                     btn.disabled = false;
                     btn.textContent = '注 册';

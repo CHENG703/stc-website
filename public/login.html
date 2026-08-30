@@ -447,6 +447,40 @@
             cursor: not-allowed;
         }
 
+        /* 人机验证码 */
+        .captcha-row {
+            display: flex;
+            gap: 10px;
+            align-items: stretch;
+        }
+
+        .captcha-row .form-input {
+            flex: 1;
+        }
+
+        .captcha-img {
+            width: 120px;
+            height: 50px;
+            border-radius: 12px;
+            cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.05);
+            flex-shrink: 0;
+            object-fit: cover;
+            transition: all 0.3s;
+        }
+
+        .captcha-img:hover {
+            border-color: #667eea;
+            box-shadow: 0 0 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .captcha-hint {
+            margin-top: 6px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+
         .hidden {
             display: none !important;
         }
@@ -521,6 +555,16 @@
                     </div>
                 </div>
 
+                <!-- 人机验证 -->
+                <div class="form-group">
+                    <label class="form-label">人机验证</label>
+                    <div class="captcha-row">
+                        <input type="text" class="form-input" id="captcha-input" name="captcha" placeholder="请输入图形中的字符" maxlength="4" autocomplete="off" autocapitalize="off">
+                        <img class="captcha-img" id="captcha-img" src="/api/captcha" alt="验证码" title="点击刷新" onclick="refreshCaptcha()">
+                    </div>
+                    <div class="captcha-hint">看不清？点击图片刷新</div>
+                </div>
+
                 <button type="submit" class="login-btn" id="login-btn">登 录</button>
 
                 <!-- 登录步骤提示 -->
@@ -585,6 +629,12 @@
             return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
         }
 
+        // 刷新人机验证码
+        function refreshCaptcha() {
+            const img = document.getElementById('captcha-img');
+            img.src = '/api/captcha?t=' + Date.now();
+        }
+
         // 检查URL参数
         const urlParams = new URLSearchParams(window.location.search);
         const error = urlParams.get('error');
@@ -618,6 +668,7 @@
         // 发送登录验证码
         document.getElementById('send-login-code').addEventListener('click', async function() {
             const email = document.getElementById('login-email').value.trim();
+            const captcha = document.getElementById('captcha-input').value.trim();
             const btn = this;
             
             if (!email) {
@@ -627,6 +678,11 @@
             
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
                 showError('请输入有效的邮箱地址');
+                return;
+            }
+            
+            if (!captcha) {
+                showError('请先输入人机验证码');
                 return;
             }
             
@@ -642,7 +698,7 @@
                     ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
                     'X-Request-Nonce': nonce
                 },
-                body: JSON.stringify({ email, type: 'login' })
+                body: JSON.stringify({ email, type: 'login', captcha })
             })
             .then(response => {
                 // 先检查是否是 JSON 响应
@@ -673,6 +729,8 @@
                     showError(data.message || '发送验证码失败');
                     btn.disabled = false;
                     btn.textContent = '发送验证码';
+                    refreshCaptcha();
+                    document.getElementById('captcha-input').value = '';
                 }
             })
             .catch(error => {
@@ -715,6 +773,14 @@
             try {
                 showLoginSteps();
                 setLoginStep(1); // 正在连接服务器
+                const captcha = document.getElementById('captcha-input').value.trim();
+                if (!captcha) {
+                    showError('请先输入人机验证码');
+                    btn.disabled = false;
+                    btn.textContent = '登 录';
+                    hideLoginSteps();
+                    return;
+                }
                 let payload;
                 if (currentLoginType === 'password') {
                     // 密码登录
@@ -730,7 +796,7 @@
                         return;
                     }
                     
-                    payload = { loginType: 'password', username, password, remember };
+                    payload = { loginType: 'password', username, password, remember, captcha };
                 } else {
                     // 验证码登录
                     const email = document.getElementById('login-email').value.trim();
@@ -744,7 +810,7 @@
                         return;
                     }
                     
-                    payload = { loginType: 'code', email, code };
+                    payload = { loginType: 'code', email, code, captcha };
                 }
                 
                 setLoginStep(2); // 正在校验登录信息
@@ -788,6 +854,9 @@
                         window.location.href = '/home';
                     }, 600);
                 } else {
+                    // 验证码为单次使用，登录失败后刷新验证码
+                    refreshCaptcha();
+                    document.getElementById('captcha-input').value = '';
                     showError(data.message || '登录失败');
                     btn.disabled = false;
                     btn.textContent = '登 录';
