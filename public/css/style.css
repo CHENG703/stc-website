@@ -278,10 +278,10 @@ body::after {
 
 /* 首页名人名言卡片 */
 .hero-quote {
-    max-width: 1100px;
+    max-width: 1200px;
     margin: 0 auto 40px;
-    padding: 64px 72px 86px;
-    min-height: 320px;
+    padding: 72px 80px 96px;
+    min-height: 360px;
     background: var(--bg-1);
     border: 1px solid var(--border-base);
     border-radius: var(--radius-4);
@@ -314,8 +314,8 @@ body::after {
 
 .quote-text {
     margin: 0;
-    font-size: 96px;
-    line-height: 1.4;
+    font-size: 120px;
+    line-height: 1.35;
     font-weight: 900;
     letter-spacing: 0.02em;
     font-family: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", "SimSun", "Times New Roman", serif;
@@ -2934,11 +2934,11 @@ body.light-theme .lang-option:hover {
         opacity: 0.25;
     }
     .hero-quote {
-        padding: 36px 26px 64px;
-        min-height: 200px;
+        padding: 40px 28px 70px;
+        min-height: 220px;
     }
     .quote-text {
-        font-size: 46px;
+        font-size: 56px;
     }
     .quote-source {
         right: 16px;
