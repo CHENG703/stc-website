@@ -276,6 +276,71 @@ body::after {
     position: relative;
 }
 
+/* 首页名人名言卡片 */
+.hero-quote {
+    max-width: 680px;
+    margin: 0 auto 40px;
+    padding: 26px 40px;
+    background: var(--bg-1);
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-4);
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    animation: quoteFadeIn 0.8s ease;
+}
+
+.hero-quote::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.4), transparent);
+}
+
+.quote-mark {
+    font-family: Georgia, serif;
+    font-size: 44px;
+    line-height: 1;
+    background: linear-gradient(135deg, var(--accent-light), #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 6px;
+}
+
+.quote-text {
+    margin: 0;
+    font-size: 18px;
+    line-height: 1.8;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.quote-source {
+    margin-top: 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-tertiary);
+}
+
+.quote-source::before {
+    content: '—— ';
+}
+
+@keyframes quoteFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 .stat-item {
     background: var(--bg-1);
     border: 1px solid var(--border-base);

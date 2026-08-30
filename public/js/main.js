@@ -1004,6 +1004,51 @@ function calculateUnionDays() {
     }
 }
 
+// 首页名人名言（API 不可用时的内置兜底，均标注出处）
+const FALLBACK_QUOTES = [
+    { text: '千里之行，始于足下。', source: '老子《道德经》' },
+    { text: '学而不思则罔，思而不学则殆。', source: '《论语·为政》' },
+    { text: '长风破浪会有时，直挂云帆济沧海。', source: '李白《行路难》' },
+    { text: '不积跬步，无以至千里；不积小流，无以成江海。', source: '荀子《劝学》' },
+    { text: '天行健，君子以自强不息。', source: '《周易》' },
+    { text: '宝剑锋从磨砺出，梅花香自苦寒来。', source: '《警世贤文》' },
+    { text: '志当存高远。', source: '诸葛亮《诫外生书》' },
+    { text: '业精于勤，荒于嬉；行成于思，毁于随。', source: '韩愈《进学解》' },
+    { text: '路漫漫其修远兮，吾将上下而求索。', source: '屈原《离骚》' },
+    { text: '不畏浮云遮望眼，自缘身在最高层。', source: '王安石《登飞来峰》' }
+];
+
+async function loadQuote() {
+    const textEl = document.getElementById('quote-text');
+    const sourceEl = document.getElementById('quote-source');
+    if (!textEl || !sourceEl) return;
+
+    const showQuote = (text, source) => {
+        textEl.textContent = text;
+        sourceEl.textContent = source;
+    };
+
+    // 优先从一言(Hitokoto) API 获取：https://github.com/hitokoto-osc/hitokoto
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        const response = await fetch('https://v1.hitokoto.cn/?c=k&c=i&c=a&c=j', { signal: controller.signal });
+        clearTimeout(timer);
+        if (!response.ok) throw new Error('bad status');
+        const data = await response.json();
+        if (!data.hitokoto) throw new Error('empty quote');
+        const fromWho = data.from_who || '';
+        const from = data.from || '';
+        let source = from ? '《' + from + '》' : '';
+        if (fromWho) source = fromWho + source;
+        showQuote(data.hitokoto, source);
+    } catch (e) {
+        // API 不可用时使用内置名言
+        const fallback = FALLBACK_QUOTES[Math.floor(Math.random() * FALLBACK_QUOTES.length)];
+        showQuote(fallback.text, fallback.source);
+    }
+}
+
 // 页面加载完成后执行
 document.addEventListener('DOMContentLoaded', async () => {
     // 清理历史遗留的 CookieStore 分片 cookie（避免 494 REQUEST_HEADER_TOO_LARGE）
@@ -1022,8 +1067,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 连接网站事件SSE（监听网站锁定）
     connectSiteEvents();
     
-    // 计算工会成立天数
-    calculateUnionDays();
+    // 加载首页名人名言（替换原成立天数显示）
+    loadQuote();
     
     // 检查登录状态
     let user = await checkLoginStatus();
