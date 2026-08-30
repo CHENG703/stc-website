@@ -4129,21 +4129,89 @@ if (isLocalDev) {
     });
 }
 
+// ---------- KV 持久化备份（Vercel 环境使用） ----------
+const KV_BACKUP_LIST = 'stc:backup:list';
+const KV_BACKUP_PREFIX = 'stc:backup:';
+const KV_BACKUP_CHUNK_SIZE = 400 * 1024; // 每块 400KB 原始字节（base64 后约 533KB，安全低于 KV 单 key 限制）
+
+async function _kvBackupSave(name, data, time, files) {
+    const json = JSON.stringify(data);
+    const buf = Buffer.from(json, 'utf-8');
+    const chunks = [];
+    for (let i = 0; i < buf.length; i += KV_BACKUP_CHUNK_SIZE) {
+        chunks.push(buf.slice(i, i + KV_BACKUP_CHUNK_SIZE).toString('base64'));
+    }
+    const meta = { name, time, size: buf.length, files, chunks: chunks.length, storage: 'kv' };
+    await _kvSet(KV_BACKUP_PREFIX + name + ':meta', meta);
+    for (let i = 0; i < chunks.length; i++) {
+        await _kvSet(KV_BACKUP_PREFIX + name + ':chunk:' + i, chunks[i]);
+    }
+    const list = (await _kvGet(KV_BACKUP_LIST)) || [];
+    list.unshift(meta);
+    await _kvSet(KV_BACKUP_LIST, list);
+    return meta;
+}
+
+async function _kvBackupLoad(name) {
+    const meta = await _kvGet(KV_BACKUP_PREFIX + name + ':meta');
+    if (!meta) return null;
+    const parts = [];
+    for (let i = 0; i < meta.chunks; i++) {
+        const chunk = await _kvGet(KV_BACKUP_PREFIX + name + ':chunk:' + i);
+        if (!chunk) return null;
+        parts.push(chunk);
+    }
+    try {
+        const json = Buffer.from(parts.join(''), 'base64').toString('utf-8');
+        return { meta, data: JSON.parse(json) };
+    } catch (e) {
+        return null;
+    }
+}
+
+async function _kvBackupDelete(name) {
+    const meta = await _kvGet(KV_BACKUP_PREFIX + name + ':meta');
+    if (meta) {
+        for (let i = 0; i < meta.chunks; i++) {
+            await _kvDel(KV_BACKUP_PREFIX + name + ':chunk:' + i);
+        }
+        await _kvDel(KV_BACKUP_PREFIX + name + ':meta');
+    }
+    const list = (await _kvGet(KV_BACKUP_LIST)) || [];
+    await _kvSet(KV_BACKUP_LIST, list.filter(b => b.name !== name));
+}
+
 // 网站备份API（仅超级管理员）
 async function createBackup() {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupName = `backup-${timestamp}`;
+
+    // Vercel/KV 环境：备份持久化到 KV（重启不丢失）
+    if (KV_ENABLED && kv) {
+        const dbData = db._data || {};
+        const meta = await _kvBackupSave(backupName, dbData, new Date().toISOString(), ['database.json']);
+        lastBackupTime = new Date();
+        lastBackupInfo = {
+            name: backupName,
+            path: 'kv://' + backupName,
+            time: lastBackupTime.toISOString(),
+            files: meta.files,
+            storage: 'kv'
+        };
+        return lastBackupInfo;
+    }
+
+    // 本地/Zeabur 环境：文件备份
     try {
-        const backupDir = path.join(__dirname, 'backups');
+        const backupDir = path.join(runtimeDir, 'backups');
         if (!fs.existsSync(backupDir)) {
             fs.mkdirSync(backupDir, { recursive: true });
         }
         
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupName = `backup-${timestamp}`;
         const backupPath = path.join(backupDir, backupName);
         
         fs.mkdirSync(backupPath, { recursive: true });
         
-        const dbPath = path.join(__dirname, 'database.json');
         if (fs.existsSync(dbPath)) {
             fs.copyFileSync(dbPath, path.join(backupPath, 'database.json'));
         }
@@ -4313,9 +4381,22 @@ app.post('/api/admin/auto-backup/stop', requireSuperAdmin, requireRateLimit('adm
 });
 
 // 获取所有备份列表API
-app.get('/api/admin/backups', requireSuperAdmin, (req, res) => {
+app.get('/api/admin/backups', requireSuperAdmin, async (req, res) => {
     try {
-        const backupDir = path.join(__dirname, 'backups');
+        // KV 模式：从 KV 读取备份列表（持久化，重启不丢失）
+        if (KV_ENABLED && kv) {
+            const list = (await _kvGet(KV_BACKUP_LIST)) || [];
+            const backups = list.map(meta => ({
+                name: meta.name,
+                path: 'kv://' + meta.name,
+                created: meta.time,
+                size: meta.size,
+                storage: 'kv'
+            }));
+            return res.json({ success: true, backups });
+        }
+
+        const backupDir = path.join(runtimeDir, 'backups');
         if (!fs.existsSync(backupDir)) {
             return res.json({ success: true, backups: [] });
         }
@@ -4366,7 +4447,39 @@ app.post('/api/admin/rollback', requireSuperAdmin, requireRateLimit('admin'), re
     }
     
     try {
-        const backupDir = path.join(__dirname, 'backups');
+        // KV 模式：从 KV 恢复备份
+        if (KV_ENABLED && kv) {
+            const backup = await _kvBackupLoad(backupName);
+            if (!backup) {
+                return res.status(404).json({ success: false, message: '备份不存在' });
+            }
+            
+            // 备份当前数据库（作为回滚前的备份）
+            let preName = null;
+            try {
+                const preTs = new Date().toISOString().replace(/[:.]/g, '-');
+                preName = `pre-rollback-${Date.now()}`;
+                await _kvBackupSave(preName, db._data || {}, new Date().toISOString(), ['database.json']);
+            } catch (e) {
+                console.warn('[备份] 回滚前自动备份失败:', e.message);
+            }
+            
+            // 恢复数据库到 KV 和本地缓存
+            db._data = backup.data;
+            db._ensureDefaults();
+            await db._saveKv();
+            db._writeFileSync();
+            db._kvReadAt = 0;
+            
+            res.json({ 
+                success: true, 
+                message: '已回滚到备份: ' + backupName,
+                preBackup: preName
+            });
+            return;
+        }
+
+        const backupDir = path.join(runtimeDir, 'backups');
         const backupPath = path.join(backupDir, backupName);
         
         if (!fs.existsSync(backupPath)) {
@@ -4374,7 +4487,6 @@ app.post('/api/admin/rollback', requireSuperAdmin, requireRateLimit('admin'), re
         }
         
         // 备份当前数据库（作为回滚前的备份）
-        const dbPath = path.join(__dirname, 'database.json');
         let preBackup = null;
         if (fs.existsSync(dbPath)) {
             preBackup = path.join(backupDir, `pre-rollback-${Date.now()}`);
@@ -4412,7 +4524,17 @@ app.delete('/api/admin/backup/:name', requireSuperAdmin, requireRateLimit('admin
     }
     
     try {
-        const backupDir = path.join(__dirname, 'backups');
+        // KV 模式：从 KV 删除备份
+        if (KV_ENABLED && kv) {
+            const meta = await _kvGet(KV_BACKUP_PREFIX + name + ':meta');
+            if (!meta) {
+                return res.status(404).json({ success: false, message: '备份不存在' });
+            }
+            await _kvBackupDelete(name);
+            return res.json({ success: true, message: '已删除备份: ' + name });
+        }
+
+        const backupDir = path.join(runtimeDir, 'backups');
         const backupPath = path.join(backupDir, name);
         
         if (!fs.existsSync(backupPath)) {
