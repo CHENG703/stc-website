@@ -280,8 +280,8 @@ body::after {
 .hero-quote {
     max-width: 1280px;
     margin: 0 auto 40px;
-    padding: 64px 64px 84px;
-    min-height: 340px;
+    padding: 48px 48px 68px;
+    min-height: 260px;
     background: var(--bg-1);
     border: 1px solid var(--border-base);
     border-radius: var(--radius-4);
@@ -303,7 +303,7 @@ body::after {
 
 .quote-mark {
     font-family: Georgia, serif;
-    font-size: 44px;
+    font-size: 28px;
     line-height: 1;
     background: linear-gradient(135deg, var(--accent-light), #a78bfa);
     -webkit-background-clip: text;
@@ -315,7 +315,7 @@ body::after {
 .hero-quote .quote-text {
     margin: 0;
     max-width: none;
-    font-size: 112px;
+    font-size: 56px;
     line-height: 1.25;
     font-weight: 900;
     letter-spacing: 0.02em;
@@ -2939,7 +2939,7 @@ body.light-theme .lang-option:hover {
         min-height: 260px;
     }
     .hero-quote .quote-text {
-        font-size: 44px;
+        font-size: 32px;
     }
     .hero-quote .quote-source {
         right: 16px;
