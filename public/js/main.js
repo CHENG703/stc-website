@@ -525,9 +525,9 @@ async function loadTasks() {
                 const canModifyStatus = currentUser && (currentUser.id === task.author_id || isAdmin);
                 
                 return `
-                <div class="task-card ${task.pinned ? 'pinned' : ''}" onclick="viewTask(${task.id})">
+                <div class="task-card ${task.is_pinned ? 'pinned' : ''}" onclick="viewTask(${task.id})">
                     <div class="task-content">
-                        <h3 class="task-title">${escapeHtml(task.title)}</h3>
+                        <h3 class="task-title">${task.is_pinned ? '<span class="pinned-label">📌 置顶</span>' : ''}${escapeHtml(task.title)}</h3>
                         <div class="task-meta">
                             <span>👤 ${escapeHtml(task.user ? task.user.username : '匿名')}</span>
                             <span>📅 ${formatDate(task.created_at)}</span>

@@ -2866,8 +2866,8 @@ app.get('/api/tasks', async (req, res) => {
     
     // 置顶任务优先
     tasks.sort((a, b) => {
-        if (a.pinned && !b.pinned) return -1;
-        if (!a.pinned && b.pinned) return 1;
+        if (a.is_pinned && !b.is_pinned) return -1;
+        if (!a.is_pinned && b.is_pinned) return 1;
         return new Date(b.created_at) - new Date(a.created_at);
     });
     
@@ -3002,9 +3002,10 @@ app.post('/api/messages', requireLogin, requireRateLimit('messages'), requireCSR
 });
 
 app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), upload.single('file'), requireCSRF, async (req, res) => {
-    const { title, description, reward, deadline, status } = req.body;
+    const { title, description, reward, deadline, status, isPinned } = req.body;
+    const content = description || req.body.content;
     
-    if (!title || !description) {
+    if (!title || !content) {
         return res.status(400).json({ success: false, message: '请填写标题和描述' });
     }
     
@@ -3030,12 +3031,16 @@ app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), upload.single('f
     }
     
     const validStatuses = ['pending', 'in_progress', 'completed', 'planning', 'idle'];
-    const taskStatus = (status && validStatuses.includes(status)) ? status : 'idle';
+    const statusMap = { '备货': 'pending', '备货中': 'pending', '正在建': 'planning', '建设中': 'planning', '进行中': 'in_progress', '已完成': 'completed', '一笔未动': 'idle' };
+    let taskStatus = 'idle';
+    if (status) {
+        taskStatus = validStatuses.includes(status) ? status : (statusMap[status] || 'idle');
+    }
     
     const task = {
         id: Date.now(),
         title: title,
-        content: description,
+        content: content,
         reward: parseFloat(reward) || 0,
         deadline: deadline || null,
         status: taskStatus,
@@ -3047,7 +3052,7 @@ app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), upload.single('f
             'idle': '一笔未动'
         }[taskStatus],
         author_id: userId,
-        is_pinned: false,
+        is_pinned: isPinned === true || isPinned === 'true',
         // 处理中文文件名
         file_name: req.file ? (() => {
             try { return Buffer.from(req.file.originalname, 'latin1').toString('utf8'); }
@@ -3075,12 +3080,13 @@ app.put('/api/tasks/:id', requireLogin, requireRateLimit('tasks'), requireCSRF, 
         return res.status(403).json({ success: false, message: '无权修改此任务' });
     }
     
-    const { title, description, reward, deadline, status } = req.body;
+    const { title, description, reward, deadline, status, isPinned } = req.body;
     if (title) task.title = title;
-    if (description) task.content = description;
+    if (description || req.body.content) task.content = description || req.body.content;
     if (reward) task.reward = parseFloat(reward);
     if (deadline) task.deadline = deadline;
     if (status) task.status = status;
+    if (typeof isPinned !== 'undefined') task.is_pinned = isPinned === true || isPinned === 'true';
     
     await db.write();
     
