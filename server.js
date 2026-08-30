@@ -1490,7 +1490,15 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
     extensions: ['html', 'htm'],
-    index: 'index.html'
+    index: 'index.html',
+    // 防止浏览器缓存旧版 HTML（如验证码功能更新后仍显示旧页面）
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+        }
+    }
 }));
 
 // 处理无扩展名的HTML页面访问
