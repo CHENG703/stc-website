@@ -278,10 +278,10 @@ body::after {
 
 /* 首页名人名言卡片 */
 .hero-quote {
-    max-width: 900px;
+    max-width: 1040px;
     margin: 0 auto 40px;
-    padding: 44px 56px 64px;
-    min-height: 220px;
+    padding: 56px 64px 78px;
+    min-height: 280px;
     background: var(--bg-1);
     border: 1px solid var(--border-base);
     border-radius: var(--radius-4);
@@ -314,8 +314,8 @@ body::after {
 
 .quote-text {
     margin: 0;
-    font-size: 52px;
-    line-height: 1.5;
+    font-size: 72px;
+    line-height: 1.4;
     font-weight: 700;
     background: linear-gradient(120deg, #818cf8 0%, #a78bfa 35%, #f472b6 70%, #fbbf24 100%);
     background-size: 200% auto;
@@ -2932,11 +2932,11 @@ body.light-theme .lang-option:hover {
         opacity: 0.25;
     }
     .hero-quote {
-        padding: 28px 22px 50px;
-        min-height: 160px;
+        padding: 32px 24px 56px;
+        min-height: 180px;
     }
     .quote-text {
-        font-size: 30px;
+        font-size: 38px;
     }
     .quote-source {
         right: 16px;
