@@ -326,6 +326,67 @@
             display: block;
         }
 
+        .login-steps {
+            margin-top: 16px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            padding: 12px 16px;
+        }
+
+        .step-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: rgba(255, 255, 255, 0.35);
+            font-size: 13px;
+            padding: 5px 0;
+            transition: color 0.3s;
+        }
+
+        .step-item.active {
+            color: #fff;
+        }
+
+        .step-item.done {
+            color: #10b981;
+        }
+
+        .step-dot {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 600;
+            flex-shrink: 0;
+            transition: all 0.3s;
+        }
+
+        .step-item.active .step-dot {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: #fff;
+            box-shadow: 0 0 12px rgba(102, 126, 234, 0.5);
+            animation: stepPulse 1s ease-in-out infinite;
+        }
+
+        .step-item.done .step-dot {
+            background: #10b981;
+            color: #fff;
+        }
+
+        .step-item.done .step-dot::after {
+            content: '✓';
+        }
+
+        @keyframes stepPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.12); }
+        }
+
         .login-tabs {
             display: flex;
             margin-bottom: 24px;
@@ -461,6 +522,26 @@
                 </div>
 
                 <button type="submit" class="login-btn" id="login-btn">登 录</button>
+
+                <!-- 登录步骤提示 -->
+                <div id="login-steps" class="login-steps hidden">
+                    <div class="step-item" id="step-connect">
+                        <span class="step-dot">1</span>
+                        <span>正在连接服务器...</span>
+                    </div>
+                    <div class="step-item" id="step-verify">
+                        <span class="step-dot">2</span>
+                        <span>正在校验登录信息...</span>
+                    </div>
+                    <div class="step-item" id="step-token">
+                        <span class="step-dot">3</span>
+                        <span>正在校验身份令牌...</span>
+                    </div>
+                    <div class="step-item" id="step-redirect">
+                        <span class="step-dot">4</span>
+                        <span>登录成功，正在跳转...</span>
+                    </div>
+                </div>
             </form>
 
             <div class="divider">
@@ -601,16 +682,39 @@
             });
         });
 
+        // 登录步骤控制
+        function showLoginSteps() {
+            document.getElementById('login-steps').classList.remove('hidden');
+        }
+
+        function hideLoginSteps() {
+            document.getElementById('login-steps').classList.add('hidden');
+        }
+
+        // 点亮第 n 步（1-4），之前的步骤标记为已完成
+        function setLoginStep(n) {
+            const steps = ['step-connect', 'step-verify', 'step-token', 'step-redirect'];
+            steps.forEach((id, i) => {
+                const el = document.getElementById(id);
+                el.classList.remove('active', 'done');
+                if (i < n - 1) el.classList.add('done');
+                else if (i === n - 1) el.classList.add('active');
+            });
+        }
+
         // 登录表单提交
         document.getElementById('login-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('login-btn');
             hideMessages();
+            hideLoginSteps();
             
             btn.disabled = true;
             btn.textContent = '登录中...';
             
             try {
+                showLoginSteps();
+                setLoginStep(1); // 正在连接服务器
                 let payload;
                 if (currentLoginType === 'password') {
                     // 密码登录
@@ -622,6 +726,7 @@
                         showError('请填写用户名和密码');
                         btn.disabled = false;
                         btn.textContent = '登 录';
+                        hideLoginSteps();
                         return;
                     }
                     
@@ -635,12 +740,15 @@
                         showError('请填写邮箱和验证码');
                         btn.disabled = false;
                         btn.textContent = '登 录';
+                        hideLoginSteps();
                         return;
                     }
                     
                     payload = { loginType: 'code', email, code };
                 }
                 
+                setLoginStep(2); // 正在校验登录信息
+
                 const csrf = await getCsrfToken();
                 const nonce = genNonce();
                 const response = await fetch('/api/login', {
@@ -660,28 +768,36 @@
                     showSiteLockedModal(data.lockBy, data.lockReason);
                     btn.disabled = false;
                     btn.textContent = '登 录';
+                    hideLoginSteps();
                     return;
                 }
                 
                 if (data.success) {
+                    setLoginStep(3); // 正在校验身份令牌
                     // 存储 token 到 localStorage
                     if (data.token) {
                         localStorage.setItem('stc_auth_token', data.token);
                         console.log('[LOGIN] token 已存储到 localStorage');
                     }
+                    // 校验 token 是否写入成功
+                    if (data.token) {
+                        setLoginStep(4); // 登录成功，正在跳转
+                    }
                     showSuccess('登录成功！正在跳转...');
                     setTimeout(() => {
                         window.location.href = '/home';
-                    }, 500);
+                    }, 600);
                 } else {
                     showError(data.message || '登录失败');
                     btn.disabled = false;
                     btn.textContent = '登 录';
+                    hideLoginSteps();
                 }
             } catch (error) {
                 showError('网络错误，请重试');
                 btn.disabled = false;
                 btn.textContent = '登 录';
+                hideLoginSteps();
             }
         });
 
