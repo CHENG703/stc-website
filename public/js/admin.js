@@ -6,7 +6,7 @@ const LogStreamManager = {
     reader: null,
     controller: null,
     reconnectAttempts: 0,
-    maxReconnectAttempts: 3,
+    maxReconnectAttempts: Infinity,
 
     subscribe(callback) {
         this.subscribers.push(callback);
@@ -58,10 +58,13 @@ const LogStreamManager = {
         this._setStatus('disconnected');
     },
 
-    async _connect() {
+    async _connect(silent) {
         if (this.status === 'connecting') return;
 
-        this._setStatus(this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting');
+        // silent 模式（收到服务端 reconnect 事件时）：保持 connected 状态静默重连
+        if (!silent) {
+            this._setStatus(this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting');
+        }
 
         try {
             await this._fetchMissingLogs();
@@ -111,7 +114,7 @@ const LogStreamManager = {
                                     try { this.reader.cancel(); } catch(e) {}
                                     this.reader = null;
                                 }
-                                this._connect();
+                                this._connect(true); // 静默重连，不闪烁状态
                                 return;
                             }
                             if (entry.id) {
@@ -137,15 +140,15 @@ const LogStreamManager = {
         this.reader = null;
         this.controller = null;
 
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            this._setStatus('reconnecting');
-            setTimeout(() => {
-                this._connect();
-            }, 1000);
-        } else {
-            this._setStatus('disconnected');
-        }
+        // 无限重连（Vercel Serverless 下 SSE 周期断开是常态，不能重连几次就停）
+        this.reconnectAttempts++;
+        this._setStatus('reconnecting');
+
+        // 指数退避：1s, 2s, 4s, 8s, 10s(上限)，连接成功后会重置 reconnectAttempts
+        const delay = Math.min(1000 * Math.pow(2, Math.min(this.reconnectAttempts - 1, 4)), 10000);
+        setTimeout(() => {
+            this._connect();
+        }, delay);
     },
 
     async _fetchMissingLogs() {

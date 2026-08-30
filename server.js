@@ -4799,7 +4799,11 @@ app.get('/api/logs/sse', requireAdmin, (req, res) => {
         }
     }, 10000);
     
-    // 25秒优雅重连机制
+    // 优雅重连机制
+    // Vercel Serverless 函数有平台超时限制（免费版约10秒，Pro 60秒），
+    // 若等平台强制掐断连接，前端会走"已断开"路径反复闪烁。
+    // 因此 Vercel 上缩短到 8 秒主动断开，让前端收到 reconnect 事件静默重连。
+    var reconnectDelay = IS_VERCEL ? 8000 : 25000;
     var reconnectTimer = setTimeout(function() {
         try {
             res.write('data: ' + JSON.stringify({ type: 'reconnect', message: '连接即将超时，请重连', time: new Date().toISOString() }) + '\n\n');
@@ -4815,7 +4819,7 @@ app.get('/api/logs/sse', requireAdmin, (req, res) => {
                 // 忽略结束错误
             }
         }, 1000);
-    }, 25000);
+    }, reconnectDelay);
     
     req.on('close', function() {
         clearInterval(heartbeat);
