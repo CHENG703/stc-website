@@ -746,6 +746,12 @@ async function publishTask() {
                         <input type="file" id="task-file" style="width:100%;padding:8px;background:#161b22;border:1px dashed #30363d;border-radius:6px;color:#f0f6fc;box-sizing:border-box;font-size:12px;" onchange="window._taskFile=this.files[0];window._taskFileSizeText=this.files[0]?'已选 '+this.files[0].name+' ('+formatSize(this.files[0].size)+')':'';">
                         <div id="task-file-info" style="color:#8b949e;font-size:11px;margin-top:4px;"></div>
                     </div>
+                    <div style="margin-bottom:15px;">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#f0f6fc;font-size:14px;padding:10px;background:#161b22;border:1px solid #30363d;border-radius:6px;">
+                            <input type="checkbox" id="task-pinned" style="width:16px;height:16px;cursor:pointer;accent-color:#fbbf24;">
+                            <span>📌 置顶任务</span>
+                        </label>
+                    </div>
                     <div style="display:flex;gap:10px;">
                         <button onclick="closePublishModal()" style="flex:1;padding:10px;background:#21262d;color:#f0f6fc;border:1px solid #30363d;border-radius:6px;cursor:pointer;">取消</button>
                         <button onclick="submitTask()" style="flex:1;padding:10px;background:#238636;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">发布</button>
@@ -775,6 +781,7 @@ async function publishTask() {
             const reward = document.getElementById('task-reward').value;
             const deadline = document.getElementById('task-deadline').value;
             const status = document.getElementById('task-status').value;
+            const isPinned = document.getElementById('task-pinned').checked;
             const fileInput = document.getElementById('task-file');
             const file = fileInput && fileInput.files[0];
             
@@ -801,6 +808,7 @@ async function publishTask() {
                 if (reward) formData.append('reward', reward);
                 if (deadline) formData.append('deadline', deadline);
                 if (status) formData.append('status', status);
+                formData.append('isPinned', isPinned);
                 if (file) formData.append('file', file);
                 
                 if (!csrfToken) {
