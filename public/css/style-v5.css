@@ -312,8 +312,9 @@ body::after {
     margin-bottom: 6px;
 }
 
-.quote-text {
+.hero-quote .quote-text {
     margin: 0;
+    max-width: none;
     font-size: 160px;
     line-height: 1.25;
     font-weight: 900;
@@ -328,14 +329,14 @@ body::after {
 }
 
 /* 打字机光标 */
-.quote-text.typing::after {
+.hero-quote .quote-text.typing::after {
     content: '|';
     margin-left: 3px;
     -webkit-text-fill-color: #a78bfa;
     animation: quoteBlink 0.85s step-end infinite;
 }
 
-.quote-source {
+.hero-quote .quote-source {
     position: absolute;
     right: 22px;
     bottom: 14px;
@@ -2937,15 +2938,14 @@ body.light-theme .lang-option:hover {
         padding: 48px 28px 84px;
         min-height: 260px;
     }
-    .quote-text {
+    .hero-quote .quote-text {
         font-size: 64px;
     }
-    .quote-source {
+    .hero-quote .quote-source {
         right: 16px;
         bottom: 12px;
         font-size: 12px;
     }
-}
     .hero h1 {
         font-size: 32px;
     }
