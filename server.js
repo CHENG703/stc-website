@@ -1499,6 +1499,18 @@ app.use((req, res, next) => {
     next();
 });
 
+// IP 封禁全局拦截（放最前：先于页面/API/访问日志，确保被封 IP 的任何请求都被 403）
+// 优先查 db 中的封禁表（KV 多实例下实时生效），内存 Set 作为兜底（db 尚未加载时）
+app.use((req, res, next) => {
+    const ip = getClientIP(req);
+    const bannedArr = (db && db.data && Array.isArray(db.data.banned_ips)) ? db.data.banned_ips : null;
+    const blocked = bannedArr ? bannedArr.indexOf(ip) >= 0 : bannedIPs.has(ip);
+    if (blocked) {
+        return res.status(403).json({ success: false, message: '您的IP已被封禁' });
+    }
+    next();
+});
+
 // 访问日志中间件 - 记录每个 IP 访问了哪个页面（必须在静态与页面路由之前，否则路由直接返回不会被记录）
 // 记录持久化到 db（配置了 Vercel KV 时跨实例共享），同时推送到实时日志
 const ACCESS_LOG_MAX = 1000;
@@ -4820,22 +4832,13 @@ app.post('/api/unban-ip', requireSuperAdmin, requireRateLimit('admin'), requireC
     res.json({ success: true, message: 'IP已解封' });
 });
 
-app.use((req, res, next) => {
-    const ip = getClientIP(req);
-    
-    if (bannedIPs.has(ip)) {
-        return res.status(403).json({ success: false, message: '您的IP已被封禁' });
-    }
-    
-    next();
-});
-
 // IP → 页面 访问记录（管理面板展示）
 app.get('/api/access-logs', requireAdmin, async (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit) || 100, 500);
         const logs = Array.isArray(db.data.access_logs) ? db.data.access_logs.slice(0, limit) : [];
-        res.json({ success: true, data: logs });
+        const banned = Array.isArray(db.data.banned_ips) ? db.data.banned_ips : [];
+        res.json({ success: true, data: logs, banned: banned });
     } catch (e) {
         res.status(500).json({ success: false, message: '获取访问记录失败: ' + e.message });
     }
