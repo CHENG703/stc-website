@@ -1500,13 +1500,6 @@ async function loadMessages() {
     }
 }
 
-// 加载待审核头像
-async function loadPendingAvatars() {
-    const container = document.getElementById('pending-avatars-table');
-    if (!container) return;
-    container.innerHTML = '<p style="text-align:center;">暂无待审核头像</p>';
-}
-
 // 加载登录状态
 async function loadLoginStatus() {
     const container = document.getElementById('login-status-content');
@@ -1546,8 +1539,7 @@ async function initAdminPanel() {
             loadMembers().catch(e => CMDLog.log('成员加载失败: ' + e.message, 'error')),
             loadTasks().catch(e => CMDLog.log('任务加载失败: ' + e.message, 'error')),
             loadMessages().catch(e => CMDLog.log('留言加载失败: ' + e.message, 'error')),
-            loadInviteCodes().catch(e => CMDLog.log('邀请码加载失败: ' + e.message, 'error')),
-            loadPendingAvatars().catch(e => CMDLog.log('头像审核加载失败: ' + e.message, 'error'))
+            loadInviteCodes().catch(e => CMDLog.log('邀请码加载失败: ' + e.message, 'error'))
         ]);
         CMDLog.log('管理面板数据加载完成', 'system');
     } catch (error) {
