@@ -1699,8 +1699,44 @@ async function loadAccessLogs() {
         });
         html += '</tbody></table>';
         container.innerHTML = html;
+        loadBannedIPs();
     } catch (e) {
         container.innerHTML = `<div style="color:#ff6b6b;">加载失败: ${accessEsc(e.message)}</div>`;
+    }
+}
+
+// 加载"已封禁 IP"管理条（仅超管可查看；普通管理员无权限时自动隐藏）
+async function loadBannedIPs() {
+    const bar = document.getElementById('banned-ips-bar');
+    const list = document.getElementById('banned-ips-list');
+    if (!bar || !list) return;
+    try {
+        const resp = await fetchWithAuth('/api/ban-ips');
+        if (!resp.ok) { bar.style.display = 'none'; return; }
+        const data = await resp.json();
+        if (!data.success) { bar.style.display = 'none'; return; }
+        const arr = Array.isArray(data.data) ? data.data : [];
+        bar.style.display = 'block';
+        const cnt = document.getElementById('banned-ips-count');
+        if (cnt) cnt.textContent = `（${arr.length}）`;
+        if (arr.length === 0) {
+            list.innerHTML = '<span style="color:#8b949e; font-size:12px;">暂无封禁</span>';
+            return;
+        }
+        list.innerHTML = arr.map(b => {
+            const ip = String(b.ip || '').replace(/'/g, '');
+            const reason = String(b.reason || '违规操作');
+            const t = b.banned_at ? ' · ' + formatAccessTime(b.banned_at) : '';
+            const title = accessEsc(reason + t);
+            return `<span style="display:inline-flex; align-items:center; gap:6px; background:#fff5f5; border:1px solid #ffd7d5; color:#cf222e; border-radius:6px; padding:3px 8px; font-size:12px; max-width:100%;">
+                <span style="font-family:monospace; white-space:nowrap;">${accessEsc(b.ip)}</span>
+                <span title="${title}" style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#a40e26;">${accessEsc(reason)}</span>
+                <button onclick="unbanAccessIP('${ip}')" style="padding:0 7px; font-size:11px; border:1px solid #cf222e; color:#cf222e; background:#fff; border-radius:4px; cursor:pointer; line-height:18px;">解封</button>
+            </span>`;
+        }).join('');
+    } catch (e) {
+        // 403 无权限或网络错误：隐藏封禁管理条，不影响访问记录
+        bar.style.display = 'none';
     }
 }
 
