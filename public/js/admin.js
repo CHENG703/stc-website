@@ -1630,6 +1630,86 @@ async function loadServerLogs() {
     }
 }
 
+// ============================================================
+// IP → 页面 访问记录
+// ============================================================
+let accessAutoRefreshTimer = null;
+
+function accessEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function formatAccessTime(ts) {
+    if (!ts) return '';
+    try {
+        const d = new Date(ts);
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    } catch (e) { return ''; }
+}
+
+async function loadAccessLogs() {
+    const container = document.getElementById('access-logs-container');
+    if (!container) return;
+    try {
+        const resp = await fetchWithAuth('/api/access-logs?limit=200');
+        const data = await resp.json();
+        if (!data.success) {
+            container.innerHTML = `<div style="color:#ff6b6b;">加载失败: ${accessEsc(data.message || '未知错误')}</div>`;
+            return;
+        }
+        const logs = data.data || [];
+        const countEl = document.getElementById('access-count');
+        if (countEl) countEl.textContent = `共 ${logs.length} 条`;
+        if (logs.length === 0) {
+            container.innerHTML = '<div style="color:#8b949e; padding:8px;">暂无访问记录</div>';
+            return;
+        }
+        let html = '<table style="width:100%; border-collapse:collapse; font-size:13px;"><thead><tr style="text-align:left; color:#8b949e;">'
+            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">时间</th>'
+            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">IP</th>'
+            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">页面</th>'
+            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">来源 (User-Agent)</th>'
+            + '</tr></thead><tbody>';
+        logs.forEach(log => {
+            html += '<tr style="border-bottom:1px solid #eaeef2;">'
+                + `<td style="padding:5px 8px; white-space:nowrap;">${accessEsc(formatAccessTime(log.ts || log.t))}</td>`
+                + `<td style="padding:5px 8px; font-family:monospace; white-space:nowrap;">${accessEsc(log.ip)}</td>`
+                + `<td style="padding:5px 8px; white-space:nowrap;"><a href="${accessEsc(log.page)}" style="color:#2563eb; text-decoration:none;">${accessEsc(log.page)}</a></td>`
+                + `<td style="padding:5px 8px; color:#57606a; max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${accessEsc(log.ua || '')}">${accessEsc(log.ua || '')}</td>`
+                + '</tr>';
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = `<div style="color:#ff6b6b;">加载失败: ${accessEsc(e.message)}</div>`;
+    }
+}
+
+async function clearAccessLogs() {
+    if (!confirm('确定清空所有访问记录？')) return;
+    try {
+        const resp = await fetchWithAuth('/api/access-logs', { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.success) {
+            loadAccessLogs();
+        } else {
+            alert('清空失败: ' + (data.message || '未知错误'));
+        }
+    } catch (e) {
+        alert('清空失败: ' + e.message);
+    }
+}
+
+function toggleAccessAutoRefresh() {
+    const chk = document.getElementById('access-auto-refresh');
+    const enabled = chk && chk.checked;
+    if (accessAutoRefreshTimer) { clearInterval(accessAutoRefreshTimer); accessAutoRefreshTimer = null; }
+    if (enabled) {
+        accessAutoRefreshTimer = setInterval(() => loadAccessLogs(), 20000);
+    }
+}
+
 function toggleLogStream() {
     const btn = document.getElementById('log-stream-btn');
     
@@ -1672,6 +1752,8 @@ if (document.readyState === 'loading') {
             LogStreamManager.subscribeStatus(updateLogStatusUI);
             initAdminPanel();
             loadServerLogs();
+            loadAccessLogs();
+            toggleAccessAutoRefresh();
             // 初始化机器人控制台
             setupBotPanel();
             loadBotStatus().catch(e => CMDLog.log('机器人状态加载失败: ' + e.message, 'warn'));
@@ -1684,6 +1766,8 @@ if (document.readyState === 'loading') {
         LogStreamManager.subscribeStatus(updateLogStatusUI);
         initAdminPanel();
         loadServerLogs();
+        loadAccessLogs();
+        toggleAccessAutoRefresh();
         setupBotPanel();
         loadBotStatus().catch(e => CMDLog.log('机器人状态加载失败: ' + e.message, 'warn'));
         loadBotMessages().catch(e => CMDLog.log('机器人消息加载失败: ' + e.message, 'warn'));

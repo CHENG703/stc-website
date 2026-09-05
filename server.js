@@ -238,7 +238,8 @@ const defaults = {
     inviteApplications: [],
     inviteCodes: [],
     bannedIPs: [],
-    join_applications: []
+    join_applications: [],
+    access_logs: []
 };
 
 const ARRAY_MUTATING_METHODS = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin'];
@@ -1495,6 +1496,39 @@ app.use((req, res, next) => {
         return Buffer.from(JSON.stringify(tokenData)).toString('base64');
     };
     
+    next();
+});
+
+// 访问日志中间件 - 记录每个 IP 访问了哪个页面（必须在静态与页面路由之前，否则路由直接返回不会被记录）
+// 记录持久化到 db（配置了 Vercel KV 时跨实例共享），同时推送到实时日志
+const ACCESS_LOG_MAX = 1000;
+app.use(async (req, res, next) => {
+    try {
+        if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+        const p = req.path || '/';
+        if (p.startsWith('/api/') || p.startsWith('/css/') || p.startsWith('/js/') ||
+            p.startsWith('/uploads/') || p.startsWith('/avatars/') || p.startsWith('/sessions/') ||
+            p === '/favicon.ico') return next();
+        // 静态资源不记录（图片/字体/文档等）
+        if (/\.(js|css|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot|otf|map|wasm|json|xml|txt|pdf|zip)(\/|\?|$)/i.test(p)) return next();
+
+        const ip = getClientIP(req);
+        const ua = String(req.headers['user-agent'] || '').slice(0, 120);
+        if (!Array.isArray(db.data.access_logs)) db.data.access_logs = [];
+        db.data.access_logs.unshift({
+            t: Date.now(),
+            ts: new Date().toISOString(),
+            ip: ip,
+            page: p,
+            ua: ua
+        });
+        if (db.data.access_logs.length > ACCESS_LOG_MAX) db.data.access_logs.length = ACCESS_LOG_MAX;
+        addServerLog(`[${ip}] 访问页面: ${p}`, 'info');
+        // 页面访问量小，直接等待落库，保证 KV/Serverless 下不丢
+        await db.write().catch(() => {});
+    } catch (e) {
+        // 访问日志失败不影响页面访问
+    }
     next();
 });
 
@@ -4796,6 +4830,28 @@ app.use((req, res, next) => {
     next();
 });
 
+// IP → 页面 访问记录（管理面板展示）
+app.get('/api/access-logs', requireAdmin, async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+        const logs = Array.isArray(db.data.access_logs) ? db.data.access_logs.slice(0, limit) : [];
+        res.json({ success: true, data: logs });
+    } catch (e) {
+        res.status(500).json({ success: false, message: '获取访问记录失败: ' + e.message });
+    }
+});
+
+// 清空访问记录
+app.delete('/api/access-logs', requireAdmin, async (req, res) => {
+    try {
+        db.data.access_logs = [];
+        await db.write().catch(() => {});
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, message: '清空访问记录失败: ' + e.message });
+    }
+});
+
 app.get('/api/logs', requireAdmin, (req, res) => {
     var since = req.query.since;
     if (since && typeof since === 'string') {
@@ -4899,19 +4955,6 @@ app.get('/api/site-events', (req, res) => {
         clearInterval(heartbeat);
         siteEventsClients = siteEventsClients.filter(client => client !== res);
     });
-});
-
-// 访问日志中间件 - 记录IP访问页面
-app.use((req, res, next) => {
-    // 只记录页面访问，不记录静态资源和API
-    if (!req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/) && 
-        !req.path.startsWith('/api/')) {
-        const ip = getClientIP(req);
-        const time = new Date().toLocaleString();
-        const page = req.path || '/';
-        addServerLog(`[${ip}] ${time} 访问页面: ${page}`, 'info');
-    }
-    next();
 });
 
 const startPromise = (async () => {
