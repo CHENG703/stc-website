@@ -1547,81 +1547,6 @@ async function initAdminPanel() {
     }
 }
 
-// 服务器日志功能
-let logStreamActive = false;
-let logStreamUnsubscribe = null;
-let logStatusUnsubscribe = null;
-
-function updateLogStatusUI(status) {
-    const dotEl = document.getElementById('log-status-dot');
-    const textEl = document.getElementById('log-status-text');
-    if (!dotEl && !textEl) return;
-
-    const statusMap = {
-        connecting: { text: '连接中...', color: '#f59e0b' },
-        connected: { text: '已连接', color: '#10b981' },
-        reconnecting: { text: '重连中...', color: '#f97316' },
-        disconnected: { text: '已断开', color: '#ef4444' }
-    };
-    const info = statusMap[status] || { text: '未连接', color: '#8b949e' };
-    
-    if (dotEl) {
-        dotEl.style.background = info.color;
-    }
-    if (textEl) {
-        textEl.textContent = info.text;
-    }
-}
-
-function appendServerLog(entry) {
-    const container = document.getElementById('server-logs-container');
-    if (!container) return;
-    
-    const time = entry.time ? new Date(entry.time).toLocaleTimeString() : '';
-    const type = entry.type || 'info';
-    const message = entry.message || '';
-    
-    const colors = {
-        'error': '#ff6b6b',
-        'warn': '#ffd93d',
-        'success': '#6bcb77',
-        'system': '#4d96ff',
-        'info': '#eeeeee'
-    };
-    const color = colors[type] || '#eeeeee';
-    
-    const div = document.createElement('div');
-    div.style.marginBottom = '2px';
-    div.innerHTML = `<span style="color:#8b949e;">[${time}]</span> <span style="color:${color};">${escapeHtml(message)}</span>`;
-    container.appendChild(div);
-    container.scrollTop = container.scrollHeight;
-}
-
-function clearServerLogs() {
-    const container = document.getElementById('server-logs-container');
-    if (container) {
-        container.innerHTML = '<div style=\'color:#8b949e;\'>日志已清空</div>';
-    }
-}
-
-async function loadServerLogs() {
-    if (LogStreamManager.lastLogId && (LogStreamManager.status === 'connected' || LogStreamManager.status === 'connecting')) {
-        return;
-    }
-    try {
-        const response = await fetchWithAuth('/api/logs');
-        const data = await response.json();
-        
-        if (data.success && data.data) {
-            const container = document.getElementById('server-logs-container');
-            container.innerHTML = '';
-            data.data.forEach(entry => appendServerLog(entry));
-        }
-    } catch (error) {
-        console.error('加载日志失败:', error);
-    }
-}
-
 // ============================================================
 // IP → 页面 访问记录
 // ============================================================
@@ -1801,48 +1726,12 @@ function toggleAccessAutoRefresh() {
     }
 }
 
-function toggleLogStream() {
-    const btn = document.getElementById('log-stream-btn');
-    
-    if (logStreamActive) {
-        if (logStreamUnsubscribe) {
-            logStreamUnsubscribe();
-            logStreamUnsubscribe = null;
-        }
-        if (logStatusUnsubscribe) {
-            logStatusUnsubscribe();
-            logStatusUnsubscribe = null;
-        }
-        LogStreamManager.stop();
-        logStreamActive = false;
-        if (btn) btn.textContent = '启动实时日志';
-        updateLogStatusUI('disconnected');
-        return;
-    }
-    
-    logStreamActive = true;
-    if (btn) btn.textContent = '停止实时日志';
-    
-    logStreamUnsubscribe = LogStreamManager.subscribe(entry => {
-        appendServerLog(entry);
-    });
-    
-    logStatusUnsubscribe = LogStreamManager.onStatusChange(status => {
-        updateLogStatusUI(status);
-    });
-    
-    LogStreamManager.start();
-    updateLogStatusUI(LogStreamManager.status);
-}
-
 // 页面加载完成后初始化
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
             CMDLog.init();
-            LogStreamManager.subscribeStatus(updateLogStatusUI);
             initAdminPanel();
-            loadServerLogs();
             loadAccessLogs();
             toggleAccessAutoRefresh();
             // 初始化机器人控制台
@@ -1854,9 +1743,7 @@ if (document.readyState === 'loading') {
 } else {
     setTimeout(() => {
         CMDLog.init();
-        LogStreamManager.subscribeStatus(updateLogStatusUI);
         initAdminPanel();
-        loadServerLogs();
         loadAccessLogs();
         toggleAccessAutoRefresh();
         setupBotPanel();
