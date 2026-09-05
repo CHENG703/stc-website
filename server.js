@@ -1505,7 +1505,11 @@ app.use((req, res, next) => {
     const ip = getClientIP(req);
     const bannedArr = (db && db.data && Array.isArray(db.data.banned_ips)) ? db.data.banned_ips : null;
     const blocked = bannedArr ? bannedArr.indexOf(ip) >= 0 : bannedIPs.has(ip);
-    if (blocked) {
+    // 管理员自救保险：已登录的管理员即使 IP 被封也放行，
+    // 防止管理员手滑封掉自己的 IP 后彻底被锁在后台外无法解封。
+    const isAdminSession = !!(req.session && (req.session.isSuperAdmin || req.session.isAdmin)) ||
+        !!(req.authUser && (req.authUser.is_super_admin || req.authUser.is_admin));
+    if (blocked && !isAdminSession) {
         return res.status(403).json({ success: false, message: '您的IP已被封禁' });
     }
     next();
