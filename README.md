@@ -34,6 +34,15 @@ EMAIL_USER=your@qq.com
 EMAIL_PASS=your-qq-email-authorization-code
 ```
 
+想用「域名邮箱/网站名义」发件（例如 `noreply@你的域名`）？QQ 邮箱 SMTP 强制发件地址等于登录账号，改不了地址本身，因此需要域名邮箱或云邮件服务（腾讯企业邮箱 / SES / Resend 等），然后在 `.env` 追加下面变量即可；不设置时行为不变（仍走 QQ 邮箱）：
+```env
+# MAIL_HOST=smtp.exmail.qq.com  # 腾讯企业邮箱示例；SES/Resend 按各自文档填写
+# MAIL_PORT=465                 # 465=SSL / 587=STARTTLS
+# MAIL_SECURE=true
+# MAIL_FROM=noreply@你的域名
+# MAIL_FROM_NAME=STC任务网站
+```
+
 注意：EMAIL_PASS需要使用QQ邮箱的授权码，不是登录密码。获取方式：
 - 登录QQ邮箱
 - 设置 -> 账户

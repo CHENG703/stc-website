@@ -115,7 +115,20 @@ if (!IS_VERCEL) {
 let dbLocked = false;
 let dbLockReason = '';
 
-// 邮件发送配置
+// ================= 邮件发送配置（可插拔，默认 QQ 邮箱） =================
+//   EMAIL_USER / EMAIL_PASS     SMTP 账号与密码/授权码（必填）
+//   MAIL_HOST / MAIL_PORT       发件服务器地址与端口，默认 smtp.qq.com:465
+//   MAIL_SECURE                 true=SSL(465)，false=STARTTLS(587)，默认 true
+//   MAIL_FROM                   发件人邮箱地址（默认取 EMAIL_USER）
+//   MAIL_FROM_NAME              发件人显示名（默认“STC任务网站”）
+// 想用“网站域名发件”时：配好域名邮箱/邮件服务后，仅需改 .env 中这些变量，
+// 例如腾讯企业邮箱：MAIL_HOST=smtp.exmail.qq.com，MAIL_FROM=noreply@你的域名
+const MAIL_FROM = process.env.MAIL_FROM || process.env.EMAIL_USER;
+const MAIL_FROM_NAME = process.env.MAIL_FROM_NAME || 'STC任务网站';
+/** 统一生成发件人头（显示名 + 邮箱地址），供所有发送点使用 */
+function mailFromHeader() {
+    return `"${MAIL_FROM_NAME}" <${MAIL_FROM}>`;
+}
 let emailTransporter = null;
 function getEmailTransporter() {
     if (emailTransporter) return emailTransporter;
@@ -125,10 +138,12 @@ function getEmailTransporter() {
         console.error('[EMAIL] EMAIL_USER 或 EMAIL_PASS 环境变量未配置！');
         return null;
     }
+    const mailSecure = String(process.env.MAIL_SECURE ?? 'true') === 'true';
     emailTransporter = nodemailer.createTransport({
-        host: 'smtp.qq.com',
-        port: 465,
-        secure: true,
+        host: process.env.MAIL_HOST || 'smtp.qq.com',
+        port: parseInt(process.env.MAIL_PORT || (mailSecure ? '465' : '587'), 10),
+        secure: mailSecure,
+        requireTLS: !mailSecure,
         auth: {
             user: emailUser,
             pass: emailPass
@@ -1559,6 +1574,43 @@ app.use((req, res, next) => {
     const isAdminSession = !!(req.session && (req.session.isSuperAdmin || req.session.isAdmin)) ||
         !!(req.authUser && (req.authUser.is_super_admin || req.authUser.is_admin));
     if (blocked && !isAdminSession) {
+        // API/静态资源请求仍返回 JSON（前端代码统一处理）；
+        // 页面(HTML)导航请求返回友好的中文说明页，避免浏览器渲染出一坨 JSON。
+        const isResource = /\.(css|js|mjs|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot|otf|pdf|zip|map)(\?|$)/i.test(req.path);
+        if (!req.path.startsWith('/api/') && !isResource && req.method !== 'HEAD') {
+            const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>访问受限 - STC任务平台</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'PingFang SC','Microsoft YaHei','Helvetica Neue',system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f4f6fa;color:#222}
+  .card{background:#fff;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.10);padding:52px 60px;max-width:540px;text-align:center;margin:24px}
+  .code{font-size:72px;font-weight:800;color:#d9534f;line-height:1;letter-spacing:2px}
+  .code small{display:block;font-size:16px;font-weight:600;color:#b0b8c4;margin-top:8px;letter-spacing:4px}
+  h1{font-size:24px;margin:24px 0 12px;font-weight:700}
+  p{font-size:14px;color:#666;line-height:1.9}
+  hr{border:none;border-top:1px solid #eee;margin:26px 0}
+  .foot{font-size:12px;color:#aaa}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="code">403<small>ACCESS DENIED</small></div>
+    <h1>您的 IP 已被封禁</h1>
+    <p>出于安全考虑，当前网络地址（IP）暂时无法访问本网站页面。<br>若您已登录管理员，请先在后台「IP管理」中解封本机 IP 后再访问。</p>
+    <p style="margin-top:10px;font-size:13px;color:#999">如果您认为这是误封，请联系管理员处理。</p>
+    <hr>
+    <div class="foot">STC 任务平台</div>
+  </div>
+</body>
+</html>`;
+            res.status(403).set('Content-Type', 'text/html; charset=utf-8');
+            return res.send(html);
+        }
         return res.status(403).json({ success: false, message: '您的IP已被封禁' });
     }
     next();
@@ -3134,7 +3186,7 @@ app.post('/api/send-code', requireRateLimit('verifyCode'), requireCSRF, requireC
             return res.status(500).json({ success: false, message: '邮件服务未配置，请联系管理员设置 EMAIL_USER 和 EMAIL_PASS 环境变量' });
         }
         const mailPayload = {
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            from: mailFromHeader(),
             to: email,
             subject: '【STC】您的验证码',
             text: `您正在${type === 'login' ? '登录' : '注册'}STC任务网站，您的验证码是：${code}，有效期5分钟，请勿泄露给他人。`,
@@ -3553,7 +3605,7 @@ app.post('/api/invite/request', requireRateLimit('invite'), requireCSRF, require
     try {
         const adminNotifyEmail = process.env.ADMIN_NOTIFY_EMAIL || process.env.ADMIN_EMAIL || process.env.EMAIL_USER;
         const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            from: mailFromHeader(),
             to: adminNotifyEmail,
             subject: '【STC】新的邀请码申请',
             html: `
@@ -3605,7 +3657,7 @@ app.post('/api/invite/request', requireRateLimit('invite'), requireCSRF, require
     // 2. 发回执邮件给申请人（REDACTED@example.com 等）
     try {
         const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            from: mailFromHeader(),
             to: email,
             subject: '【STC】您的邀请码申请已收到',
             html: `
@@ -3667,7 +3719,7 @@ app.get('/api/invite/approve/:token', async (req, res) => {
         let mailStatus = '';
         try {
             await sendMailAwait({
-                from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+                from: mailFromHeader(),
                 to: request.email,
                 subject: '【STC】邀请码申请已通过',
                 html: `
@@ -3739,7 +3791,7 @@ app.get('/api/invite/reject/:token', async (req, res) => {
     await db.write();
     try {
         const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            from: mailFromHeader(),
             to: request.email,
             subject: '【STC】邀请码申请未通过',
             html: `
@@ -3800,7 +3852,7 @@ app.post('/api/invite/requests/:id/approve', requireAdmin, requireRateLimit('adm
     // 发送邀请码给申请人
     try {
         const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            from: mailFromHeader(),
             to: request.email,
             subject: '【STC】邀请码申请已通过',
             html: `
@@ -3843,7 +3895,7 @@ app.post('/api/invite/requests/:id/reject', requireAdmin, requireRateLimit('admi
     // 通知申请人被驳回
     try {
         const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置'); await _t.sendMail({
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            from: mailFromHeader(),
             to: request.email,
             subject: '【STC】邀请码申请未通过',
             html: `
@@ -3964,7 +4016,7 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
         const adminTo = JOIN_ADMIN_EMAILS[0];
         const adminCc = JOIN_ADMIN_EMAILS.slice(1);
         await _t.sendMail({
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            from: mailFromHeader(),
             to: adminTo,
             cc: adminCc.join(','),
             subject: `【STC】新的加入申请：${application.gameId} (QQ ${application.qq})`,
@@ -4092,7 +4144,7 @@ app.get('/api/join/approve/:token', async (req, res) => {
     let mailStatus = '';
     try {
         await sendMailAwait({
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            from: mailFromHeader(),
             to: email,
             subject: '【STC】恭喜你通过审核，欢迎加入STC工会！',
             html: approveMailHtml
@@ -4160,7 +4212,7 @@ app.get('/api/join/reject/:token', async (req, res) => {
     let mailStatus = '';
     try {
         await sendMailAwait({
-            from: `"STC任务网站" <${process.env.EMAIL_USER}>`,
+            from: mailFromHeader(),
             to: application.email,
             subject: '【STC】加入申请未通过',
             html: rejectMailHtml

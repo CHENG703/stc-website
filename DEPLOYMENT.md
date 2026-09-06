@@ -71,6 +71,13 @@ PORT=3000
 SESSION_SECRET=your-very-secure-random-string-here
 EMAIL_USER=你的QQ邮箱@qq.com
 EMAIL_PASS=你的QQ邮箱授权码
+# 可选：想用「域名邮箱/网站名义」发件时设置（默认走 QQ 邮箱）。
+# QQ SMTP 强制发件地址=登录账号，域名发件需配域名邮箱/云邮件服务后改这些变量：
+# MAIL_HOST=smtp.exmail.qq.com
+# MAIL_PORT=465
+# MAIL_SECURE=true
+# MAIL_FROM=noreply@你的域名
+# MAIL_FROM_NAME=STC任务网站
 # 数据库静态加密密钥（可选，强烈建议设置）。本地部署不设置会自动生成 db.key 文件；
 # Vercel/Railway/Zeabur 等平台必须设置（所有实例保持一致），否则数据库无法解密。
 DB_KEY=your-database-encryption-key
