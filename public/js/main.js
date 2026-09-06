@@ -487,6 +487,10 @@ function getStatusColor(status) {
 
 // 加载任务列表
 async function loadTasks() {
+    // 仅当页面中存在任务列表容器时才加载（其它页面无此元素，避免空引用报错）
+    const listContainer = document.getElementById('tasks-list');
+    if (!listContainer) return;
+
     try {
         const response = await fetch('/api/tasks');
         if (response.ok) {
@@ -562,7 +566,7 @@ async function loadTasks() {
     } catch (error) {
         if (error.message !== 'AccessDenied') {
             console.error('加载任务失败:', error);
-            document.getElementById('tasks-list').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+            if (listContainer) listContainer.innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
         }
     }
 }
@@ -905,6 +909,10 @@ function showConfirmModal(message, onConfirm, onCancel) {
 
 // 加载留言列表
 async function loadMessages() {
+    // 仅当页面中存在留言列表容器时才加载（其它页面无此元素，避免空引用报错）
+    const listContainer = document.getElementById('messages-list');
+    if (!listContainer) return;
+
     try {
         const response = await fetch('/api/public/messages');
         if (response.ok) {
@@ -933,7 +941,7 @@ async function loadMessages() {
     } catch (error) {
         if (error.message !== 'AccessDenied') {
             console.error('加载留言失败:', error);
-            document.getElementById('messages-list').innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
+            if (listContainer) listContainer.innerHTML = '<p style="text-align: center; color: var(--error-color);">加载失败</p>';
         }
     }
 }
@@ -998,17 +1006,6 @@ async function deleteMessage(messageId) {
         if (error.message !== 'AccessDenied') {
             showMessage('删除失败，请重试', 'error');
         }
-    }
-}
-
-function calculateUnionDays() {
-    const unionStartDate = new Date('2025-01-24');
-    const now = new Date();
-    const diffTime = Math.abs(now - unionStartDate);
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    const element = document.getElementById('union-days');
-    if (element) {
-        element.textContent = diffDays;
     }
 }
 

@@ -1124,16 +1124,20 @@ function showMessage(message, type = 'success') {
     CMDLog.log(message, type === 'error' ? 'error' : 'info');
 }
 
-// 测试函数
-function testAction(userId) {
-    alert('测试按钮工作正常！用户ID: ' + userId);
-    console.log('测试按钮被点击，用户ID:', userId);
-    CMDLog.log('测试按钮被点击，用户ID: ' + userId, 'info');
+// 全局 HTML 转义：管理面板渲染用户可控内容时使用，防 XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = (text == null ? '' : String(text));
+    return div.innerHTML;
 }
 
-// 清除日志函数
-function clearLogs() {
-    CMDLog.clear();
+// 生成安全的单引号 JS 字符串字面量（用于拼接进 HTML onclick 属性）
+function jsStrForAttr(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/'/g, "\\'");
 }
 
 // 封装的fetch函数
@@ -1167,8 +1171,6 @@ async function fetchWithAuth(url, options = {}) {
     const token = localStorage.getItem('stc_auth_token');
     if (token) {
         options.headers['Authorization'] = 'Bearer ' + token;
-    } else {
-        console.warn('[fetchWithAuth] No token in localStorage for:', url);
     }
 
     // 写请求：每次都拿新的一次性 CSRF token + 生成唯一 nonce
@@ -1186,13 +1188,8 @@ async function fetchWithAuth(url, options = {}) {
         throw new Error('Unauthorized');
     }
     if (response.status === 403) {
-        let debugInfo = '';
-        try {
-            const error = await response.clone().json();
-            debugInfo = JSON.stringify(error.debug || error);
-            console.error('[fetchWithAuth] 403 for', url, 'debug:', debugInfo);
-        } catch(e) {}
-        throw new Error('PermissionDenied: ' + debugInfo);
+        // 权限不足：抛出固定标识供调用方判断，避免把服务器内部信息透出到界面
+        throw new Error('PermissionDenied');
     }
     return response;
 }
@@ -1210,7 +1207,6 @@ async function logout() {
 
 // 显示成员操作模态框
 function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin) {
-    console.log('showMemberActions被调用', {userId, username, isBanned, isAdmin, isSuperAdmin});
     CMDLog.log(`打开用户 ${username} 的操作菜单`, 'info');
     
     // 移除已存在的模态框
@@ -1223,7 +1219,7 @@ function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin) {
         modal.style.display = 'flex';
         modal.style.zIndex = '9999';
         modal.innerHTML = '<div class="modal-content" style="background:white;padding:20px;border-radius:8px;min-width:300px;">' +
-            '<h3 style="margin:0 0 15px 0;color:#333;">操作 - ' + username + '</h3>' +
+            '<h3 style="margin:0 0 15px 0;color:#333;">操作 - ' + escapeHtml(username) + '</h3>' +
             '<div class="modal-actions" id="modal-actions" style="display:flex;flex-direction:column;gap:10px;"></div>' +
             '<button onclick="this.closest(\'.modal-overlay\').remove()" class="btn btn-secondary" style="margin-top:15px;">关闭</button>' +
             '</div>';
@@ -1246,13 +1242,12 @@ function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin) {
 
             actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="resetPassword(' + userId + ')">重置密码</button>';
 
-            actionsContainer.innerHTML += '<button style="' + btnStyle + 'background:#dc3545;" onclick="deleteMember(' + userId + ', \'' + username.replace(/'/g, "\\'") + '\')">删除成员</button>';
+            actionsContainer.innerHTML += '<button style="' + btnStyle + 'background:#dc3545;" onclick="deleteMember(' + userId + ', \'' + jsStrForAttr(username) + '\')">删除成员</button>';
         } else {
             actionsContainer.innerHTML += '<p style="color:#666;margin:0;">您无法对该管理员执行操作</p>';
         }
 
         document.body.appendChild(modal);
-        console.log('模态框已添加到DOM');
     } catch (error) {
         console.error('showMemberActions错误:', error);
         alert('错误: ' + error.message);
@@ -1309,17 +1304,25 @@ async function toggleAdmin(userId, admin) {
     }
 }
 
-// 重置密码
+// 重置密码：由管理员设置新密码（不再内置默认弱口令）
 async function resetPassword(userId) {
+    const newPassword = prompt('请输入该用户的新密码（至少 6 位）：');
+    if (newPassword === null) return; // 用户取消
+    const pwd = String(newPassword || '').trim();
+    if (pwd.length < 6) {
+        showMessage('密码长度至少6位', 'error');
+        return;
+    }
     CMDLog.log(`正在重置用户ID ${userId} 的密码`, 'info');
-    if (!confirm('确定要重置密码吗？')) return;
     try {
         var response = await fetchWithAuth('/api/members/' + userId + '/reset-password', {
-            method: 'PUT'
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ newPassword: pwd })
         });
         if (response.ok) {
-            showMessage('密码已重置为123456', 'success');
-            CMDLog.log(`用户ID ${userId} 的密码已重置为123456`, 'info');
+            showMessage('密码已重置成功', 'success');
+            CMDLog.log(`用户ID ${userId} 的密码已重置`, 'info');
             document.querySelector('.modal-overlay')?.remove();
         } else {
             var data = await response.json();
@@ -1433,14 +1436,14 @@ async function loadMembers() {
             members.map(function(m) {
                 var role = m.is_super_admin ? '超级管理员' : (m.is_admin ? '管理员' : '普通用户');
                 var status = m.is_banned ? '已封禁' : '正常';
-                var escapedUsername = m.username.replace(/'/g, "\\'");
-                var actionBtn = '<button class="btn btn-sm" onclick="showMemberActions(' + m.id + ', \'' + escapedUsername + '\', ' + m.is_banned + ', ' + m.is_admin + ', ' + (m.is_super_admin || false) + ')">操作</button>';
+                var escName = escapeHtml(m.username);
+                var actionBtn = '<button class="btn btn-sm" onclick="showMemberActions(' + m.id + ', \'' + jsStrForAttr(m.username) + '\', ' + m.is_banned + ', ' + m.is_admin + ', ' + (m.is_super_admin || false) + ')">操作</button>';
                 return '<tr>' +
-                    '<td>' + m.username + '</td>' +
-                    '<td>' + m.email + '</td>' +
+                    '<td>' + escName + '</td>' +
+                    '<td>' + escapeHtml(m.email) + '</td>' +
                     '<td>' + role + '</td>' +
                     '<td>' + status + '</td>' +
-                    '<td style="color:#888;font-size:11px;">' + (m.last_login_ip || '无') + '</td>' +
+                    '<td style="color:#888;font-size:11px;">' + escapeHtml(m.last_login_ip || '无') + '</td>' +
                     '<td>' + actionBtn + '</td>' +
                     '</tr>';
             }).join('') +
@@ -1467,7 +1470,7 @@ async function loadTasks() {
             return;
         }
         container.innerHTML = '<table class="admin-table"><thead><tr><th>标题</th><th>状态</th><th>创建时间</th></tr></thead><tbody>' +
-            tasks.map(t => '<tr><td>' + (t.title || '') + '</td><td>' + (t.status || 'pending') + '</td><td>' + (t.created_at || '') + '</td></tr>').join('') +
+            tasks.map(t => '<tr><td>' + escapeHtml(t.title || '') + '</td><td>' + escapeHtml(t.status || 'pending') + '</td><td>' + escapeHtml(t.created_at || '') + '</td></tr>').join('') +
             '</tbody></table>';
         CMDLog.log('任务列表已刷新', 'info');
     } catch (error) {
@@ -1490,7 +1493,7 @@ async function loadMessages() {
             return;
         }
         container.innerHTML = '<table class="admin-table"><thead><tr><th>内容</th><th>创建时间</th></tr></thead><tbody>' +
-            messages.map(m => '<tr><td>' + (m.content || '') + '</td><td>' + (m.created_at || '') + '</td></tr>').join('') +
+            messages.map(m => '<tr><td>' + escapeHtml(m.content || '') + '</td><td>' + escapeHtml(m.created_at || '') + '</td></tr>').join('') +
             '</tbody></table>';
         CMDLog.log('留言列表已刷新', 'info');
     } catch (error) {
@@ -1512,10 +1515,10 @@ async function loadLoginStatus() {
         if (user && user.id) {
             const role = user.is_super_admin ? '超级管理员' : (user.is_admin ? '管理员' : '普通用户');
             container.innerHTML = '<div style="padding:10px;background:#f0f9ff;border-radius:5px;">' +
-                '<strong>用户名:</strong> ' + user.username + '<br>' +
-                '<strong>邮箱:</strong> ' + user.email + '<br>' +
-                '<strong>角色:</strong> ' + role + '<br>' +
-                '<strong>ID:</strong> ' + user.id +
+                '<strong>用户名:</strong> ' + escapeHtml(user.username) + '<br>' +
+                '<strong>邮箱:</strong> ' + escapeHtml(user.email) + '<br>' +
+                '<strong>角色:</strong> ' + escapeHtml(role) + '<br>' +
+                '<strong>ID:</strong> ' + escapeHtml(user.id) +
                 '</div>';
             CMDLog.log('登录状态: ' + user.username + ' (' + role + ')', 'info');
         } else {
@@ -1523,7 +1526,7 @@ async function loadLoginStatus() {
             CMDLog.log('未登录', 'warn');
         }
     } catch (error) {
-        container.innerHTML = '<div style="padding:10px;background:#fee;border-radius:5px;color:red;">加载失败: ' + error.message + '</div>';
+        container.innerHTML = '<div style="padding:10px;background:#fee;border-radius:5px;color:red;">加载失败: ' + escapeHtml(error.message) + '</div>';
         CMDLog.log('登录状态加载失败: ' + error.message, 'error');
     }
 }
@@ -1726,30 +1729,23 @@ function toggleAccessAutoRefresh() {
     }
 }
 
-// 页面加载完成后初始化
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        setTimeout(() => {
-            CMDLog.init();
-            initAdminPanel();
-            loadAccessLogs();
-            toggleAccessAutoRefresh();
-            // 初始化机器人控制台
-            setupBotPanel();
-            loadBotStatus().catch(e => CMDLog.log('机器人状态加载失败: ' + e.message, 'warn'));
-            loadBotMessages().catch(e => CMDLog.log('机器人消息加载失败: ' + e.message, 'warn'));
-        }, 500);
-    });
-} else {
+// 页面加载完成后初始化（兼容 DOM 就绪的两种时序）
+function bootAdminPanel() {
     setTimeout(() => {
         CMDLog.init();
         initAdminPanel();
         loadAccessLogs();
         toggleAccessAutoRefresh();
+        // 初始化机器人控制台
         setupBotPanel();
         loadBotStatus().catch(e => CMDLog.log('机器人状态加载失败: ' + e.message, 'warn'));
         loadBotMessages().catch(e => CMDLog.log('机器人消息加载失败: ' + e.message, 'warn'));
     }, 500);
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootAdminPanel);
+} else {
+    bootAdminPanel();
 }
 
 // ============================================================

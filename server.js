@@ -21,7 +21,6 @@ require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
-const cookieSession = require('cookie-session');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const multer = require('multer');
@@ -99,8 +98,6 @@ initLogto().catch(() => {});
 
 // Vercel Serverless 限制：只读文件系统、无 child_process
 const IS_VERCEL = !!process.env.VERCEL;
-const canSpawn = !IS_VERCEL;
-const fsRoot = IS_VERCEL ? '/tmp' : __dirname;
 
 const { spawn } = require('child_process');
 const nodemailer = require('nodemailer');
@@ -851,24 +848,6 @@ function methodWhitelist(req, res, next) {
     next();
 }
 
-const dataCache = new Map();
-const CACHE_TTL = 5000;
-
-function getCachedData(key, fetchFn) {
-    const cached = dataCache.get(key);
-    if (cached && Date.now() < cached.expires) {
-        return Promise.resolve(cached.data);
-    }
-    return fetchFn().then(data => {
-        dataCache.set(key, { data, expires: Date.now() + CACHE_TTL });
-        return data;
-    });
-}
-
-function invalidateCache(key) {
-    dataCache.delete(key);
-}
-
 function validateEmail(email) {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return re.test(email);
@@ -1555,9 +1534,9 @@ app.use(async (req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public'), {
     extensions: ['html', 'htm'],
     index: 'index.html',
-    // 防止浏览器缓存旧版 HTML（如验证码功能更新后仍显示旧页面）
+    // 防止浏览器/CDN 缓存旧版页面与脚本（如功能更新后仍加载旧资源）
     setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.html')) {
+        if (filePath.endsWith('.html') || filePath.endsWith('.js') || filePath.endsWith('.css')) {
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
             res.setHeader('Pragma', 'no-cache');
             res.setHeader('Expires', '0');
@@ -1618,6 +1597,37 @@ async function initDatabase() {
     if (!Array.isArray(db.data.inviteCodes)) db.data.inviteCodes = [];
     if (!Array.isArray(db.data.bannedIPs)) db.data.bannedIPs = [];
     if (!Array.isArray(db.data.ai_conversations)) db.data.ai_conversations = [];
+    // 邀请码集合统一：历史上存在两套集合——invite_codes 是注册/校验真正使用的集合，
+    // inviteCodes 仅被旧版管理面板写入且格式不一（纯字符串或带 is_used 的对象）。
+    // 此处做幂等迁移：把历史 inviteCodes 合并进 invite_codes 并规范化字段。
+    if (!Array.isArray(db.data.invite_codes)) db.data.invite_codes = [];
+    const legacyInviteCodes = Array.isArray(db.data.inviteCodes) ? db.data.inviteCodes : [];
+    if (legacyInviteCodes.length > 0) {
+        db.data.inviteCodes = [];
+        legacyInviteCodes.forEach((item, i) => {
+            if (!item) return;
+            const obj = (typeof item === 'object') ? item : { code: item };
+            if (!obj.code) return;
+            // 避免与已存在记录重复（审批流程曾双写同一 code）
+            if (db.data.invite_codes.some(c => c && c.code === obj.code)) return;
+            db.data.invite_codes.push({
+                id: (typeof obj.id === 'number' && obj.id > 0) ? obj.id : Date.now() + i,
+                code: obj.code,
+                used: !!obj.used || !!obj.is_used,
+                is_used: !!obj.used || !!obj.is_used,
+                created_by: obj.created_by || null,
+                created_at: obj.created_at || new Date().toISOString()
+            });
+        });
+    }
+    // 规范化正式集合：给缺失 id 的历史记录补齐 id，保证管理端可按 id 删除
+    db.data.invite_codes.forEach((c, i) => {
+        if (c && typeof c === 'object' && c.code) {
+            if (typeof c.id === 'undefined') c.id = Date.now() + i;
+            c.used = !!c.used;
+            c.is_used = !!c.used || !!c.is_used;
+        }
+    });
     await db.write();
     
     // 安全修复：不再自动创建硬编码管理员账号（原 REDACTED_USER/REDACTED 凭据已从源码移除）。
@@ -1710,23 +1720,9 @@ const requireLogin = async (req, res, next) => {
 const requireAdmin = async (req, res, next) => {
     const user = await getCurrentUser(req);
     if (!user) {
-        console.log('[AUTH] requireAdmin 失败，session.userId:', req.session.userId, 'authUser:', req.authUser?.id);
-        console.log('[AUTH] 数据库用户数:', db.data.users?.length || 0);
-        console.log('[AUTH] Authorization header:', req.headers.authorization ? 'present' : 'missing');
-        return res.status(403).json({ 
-            error: '请先登录',
-            debug: {
-                hasAuthHeader: !!req.headers.authorization,
-                hasAuthUser: !!req.authUser,
-                authUserId: req.authUser?.id || null,
-                authUsername: req.authUser?.username || null,
-                sessionUserId: req.session.userId || null,
-                dbUserCount: db.data.users?.length || 0
-            }
-        });
+        return res.status(403).json({ error: '请先登录' });
     }
     if (!user.is_admin && !user.is_super_admin) {
-        console.log('[AUTH] requireAdmin 权限不足，用户:', user.username, 'is_admin:', user.is_admin, 'is_super_admin:', user.is_super_admin);
         return res.status(403).json({ error: '权限不足' });
     }
     req.currentUser = user;
@@ -1791,10 +1787,6 @@ app.get('/ai', (req, res) => {
 
 app.get('/terms', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'terms.html'));
-});
-
-app.get('/privacy', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'privacy.html'));
 });
 
 // 数据库锁定检查中间件（必须在所有API路由之前）
@@ -3428,9 +3420,7 @@ app.get('/api/invite/approve/:token', async (req, res) => {
     try {
         const inviteCode = crypto.randomBytes(16).toString('hex');
         if (!Array.isArray(db.data.invite_codes)) db.data.invite_codes = [];
-        if (!Array.isArray(db.data.inviteCodes)) db.data.inviteCodes = [];
-        db.data.invite_codes.push({ code: inviteCode, used: false, created_at: new Date().toISOString() });
-        db.data.inviteCodes.push(inviteCode);
+        db.data.invite_codes.push({ id: Date.now(), code: inviteCode, used: false, is_used: false, created_at: new Date().toISOString() });
         request.status = 'approved';
         request.approved_at = new Date().toISOString();
         request.approved_by = 'email-link';
@@ -3796,7 +3786,8 @@ app.get('/api/join/approve/:token', async (req, res) => {
     }
 
     const email = application.email;
-    const password = '123456';
+    // 为申请人生成随机初始密码（邮件中告知，登录后可自行修改）
+    const password = Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
 
     // 该 QQ 邮箱已注册过账号：标记已处理，并提示
     if (db.data.users.find(u => u.email === email)) {
@@ -4028,7 +4019,8 @@ app.put('/api/members/:id/reset-password', requireAdmin, requireRateLimit('admin
             return res.status(403).json({ success: false, message: result.reason });
         }
 
-        const newPassword = req.body && req.body.newPassword ? req.body.newPassword : '123456';
+        // 必须由管理员显式提供新密码，不再内置默认弱口令
+        const newPassword = req.body && typeof req.body.newPassword === 'string' ? req.body.newPassword.trim() : '';
         if (!validatePassword(newPassword)) {
             return res.status(400).json({ success: false, message: '密码长度至少6位' });
         }
@@ -4145,7 +4137,7 @@ app.get('/api/messages', requireAdmin, async (req, res) => {
 
 // 邀请码管理API
 app.get('/api/invite-codes', requireAdmin, async (req, res) => {
-    const codes = db.data.inviteCodes || [];
+    const codes = db.data.invite_codes || [];
     res.json({ success: true, data: codes });
 });
 
@@ -4154,20 +4146,21 @@ app.post('/api/invite-codes', requireAdmin, requireRateLimit('admin'), requireCS
     const newCode = {
         id: Date.now(),
         code: code,
+        used: false,
         is_used: false,
         created_by: req.currentUser.id,
         created_at: new Date().toISOString()
     };
-    if (!db.data.inviteCodes) db.data.inviteCodes = [];
-    db.data.inviteCodes.push(newCode);
+    if (!Array.isArray(db.data.invite_codes)) db.data.invite_codes = [];
+    db.data.invite_codes.push(newCode);
     await db.write();
     res.json({ success: true, data: newCode, code: code });
 });
 
 app.delete('/api/invite-codes/:id', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const id = parseInt(req.params.id) || parseFloat(req.params.id);
-    if (!db.data.inviteCodes) db.data.inviteCodes = [];
-    db.data.inviteCodes = db.data.inviteCodes.filter(c => c.id !== id);
+    if (!Array.isArray(db.data.invite_codes)) db.data.invite_codes = [];
+    db.data.invite_codes = db.data.invite_codes.filter(c => c && c.id !== id);
     await db.write();
     res.json({ success: true, message: '邀请码已删除' });
 });
