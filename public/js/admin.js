@@ -490,17 +490,17 @@ const CMDLog = {
                     return;
                 }
                 this.log('正在封禁IP: '+args, 'warn');
-                fetch('/api/admin/banip', {
+                fetchWithAuth('/api/ban-ip', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({ip: args})
+                    body: JSON.stringify({ip: args, reason: '控制台命令'})
                 }).then(r=>r.json()).then(d=>{
                     if(d.success) {
-                        this.log('IP '+args+' 已封禁', 'info');
+                        this.log('IP '+args+' 已封禁'+(d.linkedDevice?'，并连带封禁其设备':'')+'。', 'info');
                     } else {
                         this.log('封禁失败: '+d.message, 'error');
                     }
-                }).catch(e=>this.log('封禁失败: '+e.message,'error'));
+                }).catch(e=>this.log('封禁失败: '+String(e.message||e).replace('PermissionDenied','无权限（仅超级管理员）'),'error'));
                 break;
             case 'unbanip':
                 if (!args) {
@@ -508,7 +508,7 @@ const CMDLog = {
                     return;
                 }
                 this.log('正在解封IP: '+args, 'warn');
-                fetch('/api/unban-ip', {
+                fetchWithAuth('/api/unban-ip', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
                     body: JSON.stringify({ip: args})
@@ -1663,8 +1663,9 @@ async function loadAccessLogs() {
         }
         const logs = data.data || [];
         const bannedSet = new Set(data.banned || []);
+        const devBannedSet = new Set(data.bannedDevices || []);
         const countEl = document.getElementById('access-count');
-        if (countEl) countEl.textContent = `共 ${logs.length} 条 · 已封禁 ${bannedSet.size} 个 IP`;
+        if (countEl) countEl.textContent = `共 ${logs.length} 条 · 封禁 IP ${bannedSet.size} 个 · 设备 ${devBannedSet.size} 个`;
         if (logs.length === 0) {
             container.innerHTML = '<div style="color:#8b949e; padding:8px;">暂无访问记录</div>';
             return;
@@ -1672,6 +1673,7 @@ async function loadAccessLogs() {
         let html = '<table style="width:100%; border-collapse:collapse; font-size:13px;"><thead><tr style="text-align:left; color:#8b949e;">'
             + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">时间</th>'
             + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">IP</th>'
+            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">设备指纹</th>'
             + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">页面</th>'
             + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">来源 (User-Agent)</th>'
             + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">操作</th>'
@@ -1679,22 +1681,43 @@ async function loadAccessLogs() {
         const seenIp = {};
         logs.forEach(log => {
             const ip = log.ip || '';
+            const fp = log.fp || '';
             const isBanned = bannedSet.has(ip);
+            const isDevBanned = !!fp && devBannedSet.has(fp);
             const rowKey = ip || ('p' + (log.page || ''));
             const isFirst = !seenIp[rowKey];
             seenIp[rowKey] = true;
             const ipBadge = isBanned
                 ? ' <span style="color:#cf222e; font-size:11px; border:1px solid #cf222e; border-radius:4px; padding:0 4px;">已封禁</span>'
                 : '';
-            let opCell = '';
-            if (isFirst && ip && !isBanned) {
-                opCell = `<button onclick="banAccessIP('${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid #cf222e; color:#cf222e; background:#fff; border-radius:4px; cursor:pointer;">封禁</button>`;
-            } else if (isFirst && ip && isBanned) {
-                opCell = `<button onclick="unbanAccessIP('${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid #57606a; color:#57606a; background:#fff; border-radius:4px; cursor:pointer;">解封</button>`;
+            const devBadge = isDevBanned
+                ? ' <span style="color:#cf222e; font-size:11px; border:1px solid #cf222e; border-radius:4px; padding:0 4px;">已封设备</span>'
+                : '';
+            const devCell = fp
+                ? `<span style="font-family:monospace; white-space:nowrap; color:${isDevBanned ? '#cf222e' : '#57606a'};" title="${accessEsc(fp)}">${accessEsc(fp.slice(0, 8))}…</span>${devBadge}`
+                : '<span style="color:#c8c8c8;">—</span>';
+            // 操作按钮：IP 级 + 设备级各一（只在该 IP 首次出现的行显示）
+            const ops = [];
+            if (isFirst && ip) {
+                if (!isBanned) {
+                    ops.push(`<button onclick="banAccessIP('${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid #cf222e; color:#cf222e; background:#fff; border-radius:4px; cursor:pointer;">封禁IP</button>`);
+                } else {
+                    ops.push(`<button onclick="unbanAccessIP('${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid #57606a; color:#57606a; background:#fff; border-radius:4px; cursor:pointer;">解封IP</button>`);
+                }
+                if (fp) {
+                    if (!isDevBanned) {
+                        ops.push(`<button onclick="banDevice('${fp}', '${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid #b45309; color:#b45309; background:#fff; border-radius:4px; cursor:pointer;">封禁设备</button>`);
+                    } else {
+                        ops.push(`<button onclick="unbanDevice('${fp}')" style="padding:2px 10px; font-size:12px; border:1px solid #57606a; color:#57606a; background:#fff; border-radius:4px; cursor:pointer;">解封设备</button>`);
+                    }
+                }
             }
-            html += '<tr style="border-bottom:1px solid #eaeef2;' + (isBanned ? ' background:#fff5f5;' : '') + '">'
+            const opCell = ops.join('&nbsp; ');
+            const rowStyle = 'border-bottom:1px solid #eaeef2;' + ((isBanned || isDevBanned) ? ' background:#fff5f5;' : '');
+            html += '<tr style="' + rowStyle + '">'
                 + `<td style="padding:5px 8px; white-space:nowrap;">${accessEsc(formatAccessTime(log.ts || log.t))}</td>`
                 + `<td style="padding:5px 8px; font-family:monospace; white-space:nowrap; color:${isBanned ? '#cf222e' : '#24292f'}; font-weight:${isBanned ? 'bold' : 'normal'};">${accessEsc(ip)}${ipBadge}</td>`
+                + `<td style="padding:5px 8px;">${devCell}</td>`
                 + `<td style="padding:5px 8px; white-space:nowrap;"><a href="${accessEsc(log.page)}" style="color:#2563eb; text-decoration:none;">${accessEsc(log.page)}</a></td>`
                 + `<td style="padding:5px 8px; color:#57606a; max-width:330px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${accessEsc(log.ua || '')}">${accessEsc(log.ua || '')}</td>`
                 + `<td style="padding:5px 8px; white-space:nowrap;">${opCell}</td>`
@@ -1703,6 +1726,7 @@ async function loadAccessLogs() {
         html += '</tbody></table>';
         container.innerHTML = html;
         loadBannedIPs();
+        loadBannedDevices();
     } catch (e) {
         container.innerHTML = `<div style="color:#ff6b6b;">加载失败: ${accessEsc(e.message)}</div>`;
     }
@@ -1799,6 +1823,88 @@ async function unbanAccessIP(ip) {
     } catch (e) {
         alert(String(e.message || e).indexOf('PermissionDenied') >= 0
             ? '没有权限解封 IP：仅超级管理员可操作。'
+            : '解封失败: ' + e.message);
+    }
+}
+
+// 加载"已封禁设备"管理条（仅超管可查看；普通管理员无权限时自动隐藏）
+async function loadBannedDevices() {
+    const bar = document.getElementById('banned-devices-bar');
+    const list = document.getElementById('banned-devices-list');
+    if (!bar || !list) return;
+    try {
+        const resp = await fetchWithAuth('/api/ban-devices');
+        if (!resp.ok) { bar.style.display = 'none'; return; }
+        const data = await resp.json();
+        if (!data.success) { bar.style.display = 'none'; return; }
+        const arr = Array.isArray(data.data) ? data.data : [];
+        bar.style.display = 'block';
+        const cnt = document.getElementById('banned-devices-count');
+        if (cnt) cnt.textContent = `（${arr.length}）`;
+        if (arr.length === 0) {
+            list.innerHTML = '<span style="color:#8b949e; font-size:12px;">暂无封禁设备</span>';
+            return;
+        }
+        list.innerHTML = arr.map(b => {
+            const fp = String(b.fp || '').replace(/'/g, '');
+            const reason = String(b.reason || '违规操作');
+            const t = b.banned_at ? ' · ' + formatAccessTime(b.banned_at) : '';
+            const title = accessEsc(reason + t);
+            return `<span style="display:inline-flex; align-items:center; gap:6px; background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:6px; padding:3px 8px; font-size:12px; max-width:100%;">
+                <span style="font-family:monospace; white-space:nowrap;">${accessEsc(b.fp)}</span>
+                <span title="${title}" style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#7c2d12;">${accessEsc(reason)}</span>
+                <button onclick="unbanDevice('${fp}')" style="padding:0 7px; font-size:11px; border:1px solid #b45309; color:#b45309; background:#fff; border-radius:4px; cursor:pointer; line-height:18px;">解封</button>
+            </span>`;
+        }).join('');
+    } catch (e) {
+        // 403 无权限或网络错误：隐藏封禁管理条，不影响访问记录
+        bar.style.display = 'none';
+    }
+}
+
+// 单独封禁一个设备（换网络/换 IP 仍会被拦截）
+async function banDevice(fp) {
+    if (!fp) return;
+    const reason = prompt(`封禁设备：${fp}\n该封禁与 IP/网络无关，对方更换网络、切换 IP 后仍会被拦截。\n请输入封禁原因（可留空）：`, '违规操作');
+    if (reason === null) return;
+    try {
+        const resp = await fetchWithAuth('/api/ban-device', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fp: fp, reason: (reason || '违规操作').slice(0, 100) })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            loadAccessLogs();
+        } else {
+            alert('封禁失败: ' + (data.message || '未知错误'));
+        }
+    } catch (e) {
+        alert(String(e.message || e).indexOf('PermissionDenied') >= 0
+            ? '没有权限封禁设备：仅超级管理员可操作。'
+            : '封禁失败: ' + e.message);
+    }
+}
+
+// 解封一个设备
+async function unbanDevice(fp) {
+    if (!fp) return;
+    if (!confirm(`确定解封设备：${fp}？解封后该设备即可正常访问。`)) return;
+    try {
+        const resp = await fetchWithAuth('/api/unban-device', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fp: fp })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            loadAccessLogs();
+        } else {
+            alert('解封失败: ' + (data.message || '未知错误'));
+        }
+    } catch (e) {
+        alert(String(e.message || e).indexOf('PermissionDenied') >= 0
+            ? '没有权限解封设备：仅超级管理员可操作。'
             : '解封失败: ' + e.message);
     }
 }

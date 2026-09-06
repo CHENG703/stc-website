@@ -258,6 +258,8 @@ const defaults = {
     inviteApplications: [],
     inviteCodes: [],
     bannedIPs: [],
+    banned_devices: [],
+    banned_device_info: [],
     join_applications: [],
     access_logs: [],
     announcements: []
@@ -584,6 +586,7 @@ class SimpleJSONDB {
 const db = new SimpleJSONDB(dbPath, defaults);
 
 let bannedIPs = new Set();
+let bannedDevices = new Set();
 
 // ==================== KV 存储的 CSRF + Rate Limit + Nonce 防护 ====================
 const CSRF_TOKEN_TTL = 15 * 60 * 1000; // 15分钟过期（防重放，原1小时太长）
@@ -1570,16 +1573,27 @@ app.use((req, res, next) => {
 // 优先查 db 中的封禁表（KV 多实例下实时生效），内存 Set 作为兜底（db 尚未加载时）
 app.use((req, res, next) => {
     const ip = getClientIP(req);
+    const fp = getDeviceFP(req);
     const bannedArr = (db && db.data && Array.isArray(db.data.banned_ips)) ? db.data.banned_ips : null;
-    const blocked = bannedArr ? bannedArr.indexOf(ip) >= 0 : bannedIPs.has(ip);
-    // 管理员自救保险：已登录的管理员即使 IP 被封也放行，
-    // 防止管理员手滑封掉自己的 IP 后彻底被锁在后台外无法解封。
+    const bannedDevArr = (db && db.data && Array.isArray(db.data.banned_devices)) ? db.data.banned_devices : null;
+    // IP 封禁或设备指纹封禁命中其一即拦截（设备封禁用于对抗"切换网络/换 IP"绕过）
+    const blockedByIp = bannedArr ? bannedArr.indexOf(ip) >= 0 : bannedIPs.has(ip);
+    const blockedByDevice = !!fp && (bannedDevArr ? bannedDevArr.indexOf(fp) >= 0 : bannedDevices.has(fp));
+    const blocked = blockedByIp || blockedByDevice;
+    // 管理员自救保险：已登录的管理员即使 IP/设备被封也放行，
+    // 防止管理员手滑封掉自己的 IP 或设备后彻底被锁在后台外无法解封。
     const isAdminSession = !!(req.session && (req.session.isSuperAdmin || req.session.isAdmin)) ||
         !!(req.authUser && (req.authUser.is_super_admin || req.authUser.is_admin));
     if (blocked && !isAdminSession) {
         // API/静态资源请求仍返回 JSON（前端代码统一处理）；
         // 页面(HTML)导航请求返回友好的中文说明页，避免浏览器渲染出一坨 JSON。
         const isResource = /\.(css|js|mjs|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot|otf|pdf|zip|map)(\?|$)/i.test(req.path);
+        // 区分提示：设备封禁与网络/IP 无关，换 IP 也无法解除
+        const deviceOnly = blockedByDevice && !blockedByIp;
+        const banTitle = deviceOnly ? '您的设备已被封禁' : '您的 IP 已被封禁';
+        const banDesc = deviceOnly
+            ? '当前设备（浏览器）已被列入封禁名单，此封禁与您的网络地址（IP）无关，更换网络或切换 IP 无法解除。'
+            : '出于安全考虑，当前网络地址（IP）暂时无法访问本网站页面。';
         if (!req.path.startsWith('/api/') && !isResource && req.method !== 'HEAD') {
             const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1603,8 +1617,8 @@ app.use((req, res, next) => {
 <body>
   <div class="card">
     <div class="code">403<small>ACCESS DENIED</small></div>
-    <h1>您的 IP 已被封禁</h1>
-    <p>出于安全考虑，当前网络地址（IP）暂时无法访问本网站页面。<br>若您已登录管理员，请先在后台「IP管理」中解封本机 IP 后再访问。</p>
+    <h1>${banTitle}</h1>
+    <p>${banDesc}<br>若您已登录管理员，请先在后台「IP管理」中解封后再访问。</p>
     <p style="margin-top:10px;font-size:13px;color:#999">如果您认为这是误封，请通过申诉邮箱联系我们：<a href="mailto:${APPEAL_EMAIL}" style="color:#1a73e8;text-decoration:none;word-break:break-all">${APPEAL_EMAIL}</a></p>
     <hr>
     <div class="foot">STC 任务平台</div>
@@ -1614,7 +1628,10 @@ app.use((req, res, next) => {
             res.status(403).set('Content-Type', 'text/html; charset=utf-8');
             return res.send(html);
         }
-        return res.status(403).json({ success: false, message: '您的IP已被封禁，如有异议请联系申诉邮箱 ' + APPEAL_EMAIL });
+        const jsonMsg = deviceOnly
+            ? '您的设备已被封禁，此封禁与网络/IP 无关，如有异议请联系申诉邮箱 ' + APPEAL_EMAIL
+            : '您的IP已被封禁，如有异议请联系申诉邮箱 ' + APPEAL_EMAIL;
+        return res.status(403).json({ success: false, message: jsonMsg });
     }
     next();
 });
@@ -1634,11 +1651,13 @@ app.use(async (req, res, next) => {
 
         const ip = getClientIP(req);
         const ua = String(req.headers['user-agent'] || '').slice(0, 120);
+        const fp = getDeviceFP(req);
         if (!Array.isArray(db.data.access_logs)) db.data.access_logs = [];
         db.data.access_logs.unshift({
             t: Date.now(),
             ts: new Date().toISOString(),
             ip: ip,
+            fp: fp,
             page: p,
             ua: ua
         });
@@ -1718,6 +1737,8 @@ async function initDatabase() {
     if (!Array.isArray(db.data.inviteApplications)) db.data.inviteApplications = [];
     if (!Array.isArray(db.data.inviteCodes)) db.data.inviteCodes = [];
     if (!Array.isArray(db.data.bannedIPs)) db.data.bannedIPs = [];
+    if (!Array.isArray(db.data.banned_devices)) db.data.banned_devices = [];
+    if (!Array.isArray(db.data.banned_device_info)) db.data.banned_device_info = [];
     if (!Array.isArray(db.data.announcements)) db.data.announcements = [];
     if (!Array.isArray(db.data.ai_conversations)) db.data.ai_conversations = [];
     // 邀请码集合统一：历史上存在两套集合——invite_codes 是注册/校验真正使用的集合，
@@ -1767,6 +1788,19 @@ async function loadBannedIPs() {
     await db.read();
     if (db.data.banned_ips) {
         bannedIPs = new Set(db.data.banned_ips);
+    }
+    if (db.data.banned_devices) {
+        bannedDevices = new Set(db.data.banned_devices);
+    }
+}
+
+// 读取请求携带的设备指纹（Cookie stc_dev）。仅接受 16~40 位小写 hex，防止伪造投毒。
+function getDeviceFP(req) {
+    try {
+        const s = String((req.cookies && req.cookies.stc_dev) || '').toLowerCase().trim();
+        return /^[0-9a-f]{16,40}$/.test(s) ? s : '';
+    } catch (e) {
+        return '';
     }
 }
 
@@ -5111,6 +5145,28 @@ app.post('/api/ban-ip', requireSuperAdmin, requireRateLimit('admin'), requireCSR
         db.data.banned_ips = [];
     }
     
+    // 联动封禁该 IP 最近访问过的设备指纹（防"切换网络/换 IP"绕过）。
+    // 取访问日志中该 IP 最新一条已携带设备指纹的记录。
+    let linkedDevice = '';
+    const recentLog = (Array.isArray(db.data.access_logs) ? db.data.access_logs : [])
+        .find(l => l && l.ip === ip && l.fp);
+    if (recentLog && recentLog.fp) {
+        db.data.banned_devices = db.data.banned_devices || [];
+        db.data.banned_device_info = db.data.banned_device_info || [];
+        if (!db.data.banned_devices.includes(recentLog.fp)) {
+            bannedDevices.add(recentLog.fp);
+            db.data.banned_devices.push(recentLog.fp);
+            db.data.banned_device_info.push({
+                fp: recentLog.fp,
+                ip: ip,
+                reason: (reason || '违规操作') + '（封禁IP连带）',
+                banned_by: req.currentUser.id,
+                banned_at: new Date().toISOString()
+            });
+            linkedDevice = recentLog.fp;
+        }
+    }
+    
     if (!db.data.banned_ips.includes(ip)) {
         db.data.banned_ips.push(ip);
         db.data.banned_ip_info = db.data.banned_ip_info || [];
@@ -5120,14 +5176,65 @@ app.post('/api/ban-ip', requireSuperAdmin, requireRateLimit('admin'), requireCSR
             banned_by: req.currentUser.id,
             banned_at: new Date().toISOString()
         });
-        await db.write();
     }
+    await db.write();
     
-    res.json({ success: true, message: 'IP已封禁' });
+    res.json({
+        success: true,
+        message: 'IP已封禁' + (linkedDevice ? '，并连带封禁其设备（更换IP/网络也无效）' : ''),
+        linkedDevice: linkedDevice
+    });
 });
 
 app.get('/api/ban-ips', requireSuperAdmin, async (req, res) => {
     res.json({ success: true, data: db.data.banned_ip_info || [] });
+});
+
+// 已封禁设备列表（指纹信息，用于管理端展示/解封）
+app.get('/api/ban-devices', requireSuperAdmin, async (req, res) => {
+    res.json({ success: true, data: db.data.banned_device_info || [] });
+});
+
+// 单独封禁一个设备指纹
+app.post('/api/ban-device', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
+    const { fp, reason } = req.body;
+    const id = String(fp || '').toLowerCase().trim();
+    if (!/^[0-9a-f]{16,40}$/.test(id)) {
+        return res.status(400).json({ success: false, message: '无效的设备指纹' });
+    }
+    bannedDevices.add(id);
+    db.data.banned_devices = db.data.banned_devices || [];
+    db.data.banned_device_info = db.data.banned_device_info || [];
+    if (!db.data.banned_devices.includes(id)) {
+        db.data.banned_devices.push(id);
+        db.data.banned_device_info.push({
+            fp: id,
+            ip: '',
+            reason: reason || '违规操作',
+            banned_by: req.currentUser.id,
+            banned_at: new Date().toISOString()
+        });
+        await db.write();
+    }
+    res.json({ success: true, message: '设备已封禁' });
+});
+
+// 解封一个设备指纹
+app.post('/api/unban-device', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
+    const { fp } = req.body;
+    const id = String(fp || '').toLowerCase().trim();
+    if (!id) {
+        return res.status(400).json({ success: false, message: '请输入设备指纹' });
+    }
+    bannedDevices.delete(id);
+    if (db.data.banned_devices) {
+        db.data.banned_devices = db.data.banned_devices.filter(x => x !== id);
+    }
+    if (db.data.banned_device_info) {
+        db.data.banned_device_info = db.data.banned_device_info.filter(x => x.fp !== id);
+    }
+    await db.write();
+    res.json({ success: true, message: '设备已解封' });
 });
 
 app.post('/api/unban-ip', requireSuperAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
@@ -5158,7 +5265,8 @@ app.get('/api/access-logs', requireAdmin, async (req, res) => {
         const limit = Math.min(parseInt(req.query.limit) || 100, 500);
         const logs = Array.isArray(db.data.access_logs) ? db.data.access_logs.slice(0, limit) : [];
         const banned = Array.isArray(db.data.banned_ips) ? db.data.banned_ips : [];
-        res.json({ success: true, data: logs, banned: banned });
+        const bannedDevices = Array.isArray(db.data.banned_devices) ? db.data.banned_devices : [];
+        res.json({ success: true, data: logs, banned: banned, bannedDevices: bannedDevices });
     } catch (e) {
         res.status(500).json({ success: false, message: '获取访问记录失败: ' + e.message });
     }
