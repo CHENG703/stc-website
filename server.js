@@ -627,18 +627,21 @@ function generateCaptchaSVG(code) {
 async function createCaptcha(sessionId) {
     const code = generateCaptchaCode();
     const key = `captcha:${sessionId}`;
-    await _kvSet(key, { code, expires: Date.now() + CAPTCHA_TTL }, CAPTCHA_TTL);
+    await _kvSet(key, { type: 'text', code, expires: Date.now() + CAPTCHA_TTL }, CAPTCHA_TTL);
     return generateCaptchaSVG(code);
 }
 
 // 校验验证码：单次使用（无论对错都销毁，防暴力）
+// 支持两类记录：type='text'（图形字符验证码）按文本比对；
+// type='slide'（滑块验证通过标记，由 POST /api/captcha/slide 写入）直接放行。
 async function verifyCaptcha(sessionId, input) {
-    if (!input || typeof input !== 'string') return false;
     const key = `captcha:${sessionId}`;
     const record = await _kvGet(key);
     await _kvDel(key); // 单次使用：校验一次即作废
     if (!record) return false;
     if (Date.now() > record.expires) return false;
+    if (record.type === 'slide') return !!record.solved;
+    if (!input || typeof input !== 'string') return false;
     return record.code.toUpperCase() === input.trim().toUpperCase();
 }
 
@@ -647,7 +650,7 @@ function requireCaptcha(req, res, next) {
     const sid = req.sessionID || (req.cookies && req.cookies['connect.sid']) || crypto.randomUUID();
     verifyCaptcha(sid, req.body && req.body.captcha).then(ok => {
         if (!ok) {
-            return res.status(400).json({ success: false, message: '人机验证失败，请重新输入图形验证码' });
+            return res.status(400).json({ success: false, message: '人机验证失败，请重新验证' });
         }
         next();
     }).catch(err => {
@@ -695,6 +698,7 @@ const RATE_CONFIGS = {
     admin:        { max: 60,  window: 60 * 1000 },        // 管理操作：1分钟60次
     password:     { max: 3,   window: 60 * 1000 },        // 改密：1分钟3次
     ai:           { max: 20,  window: 60 * 1000 },        // AI 对话：1分钟20次
+    slide:        { max: 10,  window: 30 * 1000 },        // 滑块验证上报：30秒10次
 };
 
 function requireRateLimit(type) {
@@ -2298,6 +2302,23 @@ app.get('/api/captcha', (req, res) => {
         console.error('[CAPTCHA] 生成失败:', err);
         res.status(500).send('captcha error');
     });
+});
+
+// 滑块验证：前端把滑块拖到最右端后上报（携带拖动耗时/采样数做基本人类行为启发），
+// 通过则给当前会话写入一次性"solved"标记；后续 /api/login 等经 requireCaptcha 的
+// 接口会校验该标记（同样单次使用，验证一次即作废）
+app.post('/api/captcha/slide', requireRateLimit('slide'), async (req, res) => {
+    const sid = req.sessionID || (req.cookies && req.cookies['connect.sid']) || crypto.randomUUID();
+    const elapsed = Number(req.body && req.body.elapsed);
+    const steps = Number(req.body && req.body.steps);
+    // 拖动耗时需在 0.4~15 秒之间、移动采样 3~2000 次（过短/过长/无采样视为机器行为）
+    if (!Number.isFinite(elapsed) || elapsed < 400 || elapsed > 15000 ||
+        !Number.isFinite(steps) || steps < 3 || steps > 2000) {
+        return res.status(400).json({ success: false, message: '验证未通过，请重试' });
+    }
+    const key = `captcha:${sid}`;
+    await _kvSet(key, { type: 'slide', solved: true, expires: Date.now() + CAPTCHA_TTL }, CAPTCHA_TTL);
+    res.json({ success: true, message: '验证通过' });
 });
 
 // ==================== AI 对话（SenseNova） ====================
