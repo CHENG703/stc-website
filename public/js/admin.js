@@ -1263,10 +1263,10 @@ function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin) {
 async function toggleBan(userId, ban) {
     CMDLog.log(`正在${ban ? '封禁' : '解除封禁'}用户ID: ${userId}`, 'info');
     try {
-        var response = await fetchWithAuth('/api/members/' + userId + '/ban', {
+        var url = '/api/members/' + userId + (ban ? '/ban' : '/unban');
+        var response = await fetchWithAuth(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ban: ban })
+            headers: { 'Content-Type': 'application/json' }
         });
         if (response.ok) {
             showMessage(ban ? '用户已被封禁' : '用户已解除封禁', 'success');
