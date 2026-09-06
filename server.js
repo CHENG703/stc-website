@@ -28,6 +28,9 @@ const path = require('path');
 const fs = require('fs');
 const dbEnc = require('./api/db-encryption');
 
+// 申诉/技术支持邮箱：展示在 IP 封禁、账号封禁等面向用户的提示中
+const APPEAL_EMAIL = '1968550750@qq.com';
+
 // Vercel KV（条件加载，本地未安装时不报错）
 let kv = null;
 const KV_KEY = 'stc:database';
@@ -1602,7 +1605,7 @@ app.use((req, res, next) => {
     <div class="code">403<small>ACCESS DENIED</small></div>
     <h1>您的 IP 已被封禁</h1>
     <p>出于安全考虑，当前网络地址（IP）暂时无法访问本网站页面。<br>若您已登录管理员，请先在后台「IP管理」中解封本机 IP 后再访问。</p>
-    <p style="margin-top:10px;font-size:13px;color:#999">如果您认为这是误封，请联系管理员处理。</p>
+    <p style="margin-top:10px;font-size:13px;color:#999">如果您认为这是误封，请通过申诉邮箱联系我们：<a href="mailto:${APPEAL_EMAIL}" style="color:#1a73e8;text-decoration:none;word-break:break-all">${APPEAL_EMAIL}</a></p>
     <hr>
     <div class="foot">STC 任务平台</div>
   </div>
@@ -1611,7 +1614,7 @@ app.use((req, res, next) => {
             res.status(403).set('Content-Type', 'text/html; charset=utf-8');
             return res.send(html);
         }
-        return res.status(403).json({ success: false, message: '您的IP已被封禁' });
+        return res.status(403).json({ success: false, message: '您的IP已被封禁，如有异议请联系申诉邮箱 ' + APPEAL_EMAIL });
     }
     next();
 });
