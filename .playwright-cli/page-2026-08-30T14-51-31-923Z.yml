@@ -1,0 +1,136 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e6]:
+      - link "Nirvana" [ref=e8] [cursor=pointer]:
+        - /url: /
+      - generic [ref=e9]:
+        - link "首页" [ref=e11] [cursor=pointer]:
+          - /url: /
+        - link "FaithX" [ref=e15] [cursor=pointer]:
+          - /url: /faith/
+        - link "Fantnel" [ref=e19] [cursor=pointer]:
+          - /url: /fantnel/
+        - link "Fant-Pro" [ref=e23] [cursor=pointer]:
+          - /url: /fant.pro/
+        - link "公告" [ref=e27] [cursor=pointer]:
+          - /url: /notice/
+        - link "商城" [ref=e31] [cursor=pointer]:
+          - /url: /shop/
+        - link "QQ频道" [ref=e35] [cursor=pointer]:
+          - /url: https://pd.qq.com/s/3yo277et6
+      - link "登录" [ref=e39] [cursor=pointer]:
+        - /url: /login/
+  - main [ref=e42]:
+    - generic [ref=e44]:
+      - generic [ref=e50]:
+        - heading [level=1]
+        - heading "微|" [level=2] [ref=e51]
+        - paragraph [ref=e52]: 开源! 高质量! 自主! 创新! 免费!
+        - generic [ref=e53]:
+          - link "Gitee" [ref=e54] [cursor=pointer]:
+            - /url: https://gitee.com/fengheng1111/
+          - link "GitHub" [ref=e57] [cursor=pointer]:
+            - /url: https://github.com/fengheng1111/
+          - link "QQ频道" [ref=e60] [cursor=pointer]:
+            - /url: https://pd.qq.com/s/3yo277et6
+          - link "官方商城" [ref=e63] [cursor=pointer]:
+            - /url: /buy/
+      - generic [ref=e67]:
+        - generic [ref=e68]:
+          - heading "代表作品" [level=2] [ref=e69]
+          - paragraph [ref=e70]: 这里是一些我们开发的代表作品，希望能够帮助到您。
+        - generic [ref=e71]:
+          - generic [ref=e72]:
+            - heading "Space3【半公益】" [level=3] [ref=e77]
+            - paragraph [ref=e78]: 外置热注入技术，使用官方API，支持海里版本，经典作品，半开源半公益的代表作品。
+            - link "了解更多" [ref=e79] [cursor=pointer]:
+              - /url: /space/
+          - generic [ref=e82]:
+            - heading "FaithX【公益】" [level=3] [ref=e87]
+            - paragraph [ref=e88]: 曾经统领一个时代的 99% 全自动化开源公益开端工具箱，涅槃科技旗下重点公益项目，现已涅槃归来，敬候佳音。
+            - link "了解更多" [ref=e89] [cursor=pointer]:
+              - /url: /faithX/
+      - generic [ref=e104]:
+        - heading "关于涅槃科技" [level=2] [ref=e105]
+        - paragraph [ref=e106]: 涅槃科技官网。它有着许多的名字，人们叫它，涅槃/Nirvana/NP/......
+        - paragraph [ref=e107]: 致力于打造开源、高质量、自主创新的技术解决方案。
+        - generic [ref=e108]:
+          - generic [ref=e109]: 90% 开源
+          - generic [ref=e114]: 高质量代码
+          - generic [ref=e119]: 自主创新
+          - generic [ref=e124]: 长时间公益
+      - generic [ref=e131]:
+        - generic [ref=e132]:
+          - generic [ref=e133]: 20K+
+          - generic [ref=e134]: 用户
+        - generic [ref=e135]:
+          - generic [ref=e136]: 8+
+          - generic [ref=e137]: 开源项目
+        - generic [ref=e138]:
+          - generic [ref=e139]: 3+
+          - generic [ref=e140]: 核心产品
+        - generic [ref=e141]:
+          - generic [ref=e142]: "2020"
+          - generic [ref=e143]: 创立年份
+      - generic [ref=e145]:
+        - heading "准备好开始了吗？" [level=2] [ref=e146]
+        - paragraph [ref=e147]: 加入涅槃科技频道，开创新纪元，新天地
+        - generic [ref=e148]:
+          - link "立即加入" [ref=e149] [cursor=pointer]:
+            - /url: /login/
+          - link "QQ频道" [ref=e152] [cursor=pointer]:
+            - /url: https://pd.qq.com/s/3yo277et6
+  - contentinfo [ref=e155]:
+    - generic [ref=e156]:
+      - generic [ref=e157]:
+        - generic [ref=e158]:
+          - heading "涅槃科技" [level=3] [ref=e159]
+          - paragraph [ref=e160]: 致力于打造开源、高质量、自主创新的技术解决方案。
+        - generic [ref=e161]:
+          - heading "产品" [level=4] [ref=e162]
+          - list [ref=e163]:
+            - listitem [ref=e164]:
+              - link "Space3" [ref=e165] [cursor=pointer]:
+                - /url: /space/
+            - listitem [ref=e168]:
+              - link "FaithX" [ref=e169] [cursor=pointer]:
+                - /url: /faith/
+            - listitem [ref=e172]:
+              - link "Fantnel" [ref=e173] [cursor=pointer]:
+                - /url: /fantnel/
+            - listitem [ref=e176]:
+              - link "官方商城" [ref=e177] [cursor=pointer]:
+                - /url: /shop/
+        - generic [ref=e180]:
+          - heading "资源" [level=4] [ref=e181]
+          - list [ref=e182]:
+            - listitem [ref=e183]:
+              - link "Gitee" [ref=e184] [cursor=pointer]:
+                - /url: https://gitee.com/fengheng1111/
+            - listitem [ref=e187]:
+              - link "GitHub" [ref=e188] [cursor=pointer]:
+                - /url: https://github.com/fengheng1111/
+            - listitem [ref=e191]:
+              - link "BiliBili" [ref=e192] [cursor=pointer]:
+                - /url: https://space.bilibili.com/3493283974089230
+        - generic [ref=e195]:
+          - heading "联系" [level=4] [ref=e196]
+          - list [ref=e197]:
+            - listitem [ref=e198]:
+              - link "反馈" [ref=e199] [cursor=pointer]:
+                - /url: /feedback/
+            - listitem [ref=e202]:
+              - link "QQ频道" [ref=e203] [cursor=pointer]:
+                - /url: https://pd.qq.com/s/3yo277et6
+            - listitem [ref=e206]:
+              - link "电子邮件" [ref=e207] [cursor=pointer]:
+                - /url: mailto:fengheng1111@126.com
+      - generic [ref=e210]:
+        - paragraph [ref=e211]: © 涅槃科技 2020/11/2 - 至今. 保留所有权利.
+        - generic [ref=e212]:
+          - link [ref=e213] [cursor=pointer]:
+            - /url: https://gitee.com/fengheng1111/
+          - link [ref=e216] [cursor=pointer]:
+            - /url: https://github.com/fengheng1111/
+          - link [ref=e219] [cursor=pointer]:
+            - /url: https://pd.qq.com/s/3yo277et6

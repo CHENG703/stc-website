@@ -790,15 +790,19 @@
             }
         }
 
-        // 拖动成功后上报服务端，换取当前会话一次性"solved"标记
-        async function submitSliderPass(startTime, moveCount) {
+        // 拖动成功后上报服务端，换取当前会话一次性"solved"标记。
+        // points: 拖动全程采样点 [{x,y,t}]，供服务端做轨迹噪声/回退/节奏分析
+        async function submitSliderPass(startTime, moveCount, trail, target) {
             try {
                 const elapsed = Date.now() - startTime;
+                const points = (Array.isArray(trail) && trail.length >= 3)
+                    ? trail.slice(0, 3000)
+                    : null;
                 const response = await fetch('/api/captcha/slide', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({ elapsed, steps: moveCount })
+                    body: JSON.stringify({ elapsed, steps: moveCount, points, target: target || 0 })
                 });
                 if (!response.ok) return false;
                 const data = await response.json();
@@ -819,6 +823,8 @@
             let startLeft = 0;
             let startTime = 0;
             let moveCount = 0;
+            let startRect = null;      // 轨道相对视口位置（轨迹坐标换算基准）
+            let trail = [];            // 拖动采样点 [{x, y, t}]，t 为相对起点 ms
 
             const maxX = () => Math.max(0, track.clientWidth - thumb.offsetWidth);
 
@@ -837,6 +843,8 @@
                 startLeft = thumb.offsetLeft;
                 startTime = Date.now();
                 moveCount = 0;
+                startRect = track.getBoundingClientRect();
+                trail = [{ x: e.clientX - startRect.left, y: e.clientY - startRect.top, t: 0 }];
                 thumb.style.transition = 'none'; // 拖动过程不延迟
                 const hint = sliderEl('slider-hint');
                 if (hint) hint.style.visibility = 'hidden';
@@ -850,6 +858,15 @@
                 let x = startLeft + (e.clientX - startClientX);
                 x = Math.max(0, Math.min(maxX(), x));
                 setLeft(x);
+                // 记录真实指针轨迹（相对轨道坐标），供服务端做抖动/回退分析
+                if (startRect) {
+                    trail.push({
+                        x: e.clientX - startRect.left,
+                        y: e.clientY - startRect.top,
+                        t: Date.now() - startTime
+                    });
+                    if (trail.length > 4000) trail.splice(0, trail.length - 3000);
+                }
             });
 
             const endDrag = () => {
@@ -862,7 +879,9 @@
                     setSliderMsg('正在验证...');
                     const sTime = startTime;
                     const sMoves = moveCount;
-                    submitSliderPass(sTime, sMoves).then(ok => {
+                    const sTrail = trail.slice(0, 3000);
+                    const sTarget = maxX();
+                    submitSliderPass(sTime, sMoves, sTrail, sTarget).then(ok => {
                         if (ok) {
                             sliderState = 'success';
                             track.classList.add('slider-track-ok');

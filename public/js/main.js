@@ -1009,6 +1009,113 @@ async function deleteMessage(messageId) {
     }
 }
 
+// ==================== 公告系统 ====================
+const ANNOUNCEMENT_PAGE_MAX = 5; // 主页列表最多展示条数
+
+// 主页公告区块：渲染最近公告（公开，无需登录）
+async function loadAnnouncements() {
+    const container = document.getElementById('announcements-list');
+    if (!container) return;
+    try {
+        const response = await fetch('/api/announcements', { credentials: 'include' });
+        if (!response.ok) throw new Error('bad status');
+        const result = await response.json();
+        const list = (result.data || []).slice(0, ANNOUNCEMENT_PAGE_MAX);
+        if (list.length === 0) {
+            container.innerHTML = '<p style="text-align:center;color:var(--text-secondary,#94a3b8);margin:8px 0;">暂无公告</p>';
+            return;
+        }
+        container.innerHTML = list.map(a => `
+            <div class="announcement-card">
+                <div class="announcement-head">
+                    <span class="announcement-title">${escapeHtml(a.title)}</span>
+                    <span class="announcement-meta">${escapeHtml(a.created_by || '管理员')} · ${formatDate(a.created_at)}</span>
+                </div>
+                <div class="announcement-content">${escapeHtml(a.content)}</div>
+            </div>
+        `).join('');
+        if (window.reinitScrollAnimations) window.reinitScrollAnimations();
+    } catch (error) {
+        if (error.message !== 'AccessDenied') {
+            console.error('加载公告失败:', error);
+            container.innerHTML = '<p style="text-align:center;color:var(--text-secondary,#94a3b8);margin:8px 0;">公告加载失败</p>';
+        }
+    }
+}
+
+// 登录后检查未读公告，有则弹窗提醒一次
+async function checkUnreadAnnouncements() {
+    try {
+        const response = await fetchWithAuth('/api/announcements/unread');
+        if (!response.ok) return;
+        const result = await response.json();
+        const unread = result.data || [];
+        if (unread.length === 0) return;
+        // 稍作延迟，避免打断首屏体验
+        setTimeout(() => showAnnouncementModal(unread), 600);
+    } catch (e) {
+        if (e.message !== 'AccessDenied' && e.message !== 'PermissionDenied' && e.message !== 'SiteLocked') {
+            console.warn('获取未读公告失败:', e.message);
+        }
+    }
+}
+
+// 公告弹窗：列出未读公告，点"我知道了"批量标已读
+function showAnnouncementModal(unreadList) {
+    if (document.getElementById('announcement-modal')) return;
+    const ids = unreadList.map(a => a.id);
+
+    const modal = document.createElement('div');
+    modal.id = 'announcement-modal';
+    modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:999999;display:flex;align-items:center;justify-content:center;';
+
+    const dialog = document.createElement('div');
+    dialog.style.cssText = 'background:var(--card-bg,#0d1117);padding:24px;border-radius:16px;max-width:520px;width:92%;max-height:80vh;overflow-y:auto;border:1px solid #30363d;box-sizing:border-box;';
+    dialog.innerHTML =
+        '<div style="font-size:18px;font-weight:700;margin-bottom:4px;">📢 平台公告</div>' +
+        (unreadList.length > 1
+            ? '<div style="color:#8b949e;font-size:12px;margin-bottom:12px;">共有 ' + unreadList.length + ' 条新公告</div>'
+            : '<div style="height:12px;"></div>');
+
+    unreadList.forEach(a => {
+        const item = document.createElement('div');
+        item.style.cssText = 'border:1px solid #30363d;border-radius:10px;padding:12px;margin-bottom:12px;';
+        item.innerHTML =
+            '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px;">' +
+                '<strong style="color:var(--text-primary,#f0f6fc);font-size:15px;">' + escapeHtml(a.title) + '</strong>' +
+                '<span style="color:#8b949e;font-size:11px;white-space:nowrap;">' + escapeHtml(a.created_by || '管理员') + ' · ' + formatDate(a.created_at) + '</span>' +
+            '</div>' +
+            '<div style="color:var(--text-secondary,#9da7b3);font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word;">' + escapeHtml(a.content) + '</div>';
+        dialog.appendChild(item);
+    });
+
+    const btn = document.createElement('button');
+    btn.textContent = '我知道了';
+    btn.style.cssText = 'width:100%;padding:11px;background:var(--accent-color,#4a9eff);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;';
+    btn.onclick = () => {
+        modal.remove();
+        markAnnouncementsRead(ids);
+    };
+    dialog.appendChild(btn);
+    modal.appendChild(dialog);
+    document.body.appendChild(modal);
+}
+
+// 标记公告已读（静默失败，下次访问仍会提醒）
+async function markAnnouncementsRead(ids) {
+    try {
+        await fetchWithAuth('/api/announcements/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids })
+        });
+    } catch (e) {
+        if (e.message !== 'AccessDenied' && e.message !== 'PermissionDenied' && e.message !== 'SiteLocked') {
+            console.warn('标记公告已读失败:', e.message);
+        }
+    }
+}
+
 // 首页名人名言（API 不可用时的内置兜底，均标注出处）
 const FALLBACK_QUOTES = [
     { text: '千里之行，始于足下。', source: '老子《道德经》' },
@@ -1122,7 +1229,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
     
-    // 加载任务和留言
+    // 加载任务、留言与公告
     loadTasks();
     loadMessages();
+    loadAnnouncements();
+
+    // 已登录用户：检查未读公告，有则弹窗提醒一次
+    if (user) {
+        checkUnreadAnnouncements();
+    }
 });

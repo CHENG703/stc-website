@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Favicon 候选对比</title>
+<style>
+  body { background:#0f172a; color:#f1f5f9; font-family:system-ui,sans-serif; text-align:center; padding:40px 20px; }
+  h1 { font-size:22px; margin-bottom:30px; }
+  .grid { display:flex; flex-wrap:wrap; gap:24px; justify-content:center; }
+  .card { background:#1e293b; border-radius:16px; padding:30px 26px; width:200px; cursor:pointer; border:2px solid transparent; transition:.2s; }
+  .card:hover { border-color:#6366f1; transform:translateY(-4px); }
+  .card.big { display:block; margin-bottom:18px; }
+  .icon-big { width:128px; height:128px; border-radius:18px; margin-bottom:12px; }
+  .icon-small { width:32px; height:32px; border-radius:6px; }
+  .tag { display:inline-block; background:#6366f1; color:#fff; border-radius:20px; padding:4px 14px; font-size:13px; margin-top:10px; }
+  .name { font-size:14px; color:#94a3b8; margin-top:8px; word-break:break-all; }
+</style>
+</head>
+<body>
+<h1>选择要用于网站的 favicon（点击复制候选编号即可）</h1>
+<div class="grid" id="grid"></div>
+<script>
+const items = [
+  { n: 1, big: 'favicon-candidates/candidate1.ico', name: '深灰底 + 白色 STC（左竖线）' },
+  { n: 2, big: 'favicon-candidates/candidate2.ico', name: '白底 + 黑色粗体 STC（DJI 式）' },
+  { n: 3, big: 'favicon-candidates/candidate3.ico', name: '白底 + 黑色线条描边 STC' },
+  { n: 4, big: 'favicon-candidates/candidate4.ico', name: '黑底 + 白色粗体 STC（DJI 式）' },
+];
+const grid = document.getElementById('grid');
+items.forEach(it => {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <img class="icon-big" src="${it.big}">
+    <div>
+      <img class="icon-small" src="${it.big}">
+      <img class="icon-small" src="${it.big}" style="width:48px;height:48px">
+      <img class="icon-small" src="${it.big}" style="width:16px;height:16px">
+    </div>
+    <div class="tag">候选 ${it.n}</div>
+    <div class="name">${it.name}</div>`;
+  grid.appendChild(card);
+});
+</script>
+</body>
+</html>

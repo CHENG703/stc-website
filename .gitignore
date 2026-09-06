@@ -2,6 +2,8 @@ node_modules/
 uploads/
 .env
 database.json
+db.key
+*.plaintext.bak
 *.log
 .DS_Store
 ngrok.exe
@@ -12,3 +14,4 @@ debug-*.md
 debug-*.js
 cookies.txt
 github_oauth.txt
+.codebuddy/

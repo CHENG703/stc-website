@@ -77,6 +77,21 @@
                     </div>
                 </div>
 
+                <div class='admin-section' id='announcements-section'>
+                    <h3>📢 公告管理</h3>
+                    <div style="margin-bottom:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                        <button onclick='createAnnouncement()' class='btn btn-primary'>📣 发布公告</button>
+                        <button onclick='loadAnnouncements()' class='btn btn-secondary'>刷新列表</button>
+                    </div>
+                    <input id='announcement-title' type='text' placeholder='公告标题（必填，80 字以内）' maxlength='80'
+                           style='width:100%; padding:8px; box-sizing:border-box; margin-bottom:8px;'>
+                    <textarea id='announcement-content' placeholder='公告内容（必填，3000 字以内，支持换行）' rows='4' maxlength='3000'
+                              style='width:100%; padding:8px; resize:vertical; box-sizing:border-box; margin-bottom:8px;'></textarea>
+                    <div id='announcements-table' class='data-table'>
+                        <div class='loading'>加载中...</div>
+                    </div>
+                </div>
+
                 <div class='admin-section' id='access-logs-section'>
                     <h3>🌐 访问记录（IP → 页面）</h3>
                     <div style="display:flex; gap:12px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
@@ -171,14 +186,14 @@
                 <a href="#" onclick="showTerms('service')">使用条款</a> | 
                 <a href="#" onclick="showTerms('privacy')">隐私协议</a>
             </p>
-            <p class="footer-note">一切解释权归STC团队</p>
+            <p class="footer-note">使用本网站即表示您已阅读并同意服务条款与隐私协议</p>
         </div>
     </footer>
 
     <!-- 版权水印 -->
     <div class="copyright-watermark">© 2025-2026 STC 版权所有</div>
 
-    <script src="js/admin.js?v=16"></script>
+    <script src="js/admin.js?v=17"></script>
     <script>
         // 显示服务条款和隐私协议
         function showTerms(type) {

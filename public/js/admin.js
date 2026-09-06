@@ -1503,6 +1503,88 @@ async function loadMessages() {
     }
 }
 
+// ============================================================
+// 公告管理（管理员发布 / 删除，主页展示，登录用户弹窗提醒）
+// ============================================================
+async function loadAnnouncements() {
+    const container = document.getElementById('announcements-table');
+    if (!container) return;
+    try {
+        const response = await fetchWithAuth('/api/announcements');
+        if (!response.ok) throw new Error('load failed');
+        const result = await response.json();
+        const announcements = result.data || [];
+        if (announcements.length === 0) {
+            container.innerHTML = '<p style="text-align:center;">暂无公告</p>';
+            return;
+        }
+        container.innerHTML = '<table class="admin-table"><thead><tr><th>标题</th><th>内容</th><th>发布人</th><th>发布时间</th><th>操作</th></tr></thead><tbody>' +
+            announcements.map(a => {
+                const content = escapeHtml(a.content || '').replace(/\n/g, '<br>');
+                return '<tr><td><b>' + escapeHtml(a.title || '') + '</b></td>' +
+                    '<td style="max-width:380px;">' + content + '</td>' +
+                    '<td>' + escapeHtml(a.created_by || '管理员') + '</td>' +
+                    '<td style="white-space:nowrap;">' + escapeHtml(a.created_at || '') + '</td>' +
+                    '<td><button class="btn btn-sm" style="color:#cf222e;" onclick="deleteAnnouncement(' + a.id + ')">删除</button></td></tr>';
+            }).join('') +
+            '</tbody></table>';
+        CMDLog.log('公告列表已刷新，共 ' + announcements.length + ' 条', 'info');
+    } catch (error) {
+        console.error('Failed to load announcements:', error);
+        container.innerHTML = '<p style="text-align:center;color:red;">加载公告失败</p>';
+        CMDLog.log('公告列表加载失败: ' + error.message, 'error');
+    }
+}
+
+// 发布公告（管理员）
+async function createAnnouncement() {
+    const titleEl = document.getElementById('announcement-title');
+    const contentEl = document.getElementById('announcement-content');
+    const title = ((titleEl && titleEl.value) || '').trim();
+    const content = ((contentEl && contentEl.value) || '').trim();
+    if (!title) { alert('请填写公告标题'); return; }
+    if (!content) { alert('请填写公告内容'); return; }
+    try {
+        const response = await fetchWithAuth('/api/announcements', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, content })
+        });
+        if (response.ok) {
+            if (titleEl) titleEl.value = '';
+            if (contentEl) contentEl.value = '';
+            CMDLog.log('公告发布成功', 'info');
+            loadAnnouncements();
+        } else {
+            const data = await response.json().catch(() => ({}));
+            alert(data.message || data.error || '发布失败');
+            CMDLog.log('公告发布失败: ' + (data.message || data.error || response.status), 'error');
+        }
+    } catch (error) {
+        console.error('Failed to create announcement:', error);
+        CMDLog.log('公告发布失败: ' + error.message, 'error');
+    }
+}
+
+// 删除公告（管理员）
+async function deleteAnnouncement(id) {
+    if (!confirm('确定要删除这条公告吗？发布后用户将不再看到它。')) return;
+    try {
+        const response = await fetchWithAuth('/api/announcements/' + id, { method: 'DELETE' });
+        if (response.ok) {
+            CMDLog.log('公告已删除 #' + id, 'info');
+            loadAnnouncements();
+        } else {
+            const data = await response.json().catch(() => ({}));
+            alert(data.message || data.error || '删除失败');
+            CMDLog.log('公告删除失败: ' + (data.message || data.error || response.status), 'error');
+        }
+    } catch (error) {
+        console.error('Failed to delete announcement:', error);
+        CMDLog.log('公告删除失败: ' + error.message, 'error');
+    }
+}
+
 // 加载登录状态
 async function loadLoginStatus() {
     const container = document.getElementById('login-status-content');
@@ -1542,7 +1624,8 @@ async function initAdminPanel() {
             loadMembers().catch(e => CMDLog.log('成员加载失败: ' + e.message, 'error')),
             loadTasks().catch(e => CMDLog.log('任务加载失败: ' + e.message, 'error')),
             loadMessages().catch(e => CMDLog.log('留言加载失败: ' + e.message, 'error')),
-            loadInviteCodes().catch(e => CMDLog.log('邀请码加载失败: ' + e.message, 'error'))
+            loadInviteCodes().catch(e => CMDLog.log('邀请码加载失败: ' + e.message, 'error')),
+            loadAnnouncements().catch(e => CMDLog.log('公告加载失败: ' + e.message, 'error'))
         ]);
         CMDLog.log('管理面板数据加载完成', 'system');
     } catch (error) {

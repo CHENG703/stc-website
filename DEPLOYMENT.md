@@ -71,6 +71,9 @@ PORT=3000
 SESSION_SECRET=your-very-secure-random-string-here
 EMAIL_USER=你的QQ邮箱@qq.com
 EMAIL_PASS=你的QQ邮箱授权码
+# 数据库静态加密密钥（可选，强烈建议设置）。本地部署不设置会自动生成 db.key 文件；
+# Vercel/Railway/Zeabur 等平台必须设置（所有实例保持一致），否则数据库无法解密。
+DB_KEY=your-database-encryption-key
 ```
 
 ### 获取QQ邮箱授权码
@@ -184,8 +187,9 @@ PORT=8080
 
 1. 修改初始管理员密码
 2. 使用强密码作为 `SESSION_SECRET`
-3. 不要将 `.env` 文件提交到版本控制
+3. 不要将 `.env` 文件、`db.key`（数据库加密密钥）提交到版本控制
 4. 定期更新依赖包
+5. `database.json` 现以 AES-256-GCM 加密落盘：请妥善保管 `DB_KEY` / `db.key`，丢失将无法解密数据库；更换密钥需先用旧密钥解密后以新密钥重写文件
 
 ## 维护
 

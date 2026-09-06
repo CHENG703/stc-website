@@ -26,6 +26,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const dbEnc = require('./api/db-encryption');
 
 // Vercel KV（条件加载，本地未安装时不报错）
 let kv = null;
@@ -221,6 +222,10 @@ if ((IS_VERCEL || isZeabur) && !fs.existsSync(runtimeDir)) {
 }
 
 const dbPath = path.join(runtimeDir, 'database.json');
+// 初始化数据库静态加密（AES-256-GCM）。密钥：环境变量 DB_KEY > db.key 持久化文件。
+// 必须在 new SimpleJSONDB(...) 之前完成，否则文件无法解密读取。
+dbEnc.initDbEncryption({ runtimeDir: runtimeDir, isVercel: !!process.env.VERCEL, isRailway: !!process.env.RAILWAY });
+
 const defaults = {
     users: [],
     tasks: [],
@@ -236,7 +241,8 @@ const defaults = {
     inviteCodes: [],
     bannedIPs: [],
     join_applications: [],
-    access_logs: []
+    access_logs: [],
+    announcements: []
 };
 
 const ARRAY_MUTATING_METHODS = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin'];
@@ -252,14 +258,43 @@ class SimpleJSONDB {
         this._kvLoaded = false;
         this._kvReadAt = 0;
         this._kvReadInFlight = null;
+        this._loadFailed = false;      // 解密失败保护：禁止覆写数据库文件
+        this._needsUpgrade = false;    // 本地文件为历史明文，待迁移为密文
+        this._kvFailed = false;        // KV 解密失败保护：禁止覆盖 KV 密文
 
         this._loadFileSync();
+        // 历史明文 → 自动迁移为加密存储（在具备密钥且加载成功时执行）
+        if (this._needsUpgrade && !this._loadFailed && dbEnc.isEncryptionEnabled()) {
+            try {
+                this._writeFileSync();
+                this._needsUpgrade = false;
+                console.log('[DB-ENC] 本地数据库已自动从明文迁移为加密存储');
+            } catch (e) {
+                console.warn('[DB-ENC] 明文迁移为密文失败:', e.message);
+            }
+        }
     }
 
     async _loadKv() {
         if (!this._kvEnabled || this._kvLoaded) return;
         try {
-            const kvData = await kv.get(KV_KEY);
+            const kvRaw = await kv.get(KV_KEY);
+            let kvData = null;
+            if (typeof kvRaw === 'string') {
+                // 新版：KV 中为加密串
+                const result = dbEnc.deserializeDbText(kvRaw);
+                if (result) {
+                    kvData = result.data;
+                } else {
+                    console.error('[DB-ENC] KV 数据解密失败：DB_KEY 与 KV 中的密文不匹配！');
+                    this._kvFailed = true;
+                    this._kvLoaded = true; // 密钥不符时禁止读写 KV，避免覆盖密文
+                    return;
+                }
+            } else if (kvRaw && typeof kvRaw === 'object') {
+                // 历史明文对象：直接使用，随后自动加密回写完成迁移
+                kvData = kvRaw;
+            }
             if (kvData && typeof kvData === 'object') {
                 // KV 数据优先，合并默认值
                 this._data = kvData;
@@ -268,10 +303,14 @@ class SimpleJSONDB {
                 console.log(`[KV] 数据已从 Vercel KV 加载（users=${(kvData.users || []).length}, tasks=${(kvData.tasks || []).length}）`);
                 // 同步到本地文件（仅作缓存，不回写 KV）
                 this._writeFileSync();
+                // KV 中若为历史明文，立即加密回写完成迁移
+                if (typeof kvRaw !== 'string') {
+                    await this._saveKv();
+                }
             } else {
-                // KV 中没有数据，把本地数据上传到 KV
+                // KV 中没有数据，把本地数据加密上传到 KV
                 console.log('[KV] KV 中无数据，上传本地数据');
-                await kv.set(KV_KEY, this._data);
+                await this._saveKv();
                 this._kvLoaded = true;
             }
         } catch (e) {
@@ -281,14 +320,14 @@ class SimpleJSONDB {
     }
 
     async _saveKv() {
-        if (!this._kvEnabled) return;
+        if (!this._kvEnabled || this._kvFailed) return;
         try {
-            await kv.set(KV_KEY, this._data);
+            await kv.set(KV_KEY, dbEnc.serializeDb(this._data));
         } catch (e) {
             console.warn('[KV] 写入 KV 失败:', e.message);
             // 失败重试一次（KV 网络抖动兜底）
             try {
-                await kv.set(KV_KEY, this._data);
+                await kv.set(KV_KEY, dbEnc.serializeDb(this._data));
             } catch (e2) {
                 console.error('[KV] 写入 KV 再次失败:', e2.message);
             }
@@ -307,7 +346,25 @@ class SimpleJSONDB {
     _loadFileSync() {
         try {
             if (fs.existsSync(this.filePath)) {
-                this._data = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
+                const rawText = fs.readFileSync(this.filePath, 'utf-8');
+                if (dbEnc.isCipherText(rawText)) {
+                    // 密文：解密失败说明 DB_KEY 不符或文件损坏 → 拒绝加载并禁止后续覆写
+                    const result = dbEnc.deserializeDbText(rawText);
+                    if (!result) {
+                        console.error('[DB-ENC] database.json 解密失败：DB_KEY 与文件不匹配或文件已损坏。');
+                        console.error('[DB-ENC] 为保护现有数据，本次进程将不再写入数据库文件，请配置正确的 DB_KEY 后重启。');
+                        this._loadFailed = true;
+                    } else {
+                        this._data = result.data;
+                    }
+                } else {
+                    // 历史明文：兼容读取，由构造阶段自动迁移为密文
+                    const result = dbEnc.deserializeDbText(rawText);
+                    if (result) {
+                        this._data = result.data;
+                        this._needsUpgrade = true;
+                    }
+                }
                 const stats = fs.statSync(this.filePath);
                 this._lastModified = stats.mtimeMs;
             }
@@ -328,10 +385,11 @@ class SimpleJSONDB {
         }
     }
 
-    // 仅写本地缓存文件（不同步 KV，用于 KV 读回数据的缓存）
+    // 仅写本地缓存文件（不同步 KV，用于 KV 读回数据的缓存）。落盘前加密。
     _writeFileSync() {
+        if (this._loadFailed) return; // 密钥不符时禁止覆写，保护已有密文数据
         try {
-            fs.writeFileSync(this.filePath, JSON.stringify(this._data, null, 2));
+            fs.writeFileSync(this.filePath, dbEnc.serializeDb(this._data));
             const stats = fs.statSync(this.filePath);
             this._lastModified = stats.mtimeMs;
         } catch (e) {
@@ -447,7 +505,15 @@ class SimpleJSONDB {
                 if (!this._kvReadInFlight) {
                     this._kvReadInFlight = (async () => {
                         try {
-                            const kvData = await kv.get(KV_KEY);
+                            const kvRaw = await kv.get(KV_KEY);
+                            let kvData = null;
+                            if (typeof kvRaw === 'string') {
+                                const result = dbEnc.deserializeDbText(kvRaw);
+                                if (result) kvData = result.data;
+                                else console.error('[DB-ENC] KV 刷新解密失败：DB_KEY 不匹配？');
+                            } else if (kvRaw && typeof kvRaw === 'object') {
+                                kvData = kvRaw; // 历史明文对象兼容
+                            }
                             if (kvData && typeof kvData === 'object') {
                                 this._data = kvData;
                                 this._ensureDefaults();
@@ -1577,7 +1643,8 @@ async function initDatabase() {
             emailFolders: [],
             inviteApplications: [],
             inviteCodes: [],
-            bannedIPs: []
+            bannedIPs: [],
+            announcements: []
         };
         await db.write();
     }
@@ -1596,6 +1663,7 @@ async function initDatabase() {
     if (!Array.isArray(db.data.inviteApplications)) db.data.inviteApplications = [];
     if (!Array.isArray(db.data.inviteCodes)) db.data.inviteCodes = [];
     if (!Array.isArray(db.data.bannedIPs)) db.data.bannedIPs = [];
+    if (!Array.isArray(db.data.announcements)) db.data.announcements = [];
     if (!Array.isArray(db.data.ai_conversations)) db.data.ai_conversations = [];
     // 邀请码集合统一：历史上存在两套集合——invite_codes 是注册/校验真正使用的集合，
     // inviteCodes 仅被旧版管理面板写入且格式不一（纯字符串或带 is_used 的对象）。
@@ -1699,19 +1767,7 @@ async function getCurrentUser(req) {
 const requireLogin = async (req, res, next) => {
     const user = await getCurrentUser(req);
     if (!user) {
-        console.log('[AUTH] requireLogin 失败，session.userId:', req.session.userId, 'authUser:', req.authUser?.id);
-        console.log('[AUTH] 数据库用户数:', db.data.users?.length || 0);
-        console.log('[AUTH] Authorization header:', req.headers.authorization ? 'present' : 'missing');
-        return res.status(403).json({ 
-            error: '请先登录',
-            debug: {
-                hasAuthHeader: !!req.headers.authorization,
-                hasAuthUser: !!req.authUser,
-                authUserId: req.authUser?.id || null,
-                sessionUserId: req.session.userId || null,
-                dbUserCount: db.data.users?.length || 0
-            }
-        });
+        return res.status(403).json({ error: '请先登录' });
     }
     req.currentUser = user;
     next();
@@ -2296,7 +2352,80 @@ app.get('/api/captcha', (req, res) => {
     });
 });
 
-// 滑块验证：前端把滑块拖到最右端后上报（携带拖动耗时/采样数做基本人类行为启发），
+// ---------- 滑块轨迹行为分析 ----------
+// 前端会上报拖动全程采样点 [{x,y,t}]（x/y 为相对轨道像素坐标，t 为相对拖动起点 ms）。
+// 真人拖动天然带有三类"物理噪声"，机器线性模拟通常没有：
+//   1) 采样间隔不均匀 —— 浏览器事件调度抖动导致 dt 变异系数(CV)较大
+//   2) 纵向 ±1~3px 生理性微颤 + 横向微小回退（尤其终点对齐阶段）
+//   3) 起步迟疑 / 中途停顿 / 终点减速（弱特征，不作硬性拒绝）
+// 本函数只拒绝"过度完美"（节奏规整 + 无回退 + 纵向零抖动）与位移明显不符的样本；
+// 阈值刻意放宽，避免误杀真人。返回 { ok, reason?, stats }，reason 只写日志不下发。
+function analyzeSlideTrail(points, target) {
+    const stats = { n: 0, cv: 0, backRatio: 0, yRange: 0, span: 0, spanRatio: null };
+    const fail = reason => ({ ok: false, reason, stats });
+
+    if (!Array.isArray(points) || points.length < 4) return fail('tooFewPoints');
+    const pts = [];
+    for (const pt of points) {
+        if (!pt || typeof pt !== 'object') return fail('badPoint');
+        const x = Number(pt.x), y = Number(pt.y), t = Number(pt.t);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(t)) return fail('badPoint');
+        pts.push({ x, y, t });
+    }
+    const n = pts.length;
+    stats.n = n;
+    const total = pts[n - 1].t - pts[0].t;
+    if (!(total > 0) || total > 20000) return fail('badTimeSpan');
+
+    // 1) 采样间隔变异系数（拖拽中>250ms 的空档视为停顿，不计入节奏统计）
+    const dts = [];
+    for (let i = 1; i < n; i++) {
+        const d = pts[i].t - pts[i - 1].t;
+        if (d >= 0 && d <= 250) dts.push(d);
+    }
+    if (dts.length < 3) return fail('tooFewActive');
+    const dtMean = dts.reduce((a, b) => a + b, 0) / dts.length;
+    let dtVar = 0;
+    if (dtMean > 0) dtVar = dts.reduce((a, b) => a + (b - dtMean) * (b - dtMean), 0) / dts.length;
+    const cv = dtMean > 0 ? Math.sqrt(dtVar) / dtMean : 0;
+    stats.cv = cv;
+
+    // 2) 横向回退占比 与 x/y 位移跨度
+    let fwd = 0, back = 0, flat = 0;
+    let prevX = null;
+    for (let i = 0; i < n; i++) {
+        if (prevX !== null) {
+            const dx = pts[i].x - prevX;
+            if (dx > 0.5) fwd++; else if (dx < -0.5) back++; else flat++;
+        }
+        prevX = pts[i].x;
+    }
+    const stepsTotal = fwd + back + flat;
+    stats.backRatio = stepsTotal > 0 ? back / stepsTotal : 0;
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    for (const q of pts) {
+        if (q.x < minX) minX = q.x;
+        if (q.x > maxX) maxX = q.x;
+        if (q.y < minY) minY = q.y;
+        if (q.y > maxY) maxY = q.y;
+    }
+    stats.span = maxX - minX;
+    stats.yRange = maxY - minY;
+    if (Number.isFinite(target) && target > 20) stats.spanRatio = stats.span / target;
+
+    // 3) 机器特征联合判定：节奏过于规整 + 几乎无回退 + 纵向零抖动 = 过度"完美"
+    if (cv < 0.06 && stats.backRatio < 0.03 && stats.yRange <= 1 && stats.span > 5) {
+        return fail('tooPerfect');
+    }
+
+    // 4) 距离一致性：既然已拖到最右端，横向跨度必须覆盖轨道可用距离的相当比例
+    if (stats.spanRatio !== null && stats.spanRatio < 0.45) return fail('shortDistance');
+
+    return { ok: true, stats };
+}
+
+// 滑块验证：前端把滑块拖到最右端后上报（携带拖动耗时/采样数 + 全程轨迹点做行为分析），
 // 通过则给当前会话写入一次性"solved"标记；后续 /api/login 等经 requireCaptcha 的
 // 接口会校验该标记（同样单次使用，验证一次即作废）
 app.post('/api/captcha/slide', requireRateLimit('slide'), async (req, res) => {
@@ -2308,9 +2437,117 @@ app.post('/api/captcha/slide', requireRateLimit('slide'), async (req, res) => {
         !Number.isFinite(steps) || steps < 3 || steps > 2000) {
         return res.status(400).json({ success: false, message: '验证未通过，请重试' });
     }
+    // 轨迹行为分析：新版前端会上报拖动采样点序列，据此拒绝"过度规整"的机器轨迹
+    const raw = req.body && Array.isArray(req.body.points) ? req.body.points : null;
+    if (raw && raw.length >= 4) {
+        const points = raw.slice(0, 3000).map(pt => {
+            if (Array.isArray(pt) && pt.length >= 3) return { x: Number(pt[0]), y: Number(pt[1]), t: Number(pt[2]) };
+            if (pt && typeof pt === 'object') return { x: Number(pt.x), y: Number(pt.y), t: Number(pt.t) };
+            return null;
+        }).filter(pt => pt && Number.isFinite(pt.x) && Number.isFinite(pt.y) && Number.isFinite(pt.t));
+        if (points.length >= 4) {
+            const result = analyzeSlideTrail(points, Number(req.body.target) || 0);
+            if (!result.ok) {
+                console.info('[SLIDE] rejected reason=%s stats=%j', result.reason, result.stats);
+                return res.status(400).json({ success: false, message: '验证未通过，请重试' });
+            }
+        }
+    }
     const key = `captcha:${sid}`;
     await _kvSet(key, { type: 'slide', solved: true, expires: Date.now() + CAPTCHA_TTL }, CAPTCHA_TTL);
     res.json({ success: true, message: '验证通过' });
+});
+
+// ==================== 公告系统 ====================
+// 数据：db.data.announcements 元素 { id, title, content, created_by, created_by_id, created_at }
+// 已读状态：记录在用户对象 user.read_announcements（公告 id 数组）。
+//           登录用户首次访问主页对每条未读公告弹窗提醒一次，点"我知道了"即标记已读，
+//           同一账号（任意设备）此后不再重复弹出；新发布的公告会再次触发提醒。
+const ANNOUNCEMENT_MAX_LIST = 50;    // 列表接口最多返回条数
+const ANNOUNCEMENT_MAX_UNREAD = 5;   // 弹窗单次最多展示的未读条数
+const ANNOUNCEMENT_TITLE_MAX = 80;   // 标题长度上限
+const ANNOUNCEMENT_CONTENT_MAX = 3000; // 内容长度上限
+
+function toPublicAnnouncement(a) {
+    if (!a) return null;
+    return {
+        id: a.id,
+        title: a.title || '',
+        content: a.content || '',
+        created_by: a.created_by || '管理员',
+        created_at: a.created_at || new Date(0).toISOString()
+    };
+}
+
+// 主页公告列表（公开，无需登录）
+app.get('/api/announcements', (req, res) => {
+    const list = Array.isArray(db.data.announcements) ? db.data.announcements : [];
+    const data = list.slice(-ANNOUNCEMENT_MAX_LIST).reverse()
+        .map(toPublicAnnouncement).filter(Boolean);
+    res.json({ success: true, data });
+});
+
+// 登录用户未读公告（主页弹窗提醒用）
+app.get('/api/announcements/unread', requireLogin, (req, res) => {
+    const user = req.currentUser;
+    const readIds = new Set(Array.isArray(user.read_announcements) ? user.read_announcements : []);
+    const unread = (Array.isArray(db.data.announcements) ? db.data.announcements : [])
+        .filter(a => a && !readIds.has(a.id))
+        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+        .slice(0, ANNOUNCEMENT_MAX_UNREAD)
+        .map(toPublicAnnouncement).filter(Boolean);
+    res.json({ success: true, data: unread });
+});
+
+// 标记公告已读（幂等，支持批量）
+app.post('/api/announcements/read', requireLogin, requireCSRF, async (req, res) => {
+    const user = req.currentUser;
+    const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [])
+        .map(id => Number(id)).filter(id => Number.isFinite(id));
+    if (!ids.length) return res.status(400).json({ success: false, message: '参数错误' });
+    if (!Array.isArray(user.read_announcements)) user.read_announcements = [];
+    const set = new Set(user.read_announcements);
+    ids.forEach(id => set.add(id));
+    user.read_announcements = Array.from(set);
+    await db.write();
+    res.json({ success: true });
+});
+
+// 管理员发布公告
+app.post('/api/announcements', requireAdmin, requireCSRF, requireRateLimit('admin'), async (req, res) => {
+    const title = String((req.body && req.body.title) || '').trim();
+    const content = String((req.body && req.body.content) || '').trim();
+    if (!title) return res.status(400).json({ success: false, message: '请填写公告标题' });
+    if (title.length > ANNOUNCEMENT_TITLE_MAX) {
+        return res.status(400).json({ success: false, message: `标题不能超过${ANNOUNCEMENT_TITLE_MAX}字` });
+    }
+    if (!content) return res.status(400).json({ success: false, message: '请填写公告内容' });
+    if (content.length > ANNOUNCEMENT_CONTENT_MAX) {
+        return res.status(400).json({ success: false, message: `内容不能超过${ANNOUNCEMENT_CONTENT_MAX}字` });
+    }
+    if (!Array.isArray(db.data.announcements)) db.data.announcements = [];
+    const rec = {
+        id: Date.now(),
+        title,
+        content,
+        created_by: req.currentUser.username || '管理员',
+        created_by_id: req.currentUser.id,
+        created_at: new Date().toISOString()
+    };
+    db.data.announcements.push(rec);
+    await db.write();
+    res.json({ success: true, data: toPublicAnnouncement(rec) });
+});
+
+// 管理员删除公告
+app.delete('/api/announcements/:id', requireAdmin, requireCSRF, async (req, res) => {
+    const id = Number(req.params.id);
+    const list = Array.isArray(db.data.announcements) ? db.data.announcements : [];
+    const idx = list.findIndex(a => a && a.id === id);
+    if (idx === -1) return res.status(404).json({ success: false, message: '公告不存在或已删除' });
+    list.splice(idx, 1);
+    await db.write();
+    res.json({ success: true });
 });
 
 // ==================== AI 对话（SenseNova） ====================
@@ -4242,13 +4479,14 @@ const KV_BACKUP_PREFIX = 'stc:backup:';
 const KV_BACKUP_CHUNK_SIZE = 400 * 1024; // 每块 400KB 原始字节（base64 后约 533KB，安全低于 KV 单 key 限制）
 
 async function _kvBackupSave(name, data, time, files) {
-    const json = JSON.stringify(data);
-    const buf = Buffer.from(json, 'utf-8');
+    // 备份内容同样加密存储，防止备份文件泄露明文用户数据
+    const text = dbEnc.serializeDb(data);
+    const buf = Buffer.from(text, 'utf-8');
     const chunks = [];
     for (let i = 0; i < buf.length; i += KV_BACKUP_CHUNK_SIZE) {
         chunks.push(buf.slice(i, i + KV_BACKUP_CHUNK_SIZE).toString('base64'));
     }
-    const meta = { name, time, size: buf.length, files, chunks: chunks.length, storage: 'kv' };
+    const meta = { name, time, size: buf.length, files, chunks: chunks.length, storage: 'kv', enc: dbEnc.isCipherText(text) ? 1 : 0 };
     await _kvSet(KV_BACKUP_PREFIX + name + ':meta', meta);
     for (let i = 0; i < chunks.length; i++) {
         await _kvSet(KV_BACKUP_PREFIX + name + ':chunk:' + i, chunks[i]);
@@ -4269,8 +4507,17 @@ async function _kvBackupLoad(name) {
         parts.push(chunk);
     }
     try {
-        const json = Buffer.from(parts.join(''), 'base64').toString('utf-8');
-        return { meta, data: JSON.parse(json) };
+        const rawText = Buffer.from(parts.join(''), 'base64').toString('utf-8');
+        let data = null;
+        if (dbEnc.isCipherText(rawText)) {
+            // 新版加密备份
+            const result = dbEnc.deserializeDbText(rawText);
+            if (!result) return null;
+            data = result.data;
+        } else {
+            data = JSON.parse(rawText); // 兼容历史明文备份
+        }
+        return { meta, data };
     } catch (e) {
         return null;
     }
