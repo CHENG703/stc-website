@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
     <script src="/js/device-id.js"></script>
+    <script src="js/bj-time.js?v=16"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>STC邮箱</title>
@@ -1577,13 +1578,29 @@
             console.log('Toggle star:', emailId);
         }
 
+        // 时间显示统一按北京时间（见 js/bj-time.js）
         function formatTime(timestamp) {
+            if (window.STCBeijing) {
+                const nowAbs = STCBeijing.absMs();
+                const p = STCBeijing.partsAbs(STCBeijing.toMs(timestamp));
+                const today = STCBeijing.partsAbs(nowAbs);
+                const dayMs = 24 * 60 * 60 * 1000;
+                const diff = Math.max(0, nowAbs - STCBeijing.toMs(timestamp));
+
+                if (p.date === today.date) {
+                    return String(p.hour).padStart(2, '0') + ':' + String(p.minute).padStart(2, '0');
+                }
+                if (p.date === STCBeijing.partsAbs(nowAbs - dayMs).date) return '昨天';
+                if (diff < 7 * dayMs) return Math.floor(diff / dayMs) + '天前';
+                return p.month + '月' + p.day + '日';
+            }
+
             const date = new Date(timestamp);
             const now = new Date();
-            
+
             const diff = now - date;
             const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-            
+
             if (days === 0) {
                 return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
             } else if (days === 1) {
@@ -1596,6 +1613,8 @@
         }
 
         function formatFullTime(timestamp) {
+            if (window.STCBeijing) return STCBeijing.fullDateTime(timestamp);
+
             const date = new Date(timestamp);
             return date.toLocaleString('zh-CN', {
                 year: 'numeric',

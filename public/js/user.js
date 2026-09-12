@@ -303,8 +303,10 @@ async function handlePublishTask(event) {
     }
 }
 
-// 格式化日期
+// 格式化日期（统一按北京时间，见 js/bj-time.js）
 function formatDate(dateString) {
+    if (window.STCBeijing) return STCBeijing.dateStr(dateString);
+
     const date = new Date(dateString);
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');

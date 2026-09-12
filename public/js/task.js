@@ -407,8 +407,10 @@ function getFileIcon(ext) {
     return icons[ext] || '📎';
 }
 
-// 格式化日期时间
+// 格式化日期时间（统一按北京时间，见 js/bj-time.js）
 function formatDateTime(dateString) {
+    if (window.STCBeijing) return STCBeijing.datetimeStr(dateString);
+
     const date = new Date(dateString);
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');

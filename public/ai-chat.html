@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>STC AI 助手</title>
     <script src="js/config.js"></script>
+    <script src="js/bj-time.js?v=16"></script>
     <style>
         * {
             margin: 0;
@@ -1469,8 +1470,19 @@
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
+        // 时间显示统一按北京时间（见 js/bj-time.js）
         function fmtTime(iso) {
             try {
+                if (window.STCBeijing) {
+                    const abs = STCBeijing.toMs(iso);
+                    const p = STCBeijing.partsAbs(abs);
+                    const today = STCBeijing.partsAbs(STCBeijing.absMs());
+                    if (p.date === today.date) {
+                        return String(p.hour).padStart(2, '0') + ':' + String(p.minute).padStart(2, '0');
+                    }
+                    return p.month + '/' + p.day;
+                }
+
                 const d = new Date(iso);
                 const now = new Date();
                 const sameDay = d.toDateString() === now.toDateString();

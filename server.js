@@ -2640,6 +2640,38 @@ app.get('/api/csrf-token', async (req, res) => {
     res.json({ success: true, csrfToken: token });
 });
 
+// ---------- 北京时间工具 ----------
+// 中国标准时间固定为 UTC+8，无夏令时
+const STC_BJ_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+function getBeijingParts(input) {
+    const d = input instanceof Date ? input : new Date(input || Date.now());
+    const t = new Date(d.getTime() + STC_BJ_OFFSET_MS);
+    const pad = n => String(n).padStart(2, '0');
+    const date = `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
+    const time = `${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}:${pad(t.getUTCSeconds())}`;
+    return { date, time, datetime: `${date} ${time}`, weekday: t.getUTCDay() };
+}
+
+// 服务器时间 / 北京时间（公开接口，供前端校时并按北京时间判断日期）
+app.get('/api/time', (req, res) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const now = new Date();
+    const bj = getBeijingParts(now);
+    res.json({
+        success: true,
+        data: {
+            timestamp: now.getTime(),
+            iso: now.toISOString(),
+            timezone: 'Asia/Shanghai',
+            offsetMinutes: 480,
+            beijingDate: bj.date,
+            beijingTime: bj.time,
+            beijingDatetime: bj.datetime
+        }
+    });
+});
+
 // 人机验证码图片（SVG，无 cookie 依赖，答案存 KV 绑定 sessionID）
 app.get('/api/captcha', (req, res) => {
     // 强制保持 sessionID 稳定（同 csrf-token 的原因）

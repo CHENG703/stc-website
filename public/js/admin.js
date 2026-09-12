@@ -482,7 +482,7 @@ const CMDLog = {
                 this.log('当前用户: '+(sessionStorage.getItem('username')||'未登录'), 'info');
                 break;
             case 'date':
-                this.log('时间: '+new Date().toLocaleString(), 'info');
+                this.log('时间: '+STCBeijing.datetimeStr(), 'info');
                 break;
             case 'banip':
                 if (!args) {
@@ -553,7 +553,7 @@ const CMDLog = {
                     if(d.success) {
                         if(d.lastBackup) {
                             this.log('=== 上次备份信息 ===', 'system');
-                            this.log('备份时间: ' + new Date(d.lastBackup.time).toLocaleString(), 'info');
+                            this.log('备份时间: ' + STCBeijing.datetimeStr(d.lastBackup.time), 'info');
                             this.log('备份名称: ' + d.lastBackup.info.name, 'system');
                             this.log('===================', 'system');
                         } else {
@@ -614,7 +614,7 @@ const CMDLog = {
                                 const size = b.size > 1024*1024*1024 ? (b.size/1024/1024/1024).toFixed(2)+' GB' : 
                                             b.size > 1024*1024 ? (b.size/1024/1024).toFixed(2)+' MB' : 
                                             (b.size/1024).toFixed(2)+' KB';
-                                this.log((i+1) + '. ' + b.name + ' (' + size + ') - ' + new Date(b.created).toLocaleString(), 'info');
+                                this.log((i+1) + '. ' + b.name + ' (' + size + ') - ' + STCBeijing.datetimeStr(b.created), 'info');
                             });
                             this.log('================', 'system');
                         }
@@ -636,7 +636,7 @@ const CMDLog = {
                             const size = b.size > 1024*1024*1024 ? (b.size/1024/1024/1024).toFixed(2)+' GB' : 
                                         b.size > 1024*1024 ? (b.size/1024/1024).toFixed(2)+' MB' : 
                                         (b.size/1024).toFixed(2)+' KB';
-                            this.log((i+1) + '. ' + b.name + ' (' + size + ') - ' + new Date(b.created).toLocaleString(), 'info');
+                            this.log((i+1) + '. ' + b.name + ' (' + size + ') - ' + STCBeijing.datetimeStr(b.created), 'info');
                         });
                         this.log('================', 'system');
                         
@@ -696,7 +696,7 @@ const CMDLog = {
                             const size = b.size > 1024*1024*1024 ? (b.size/1024/1024/1024).toFixed(2)+' GB' : 
                                         b.size > 1024*1024 ? (b.size/1024/1024).toFixed(2)+' MB' : 
                                         (b.size/1024).toFixed(2)+' KB';
-                            this.log((i+1) + '. ' + b.name + ' (' + size + ') - ' + new Date(b.created).toLocaleString(), 'info');
+                            this.log((i+1) + '. ' + b.name + ' (' + size + ') - ' + STCBeijing.datetimeStr(b.created), 'info');
                         });
                         this.log('================', 'system');
                         
@@ -746,7 +746,7 @@ const CMDLog = {
                 }).then(r=>r.json()).then(d=>{
                     if(d.success) {
                         this.log('数据库已锁定！', 'error');
-                        this.log('锁定时间: ' + new Date(d.lockInfo.time).toLocaleString(), 'system');
+                        this.log('锁定时间: ' + STCBeijing.datetimeStr(d.lockInfo.time), 'system');
                     } else {
                         this.log('锁定失败: ' + d.message, 'error');
                     }
@@ -760,7 +760,7 @@ const CMDLog = {
                         this.log('状态: ' + (s.locked ? '已锁定' : '正常'), s.locked ? 'error' : 'info');
                         if(s.locked) {
                             this.log('锁定原因: ' + s.lockReason, 'warn');
-                            this.log('锁定时间: ' + new Date(s.lockTime).toLocaleString(), 'system');
+                            this.log('锁定时间: ' + STCBeijing.datetimeStr(s.lockTime), 'system');
                         }
                         this.log('数据大小: ' + Math.round(s.dataSize / 1024) + ' KB', 'info');
                         this.log('用户数: ' + s.usersCount, 'info');
@@ -830,7 +830,7 @@ const CMDLog = {
                         if (d.locked) {
                             this.log('锁定者: ' + d.lockBy, 'warn');
                             this.log('锁定原因: ' + d.lockReason, 'warn');
-                            this.log('锁定时间: ' + new Date(d.lockTime).toLocaleString(), 'warn');
+                            this.log('锁定时间: ' + STCBeijing.datetimeStr(d.lockTime), 'warn');
                         }
                     } else {
                         this.log('获取状态失败: ' + d.message, 'error');
@@ -1024,7 +1024,7 @@ const CMDLog = {
                     this.log('管理员: ' + (target.is_admin ? '是' : '否'), target.is_admin ? 'warn' : 'info');
                     this.log('超级管理员: ' + (target.is_super_admin ? '是' : '否'), target.is_super_admin ? 'warn' : 'info');
                     this.log('封禁状态: ' + (target.is_banned ? '已封禁' : '正常'), target.is_banned ? 'error' : 'info');
-                    this.log('注册时间: ' + new Date(target.created_at).toLocaleString(), 'info');
+                    this.log('注册时间: ' + STCBeijing.datetimeStr(target.created_at), 'info');
                     this.log('================', 'system');
                 }).catch(e=>this.log('获取失败: '+e.message,'error'));
                 break;
@@ -1064,7 +1064,7 @@ const CMDLog = {
 
     log(message, type = 'info') {
         const entry = {
-            time: new Date().toLocaleTimeString(),
+            time: window.STCBeijing ? STCBeijing.timeStr() : new Date().toLocaleTimeString(),
             message: message,
             type: type
         };
@@ -1652,6 +1652,9 @@ function accessEsc(s) {
 function formatAccessTime(ts) {
     if (!ts) return '';
     try {
+        // 统一按北京时间显示（见 js/bj-time.js）
+        if (window.STCBeijing) return STCBeijing.datetimeStr(ts);
+
         const d = new Date(ts);
         const pad = n => String(n).padStart(2, '0');
         return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
@@ -2046,7 +2049,7 @@ async function loadBotMessages(page = 1) {
             const groupCell = m.message_type === 'group'
                 ? `<div>${escapeHtml(m.group_name || m.group_id || '-')}<br><small style="color:#8b949e;">${escapeHtml(m.group_id || '')}</small></div>`
                 : '-';
-            const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleString('zh-CN') : '-';
+            const timeStr = m.timestamp ? STCBeijing.datetimeStr(m.timestamp) : '-';
 
             let contentHtml = '';
             if (m.message_text) {
@@ -2157,7 +2160,7 @@ async function pollSendResult(requestId) {
                 clearInterval(timer);
                 const r = data.result;
                 if (r.success) {
-                    resultBox.innerHTML = `<div style="color:#2ea043;">✅ 机器人发送成功！(报告时间: ${new Date(r.reported_at).toLocaleTimeString()})</div>`;
+                    resultBox.innerHTML = `<div style="color:#2ea043;">✅ 机器人发送成功！(报告时间: ${window.STCBeijing ? STCBeijing.timeStr(r.reported_at) : new Date(r.reported_at).toLocaleTimeString()})</div>`;
                 } else {
                     resultBox.innerHTML = `<div style="color:#ff6b6b;">⚠️ 机器人发送失败: ${escapeHtml(r.message || '未知错误')}</div>`;
                 }
