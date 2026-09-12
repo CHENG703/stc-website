@@ -1752,13 +1752,15 @@ async function loadAccessLogs() {
             container.innerHTML = '<div style="color:#8b949e; padding:8px;">暂无访问记录</div>';
             return;
         }
-        let html = '<table style="width:100%; border-collapse:collapse; font-size:13px;"><thead><tr style="text-align:left; color:#8b949e;">'
-            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">时间</th>'
-            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">IP</th>'
-            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">设备指纹</th>'
-            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">页面</th>'
-            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">来源 (User-Agent)</th>'
-            + '<th style="padding:6px 8px; border-bottom:1px solid #d0d7de;">操作</th>'
+        // 全部改用主题变量（--text-primary / --error 等），否则深色主题下
+        // 深灰色文字（#24292f）会与深色面板背景（--bg-2）几乎同色，IP 根本看不清
+        let html = '<table style="width:100%; border-collapse:collapse; font-size:13px;"><thead><tr style="text-align:left; color:var(--text-tertiary, #64748b);">'
+            + '<th style="padding:6px 8px; border-bottom:1px solid var(--border-base, rgba(255,255,255,0.11));">时间</th>'
+            + '<th style="padding:6px 8px; border-bottom:1px solid var(--border-base, rgba(255,255,255,0.11));">IP</th>'
+            + '<th style="padding:6px 8px; border-bottom:1px solid var(--border-base, rgba(255,255,255,0.11));">设备指纹</th>'
+            + '<th style="padding:6px 8px; border-bottom:1px solid var(--border-base, rgba(255,255,255,0.11));">页面</th>'
+            + '<th style="padding:6px 8px; border-bottom:1px solid var(--border-base, rgba(255,255,255,0.11));">来源 (User-Agent)</th>'
+            + '<th style="padding:6px 8px; border-bottom:1px solid var(--border-base, rgba(255,255,255,0.11));">操作</th>'
             + '</tr></thead><tbody>';
         const seenIp = {};
         logs.forEach(log => {
@@ -1770,38 +1772,41 @@ async function loadAccessLogs() {
             const isFirst = !seenIp[rowKey];
             seenIp[rowKey] = true;
             const ipBadge = isBanned
-                ? ' <span style="color:#cf222e; font-size:11px; border:1px solid #cf222e; border-radius:4px; padding:0 4px;">已封禁</span>'
+                ? ' <span style="color:var(--error, #f87171); font-size:11px; border:1px solid currentColor; border-radius:4px; padding:0 4px;">已封禁</span>'
                 : '';
             const devBadge = isDevBanned
-                ? ' <span style="color:#cf222e; font-size:11px; border:1px solid #cf222e; border-radius:4px; padding:0 4px;">已封设备</span>'
+                ? ' <span style="color:var(--warning, #fbbf24); font-size:11px; border:1px solid currentColor; border-radius:4px; padding:0 4px;">已封设备</span>'
                 : '';
             const devCell = fp
-                ? `<span style="font-family:monospace; white-space:nowrap; color:${isDevBanned ? '#cf222e' : '#57606a'};" title="${accessEsc(fp)}">${accessEsc(fp.slice(0, 8))}…</span>${devBadge}`
-                : '<span style="color:#c8c8c8;">—</span>';
+                ? `<span style="font-family:monospace; white-space:nowrap; color:${isDevBanned ? 'var(--warning, #fbbf24)' : 'var(--text-secondary, #9ca8c2)'};" title="${accessEsc(fp)}">${accessEsc(fp.slice(0, 8))}…</span>${devBadge}`
+                : '<span style="color:var(--text-muted, #4e5b7a);">—</span>';
             // 操作按钮：IP 级 + 设备级各一（只在该 IP 首次出现的行显示）
             const ops = [];
             if (isFirst && ip) {
                 if (!isBanned) {
-                    ops.push(`<button onclick="banAccessIP('${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid #cf222e; color:#cf222e; background:#fff; border-radius:4px; cursor:pointer;">封禁IP</button>`);
+                    ops.push(`<button onclick="banAccessIP('${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid var(--error, #f87171); color:var(--error, #f87171); background:var(--error-soft, rgba(248,113,113,0.12)); border-radius:4px; cursor:pointer;">封禁IP</button>`);
                 } else {
-                    ops.push(`<button onclick="unbanAccessIP('${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid #57606a; color:#57606a; background:#fff; border-radius:4px; cursor:pointer;">解封IP</button>`);
+                    ops.push(`<button onclick="unbanAccessIP('${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid var(--border-strong, rgba(255,255,255,0.18)); color:var(--text-secondary, #9ca8c2); background:transparent; border-radius:4px; cursor:pointer;">解封IP</button>`);
                 }
                 if (fp) {
                     if (!isDevBanned) {
-                        ops.push(`<button onclick="banDevice('${fp}', '${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid #b45309; color:#b45309; background:#fff; border-radius:4px; cursor:pointer;">封禁设备</button>`);
+                        ops.push(`<button onclick="banDevice('${fp}', '${ip.replace(/'/g, '')}')" style="padding:2px 10px; font-size:12px; border:1px solid var(--warning, #fbbf24); color:var(--warning, #fbbf24); background:var(--warning-soft, rgba(251,191,36,0.12)); border-radius:4px; cursor:pointer;">封禁设备</button>`);
                     } else {
-                        ops.push(`<button onclick="unbanDevice('${fp}')" style="padding:2px 10px; font-size:12px; border:1px solid #57606a; color:#57606a; background:#fff; border-radius:4px; cursor:pointer;">解封设备</button>`);
+                        ops.push(`<button onclick="unbanDevice('${fp}')" style="padding:2px 10px; font-size:12px; border:1px solid var(--border-strong, rgba(255,255,255,0.18)); color:var(--text-secondary, #9ca8c2); background:transparent; border-radius:4px; cursor:pointer;">解封设备</button>`);
                     }
                 }
             }
             const opCell = ops.join('&nbsp; ');
-            const rowStyle = 'border-bottom:1px solid #eaeef2;' + ((isBanned || isDevBanned) ? ' background:#fff5f5;' : '');
+            const rowTint = isBanned
+                ? 'var(--error-soft, rgba(248,113,113,0.12))'
+                : (isDevBanned ? 'var(--warning-soft, rgba(251,191,36,0.12))' : '');
+            const rowStyle = 'border-bottom:1px solid var(--border-subtle, rgba(255,255,255,0.07));' + (rowTint ? ' background:' + rowTint + ';' : '');
             html += '<tr style="' + rowStyle + '">'
-                + `<td style="padding:5px 8px; white-space:nowrap;">${accessEsc(formatAccessTime(log.ts || log.t))}</td>`
-                + `<td style="padding:5px 8px; font-family:monospace; white-space:nowrap; color:${isBanned ? '#cf222e' : '#24292f'}; font-weight:${isBanned ? 'bold' : 'normal'};">${accessEsc(ip)}${ipBadge}</td>`
+                + `<td style="padding:5px 8px; white-space:nowrap; color:var(--text-secondary, #9ca8c2);">${accessEsc(formatAccessTime(log.ts || log.t))}</td>`
+                + `<td style="padding:5px 8px; font-family:monospace; white-space:nowrap; color:${isBanned ? 'var(--error, #f87171)' : 'var(--text-primary, #f1f5f9)'}; font-weight:${isBanned ? 'bold' : 'normal'};">${accessEsc(ip)}${ipBadge}</td>`
                 + `<td style="padding:5px 8px;">${devCell}</td>`
-                + `<td style="padding:5px 8px; white-space:nowrap;"><a href="${accessEsc(log.page)}" style="color:#2563eb; text-decoration:none;">${accessEsc(log.page)}</a></td>`
-                + `<td style="padding:5px 8px; color:#57606a; max-width:330px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${accessEsc(log.ua || '')}">${accessEsc(log.ua || '')}</td>`
+                + `<td style="padding:5px 8px; white-space:nowrap;"><a href="${accessEsc(log.page)}" style="color:var(--accent-light, #818cf8); text-decoration:none;">${accessEsc(log.page)}</a></td>`
+                + `<td style="padding:5px 8px; color:var(--text-tertiary, #64748b); max-width:330px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${accessEsc(log.ua || '')}">${accessEsc(log.ua || '')}</td>`
                 + `<td style="padding:5px 8px; white-space:nowrap;">${opCell}</td>`
                 + '</tr>';
         });
@@ -1829,7 +1834,7 @@ async function loadBannedIPs() {
         const cnt = document.getElementById('banned-ips-count');
         if (cnt) cnt.textContent = `（${arr.length}）`;
         if (arr.length === 0) {
-            list.innerHTML = '<span style="color:#8b949e; font-size:12px;">暂无封禁</span>';
+            list.innerHTML = '<span style="color:var(--text-tertiary, #64748b); font-size:12px;">暂无封禁</span>';
             return;
         }
         list.innerHTML = arr.map(b => {
@@ -1837,10 +1842,11 @@ async function loadBannedIPs() {
             const reason = String(b.reason || '违规操作');
             const t = b.banned_at ? ' · ' + formatAccessTime(b.banned_at) : '';
             const title = accessEsc(reason + t);
-            return `<span style="display:inline-flex; align-items:center; gap:6px; background:#fff5f5; border:1px solid #ffd7d5; color:#cf222e; border-radius:6px; padding:3px 8px; font-size:12px; max-width:100%;">
-                <span style="font-family:monospace; white-space:nowrap;">${accessEsc(b.ip)}</span>
-                <span title="${title}" style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#a40e26;">${accessEsc(reason)}</span>
-                <button onclick="unbanAccessIP('${ip}')" style="padding:0 7px; font-size:11px; border:1px solid #cf222e; color:#cf222e; background:#fff; border-radius:4px; cursor:pointer; line-height:18px;">解封</button>
+            // 用主题变量着色：深色主题下 --error 是亮红，浅色主题下是深红，都能看清 IP
+            return `<span style="display:inline-flex; align-items:center; gap:6px; background:var(--error-soft, rgba(248,113,113,0.12)); border:1px solid var(--error, #f87171); color:var(--error, #f87171); border-radius:6px; padding:3px 8px; font-size:12px; max-width:100%;">
+                <span style="font-family:monospace; white-space:nowrap; font-weight:600;">${accessEsc(b.ip)}</span>
+                <span title="${title}" style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-secondary, #9ca8c2);">${accessEsc(reason)}</span>
+                <button onclick="unbanAccessIP('${ip}')" style="padding:0 7px; font-size:11px; border:1px solid currentColor; color:var(--error, #f87171); background:transparent; border-radius:4px; cursor:pointer; line-height:18px;">解封</button>
             </span>`;
         }).join('');
     } catch (e) {
@@ -1924,7 +1930,7 @@ async function loadBannedDevices() {
         const cnt = document.getElementById('banned-devices-count');
         if (cnt) cnt.textContent = `（${arr.length}）`;
         if (arr.length === 0) {
-            list.innerHTML = '<span style="color:#8b949e; font-size:12px;">暂无封禁设备</span>';
+            list.innerHTML = '<span style="color:var(--text-tertiary, #64748b); font-size:12px;">暂无封禁设备</span>';
             return;
         }
         list.innerHTML = arr.map(b => {
@@ -1932,10 +1938,10 @@ async function loadBannedDevices() {
             const reason = String(b.reason || '违规操作');
             const t = b.banned_at ? ' · ' + formatAccessTime(b.banned_at) : '';
             const title = accessEsc(reason + t);
-            return `<span style="display:inline-flex; align-items:center; gap:6px; background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:6px; padding:3px 8px; font-size:12px; max-width:100%;">
-                <span style="font-family:monospace; white-space:nowrap;">${accessEsc(b.fp)}</span>
-                <span title="${title}" style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#7c2d12;">${accessEsc(reason)}</span>
-                <button onclick="unbanDevice('${fp}')" style="padding:0 7px; font-size:11px; border:1px solid #b45309; color:#b45309; background:#fff; border-radius:4px; cursor:pointer; line-height:18px;">解封</button>
+            return `<span style="display:inline-flex; align-items:center; gap:6px; background:var(--warning-soft, rgba(251,191,36,0.12)); border:1px solid var(--warning, #fbbf24); color:var(--warning, #fbbf24); border-radius:6px; padding:3px 8px; font-size:12px; max-width:100%;">
+                <span style="font-family:monospace; white-space:nowrap; font-weight:600;">${accessEsc(b.fp)}</span>
+                <span title="${title}" style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-secondary, #9ca8c2);">${accessEsc(reason)}</span>
+                <button onclick="unbanDevice('${fp}')" style="padding:0 7px; font-size:11px; border:1px solid currentColor; color:var(--warning, #fbbf24); background:transparent; border-radius:4px; cursor:pointer; line-height:18px;">解封</button>
             </span>`;
         }).join('');
     } catch (e) {
