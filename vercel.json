@@ -14,7 +14,8 @@
     { "src": "/avatars/(.*)", "dest": "/public/avatars/$1" },
     { "src": "/uploads/(.*)", "dest": "/public/uploads/$1" },
     { "src": "/music/(.*)", "dest": "/public/music/$1" },
-    { "src": "/(.*\\.(?:ico|png|jpg|jpeg|svg|gif|txt|webp|css|js|mp3|m4a|ogg|wav))", "dest": "/public/$1" },
+    { "src": "/video/(.*)", "dest": "/public/video/$1" },
+    { "src": "/(.*\\.(?:ico|png|jpg|jpeg|svg|gif|txt|webp|css|js|mp3|m4a|ogg|wav|mp4|webm))", "dest": "/public/$1" },
     { "src": "/(.*\\.(?:html))", "dest": "/api/index.js" },
     { "src": "/api/(.*)", "dest": "/api/index.js" },
     { "src": "/(.*)", "dest": "/api/index.js" }

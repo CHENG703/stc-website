@@ -27,21 +27,46 @@
             overflow: hidden;
         }
 
-        body::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle at 30% 30%, rgba(102, 126, 234, 0.3) 0%, transparent 50%),
-                        radial-gradient(circle at 70% 70%, rgba(118, 75, 162, 0.3) 0%, transparent 50%);
-            animation: bgMove 20s linear infinite;
+        /* ===== 全屏视频背景 ===== */
+        .bg-video-layer {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            overflow: hidden;
+            pointer-events: none;
+            background-color: #0f1526;
         }
 
-        @keyframes bgMove {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .bg-video-layer video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            border: 0;
+        }
+
+        /* 降级状态（省流/慢网/减少动效/自动播放被拒）：只显示封面图 */
+        .bg-video-layer.no-video video {
+            display: none;
+        }
+
+        .bg-video-layer.no-video {
+            background-image: url('/video/login-bg-poster.jpg');
+            background-size: cover;
+            background-position: center;
+        }
+
+        /* 压暗遮罩：保证玻璃卡片与文字在视频上依旧清晰可读 */
+        .bg-video-mask {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 50% 38%, rgba(8, 12, 24, 0.38) 0%, rgba(8, 12, 24, 0.66) 100%);
+        }
+
+        @media (max-width: 768px) {
+            .bg-video-mask {
+                background: radial-gradient(circle at 50% 38%, rgba(8, 12, 24, 0.46) 0%, rgba(8, 12, 24, 0.76) 100%);
+            }
         }
 
         .login-container {
@@ -626,9 +651,11 @@
     </style>
 </head>
 <body>
-    <div class="aurora-bg">
-        <div class="aurora-blob aurora-blob-1"></div>
-        <div class="aurora-blob aurora-blob-2"></div>
+    <!-- 全屏视频背景：静音循环自动播放；移动端加载低码率版本，省流/慢网/减少动效时自动降级为封面图 -->
+    <div class="bg-video-layer" id="bg-video-layer">
+        <video id="bg-video" autoplay muted loop playsinline preload="auto"
+               poster="/video/login-bg-poster.jpg" aria-hidden="true"></video>
+        <div class="bg-video-mask" aria-hidden="true"></div>
     </div>
     <div class="login-container">
         <div class="glass-card">
@@ -1240,5 +1267,49 @@
     <script src="js/animations.js"></script>
     <!-- 登录页背景音乐（自动循环播放，左下角可静音） -->
     <script src="js/login-bgm.js?v=2"></script>
+
+    <!-- 背景视频控制：移动端换低码率版本、省流/慢网降级为封面图、切到后台自动暂停 -->
+    <script>
+    (function () {
+        var layer = document.getElementById('bg-video-layer');
+        var video = document.getElementById('bg-video');
+        if (!layer || !video) return;
+
+        function posterOnly() {
+            layer.classList.add('no-video');
+            try { video.pause(); } catch (e) {}
+            video.removeAttribute('src');
+            try { video.load(); } catch (e) {}
+        }
+
+        var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {};
+        var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        var saveData = conn.saveData === true;
+        var slowNet = /(^|-)2g$/.test(conn.effectiveType || '');
+        var isMobile = !!(window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+
+        // 省流 / 慢网 / 系统「减少动态效果」：完全不下载视频，只显示封面图
+        if (saveData || slowNet || reduceMotion) { posterOnly(); return; }
+
+        video.src = isMobile ? '/video/login-bg-mobile.mp4' : '/video/login-bg.mp4';
+        try { video.load(); } catch (e) {}
+        var playing = video.play();
+        if (playing && typeof playing.catch === 'function') {
+            // 少数浏览器仍拒绝自动播放，退化为封面图
+            playing.catch(function () { posterOnly(); });
+        }
+
+        // 页面切到后台时暂停，省电省流量
+        document.addEventListener('visibilitychange', function () {
+            if (layer.classList.contains('no-video')) return;
+            if (document.hidden) {
+                try { video.pause(); } catch (e) {}
+            } else {
+                var p = video.play();
+                if (p && typeof p.catch === 'function') p.catch(function () {});
+            }
+        });
+    })();
+    </script>
 </body>
 </html>
