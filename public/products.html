@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>STC - 产品中心</title>
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
-    <link rel="stylesheet" href="css/style-v5.css?v=5">
+    <link rel="stylesheet" href="css/style-v5.css?v=16">
     <script src="js/lang.js"></script>
     <script src="js/config.js"></script>
     <style>
@@ -195,6 +195,32 @@
             gap: 1rem;
             flex-wrap: wrap;
         }
+        /* 移动端适配 */
+        @media (max-width: 768px) {
+            .products-hero {
+                padding: 4rem 0 2rem;
+            }
+            .products-hero .hero-icon {
+                font-size: 3rem;
+            }
+            .products-hero h1 {
+                font-size: 1.9rem;
+            }
+            .product-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+            .product-card {
+                padding: 1.5rem 1.25rem;
+            }
+            .dev-banner-box {
+                flex-wrap: wrap;
+                font-size: 0.9rem;
+            }
+            .join-buttons {
+                gap: 0.75rem;
+            }
+        }
     </style>
 </head>
 <body class="about-page">
@@ -333,7 +359,7 @@
 
     <div class="copyright-watermark">© 2025-2026 STC 版权所有</div>
 
-    <script src="js/main.js?v=16"></script>
+    <script src="js/main.js?v=15"></script>
     <script src="js/animations.js"></script>
 </body>
 </html>

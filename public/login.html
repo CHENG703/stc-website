@@ -448,7 +448,37 @@
             cursor: not-allowed;
         }
 
-        /* 滑块人机验证弹窗 */
+        /* 图形验证码（登录人机验证） */
+        .captcha-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .captcha-row .form-input {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .captcha-img {
+            width: 112px;
+            height: 44px;
+            border-radius: 8px;
+            cursor: pointer;
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            object-fit: cover;
+            flex-shrink: 0;
+            display: block;
+        }
+
+        .captcha-tip {
+            margin-top: 6px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+
+        /* 滑块人机验证弹窗（已停用，登录改用图形验证码） */
         .slider-modal-overlay {
             position: fixed;
             top: 0;
@@ -653,6 +683,16 @@
                     </div>
                 </div>
 
+                <!-- 人机验证（图形验证码） -->
+                <div class="form-group">
+                    <label class="form-label">人机验证</label>
+                    <div class="captcha-row">
+                        <input type="text" class="form-input" id="captcha-input" maxlength="6" placeholder="请输入图中字符" autocomplete="off">
+                        <img id="captcha-img" class="captcha-img" alt="验证码" title="点击刷新验证码" onclick="refreshCaptcha()">
+                    </div>
+                    <div class="captcha-tip">看不清？点击图片可刷新</div>
+                </div>
+
                 <button type="submit" class="login-btn" id="login-btn">登 录</button>
 
                 <!-- 登录步骤提示 -->
@@ -694,23 +734,6 @@
         </div>
     </div>
 
-    <!-- 滑块人机验证弹窗 -->
-    <div class="slider-modal-overlay" id="slider-overlay" style="display:none;">
-        <div class="slider-modal">
-            <div class="slider-modal-head">
-                <span>安全验证</span>
-                <button type="button" class="slider-modal-close" id="slider-close" aria-label="关闭">×</button>
-            </div>
-            <p class="slider-modal-tip">拖动下方滑块至最右侧，完成验证</p>
-            <div class="slider-track" id="slider-track">
-                <div class="slider-progress" id="slider-progress"></div>
-                <div class="slider-hint" id="slider-hint">按住滑块，拖动到最右侧</div>
-                <div class="slider-thumb" id="slider-thumb">→</div>
-            </div>
-            <div class="slider-msg" id="slider-msg"></div>
-        </div>
-    </div>
-
     <script>
         let currentLoginType = 'password';
         let codeTimer = null;
@@ -734,7 +757,7 @@
             return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
         }
 
-        // ============ 滑块人机验证 ============
+        // ============ 滑块人机验证（已停用：登录已改用图形验证码，保留旧实现备用） ============
         let sliderBusy = false;   // 防止重复弹出
         let sliderResolve = null; // openSlider 的 Promise resolve
         let sliderState = 'idle'; // idle | dragging | loading | success
@@ -921,6 +944,27 @@
 
         initSlider();
 
+        // ============ 图形验证码（人机验证） ============
+        function refreshCaptcha() {
+            const img = document.getElementById('captcha-img');
+            if (img) img.src = '/api/captcha?t=' + Date.now();
+        }
+
+        function getCaptchaValue() {
+            const el = document.getElementById('captcha-input');
+            return el ? el.value.trim() : '';
+        }
+
+        // 验证码单次有效：提交失败后需清空并换一张
+        function resetCaptcha() {
+            const el = document.getElementById('captcha-input');
+            if (el) el.value = '';
+            refreshCaptcha();
+        }
+
+        // 页面加载即拉取一张验证码
+        refreshCaptcha();
+
         // 检查URL参数
         const urlParams = new URLSearchParams(window.location.search);
         const error = urlParams.get('error');
@@ -966,16 +1010,12 @@
                 return;
             }
 
-            // 先完成滑块人机验证
-            if (sliderBusy) return;
-            sliderBusy = true;
-            let sliderOk = false;
-            try {
-                sliderOk = await openSlider();
-            } finally {
-                sliderBusy = false;
+            // 人机验证（图形验证码）
+            const captcha = getCaptchaValue();
+            if (!captcha) {
+                showError('请输入人机验证码');
+                return;
             }
-            if (!sliderOk) return; // 用户取消了验证
 
             btn.disabled = true;
             btn.textContent = '发送中...';
@@ -990,7 +1030,7 @@
                         ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
                         'X-Request-Nonce': nonce
                     },
-                    body: JSON.stringify({ email, type: 'login' })
+                    body: JSON.stringify({ email, type: 'login', captcha })
                 });
                 // 先检查是否是 JSON 响应
                 const ct = response.headers.get('content-type') || '';
@@ -1014,8 +1054,9 @@
                         }
                     }, 1000);
                 } else {
-                    // 滑块验证标记为单次使用：发送失败后下次需重新验证
+                    // 图形验证码单次有效：失败后需清空并换一张
                     showError(data.message || '发送验证码失败');
+                    resetCaptcha();
                     btn.disabled = false;
                     btn.textContent = '发送验证码';
                 }
@@ -1049,7 +1090,6 @@
         // 登录表单提交
         document.getElementById('login-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            if (sliderBusy) return;
             const btn = document.getElementById('login-btn');
             hideMessages();
             hideLoginSteps();
@@ -1081,15 +1121,13 @@
                 payload = { loginType: 'code', email, code };
             }
 
-            // 点击登录后弹出滑块人机验证，验证通过后才真正提交登录
-            sliderBusy = true;
-            let sliderOk = false;
-            try {
-                sliderOk = await openSlider();
-            } finally {
-                sliderBusy = false;
+            // 人机验证（图形验证码）
+            const captcha = getCaptchaValue();
+            if (!captcha) {
+                showError('请输入人机验证码');
+                return;
             }
-            if (!sliderOk) return; // 用户取消/关闭了验证
+            payload.captcha = captcha;
 
             btn.disabled = true;
             btn.textContent = '登录中...';
@@ -1138,8 +1176,9 @@
                         window.location.href = '/home';
                     }, 600);
                 } else {
-                    // 滑块验证标记为单次使用，登录失败后下次需重新滑块验证
+                    // 图形验证码单次有效：登录失败后需换一张
                     showError(data.message || '登录失败');
+                    resetCaptcha();
                     btn.disabled = false;
                     btn.textContent = '登 录';
                     hideLoginSteps();

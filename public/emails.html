@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>STC邮箱</title>
-    <link rel="stylesheet" href="/css/style-v5.css?v=14">
+    <link rel="stylesheet" href="/css/style-v5.css?v=16">
     <style>
         * {
             margin: 0;
@@ -863,6 +863,35 @@
             border-radius: 2px;
             transition: width 0.3s;
         }
+        /* 移动端适配：三栏改为纵向堆叠 */
+        @media (max-width: 768px) {
+            .email-container {
+                flex-direction: column;
+                height: auto;
+                min-height: calc(100vh - 50px);
+            }
+            .sidebar {
+                width: 100%;
+                max-height: 170px;
+                overflow-y: auto;
+                flex-shrink: 0;
+            }
+            .main-content {
+                width: 100%;
+                min-height: 55vh;
+            }
+            .email-detail-container {
+                width: 100%;
+            }
+            .toolbar {
+                flex-wrap: wrap;
+                gap: 6px;
+                padding: 8px 10px;
+            }
+            .email-item {
+                padding: 10px 12px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1026,12 +1055,45 @@
         let attachedFiles = [];
         let selectedEmails = new Set();
 
+        // 获取一次性 CSRF token（服务端校验后即失效，需每次写请求重新获取）
+        async function getCsrfToken() {
+            try {
+                const resp = await fetch('/api/csrf-token', { credentials: 'include' });
+                if (!resp.ok) return null;
+                const data = await resp.json();
+                return data.csrfToken || null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function genNonce() {
+            try {
+                const arr = new Uint8Array(16);
+                (window.crypto || window.msCrypto).getRandomValues(arr);
+                return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+            } catch (e) {
+                return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
+            }
+        }
+
         async function fetchWithAuth(url, options = {}) {
-            const response = await fetch(url, {
-                ...options,
-                credentials: 'include'
-            });
-            return response;
+            const method = (options.method || 'GET').toUpperCase();
+            const opts = Object.assign({}, options);
+            opts.credentials = 'include';
+            opts.headers = Object.assign({}, options.headers || {});
+
+            const authToken = localStorage.getItem('stc_auth_token');
+            if (authToken) opts.headers['Authorization'] = 'Bearer ' + authToken;
+
+            // 写请求必须携带 CSRF token 与一次性 nonce，否则服务端直接 403
+            if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+                const csrf = await getCsrfToken();
+                if (csrf) opts.headers['X-CSRF-Token'] = csrf;
+                opts.headers['X-Request-Nonce'] = genNonce();
+            }
+
+            return await fetch(url, opts);
         }
 
         async function loadStats() {

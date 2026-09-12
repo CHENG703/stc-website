@@ -60,6 +60,50 @@ async function fetchWithAuth(url, options = {}) {
     return response;
 }
 
+// 生成一次性请求 nonce（服务端 requireCSRF 对写请求强制校验，缺失会直接 403）
+function genNonce() {
+    try {
+        const arr = new Uint8Array(16);
+        (window.crypto || window.msCrypto).getRandomValues(arr);
+        return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) {
+        return Date.now().toString(16) + Math.random().toString(16).slice(2, 10);
+    }
+}
+
+// 获取一次性 CSRF token（服务端校验后即失效，因此每次写请求都要重新获取）
+async function fetchCsrfToken() {
+    const resp = await fetch('/api/csrf-token', { credentials: 'include' });
+    if (!resp.ok) throw new Error('CSRF_TOKEN_FAILED');
+    const data = await resp.json();
+    if (!data.csrfToken) throw new Error('CSRF_TOKEN_FAILED');
+    return data.csrfToken;
+}
+
+// 写请求统一入口：自动携带 CSRF token、请求 nonce、登录 token
+async function secureFetch(url, options = {}) {
+    const method = (options.method || 'GET').toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+        return fetchWithAuth(url, options);
+    }
+
+    const authToken = localStorage.getItem('stc_auth_token');
+    let csrf = null;
+    try {
+        csrf = await fetchCsrfToken();
+    } catch (e) {
+        csrf = localStorage.getItem('csrfToken');
+    }
+
+    options.credentials = 'include';
+    options.headers = Object.assign({}, options.headers || {});
+    if (csrf) options.headers['X-CSRF-Token'] = csrf;
+    options.headers['X-Request-Nonce'] = genNonce();
+    if (authToken) options.headers['Authorization'] = 'Bearer ' + authToken;
+
+    return fetchWithAuth(url, options);
+}
+
 // 全局用户变量
 let currentUser = null;
 let csrfToken = null;
@@ -104,7 +148,7 @@ async function checkLoginStatus() {
 // 登出函数
 async function logout() {
     try {
-        const response = await fetchWithAuth('/api/logout', {
+        const response = await secureFetch('/api/logout', {
             method: 'POST'
         });
         if (response.ok) {
@@ -230,9 +274,9 @@ function displayTaskDetail(task) {
                         <div style="color:#f0f6fc;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(task.file_name)}">${escapeHtml(task.file_name)}</div>
                         <div style="color:#8b949e;font-size:12px;margin-top:2px;">点击右侧按钮下载</div>
                     </div>
-                    <a href="/api/tasks/${task.id}/download" download="${escapeHtml(task.file_name)}" style="padding:8px 16px;background:#238636;color:white;border-radius:6px;text-decoration:none;font-weight:500;font-size:13px;">
+                    <button type="button" onclick="downloadTaskFile(${task.id}, '${escapeHtml(task.file_name).replace(/'/g, "\\'")}')" style="padding:8px 16px;background:#238636;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">
                         ⬇ 下载
-                    </a>
+                    </button>
                 </div>
             </div>
         `;
@@ -280,27 +324,68 @@ function displayTaskDetail(task) {
 
 // 更新任务状态
 async function updateTaskStatus(taskId, newStatus) {
+    const select = document.getElementById('task-status-select');
+    if (select) select.disabled = true;
     try {
-        const token = localStorage.getItem('csrfToken');
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['X-CSRF-Token'] = token;
-        
-        const response = await fetch(`/api/tasks/${taskId}/status`, {
+        const response = await secureFetch(`/api/tasks/${taskId}/status`, {
             method: 'PUT',
-            credentials: 'include',
-            headers: headers,
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: newStatus })
         });
-        
+
         if (response.ok) {
             showMessage('状态更新成功');
             loadTaskDetail();
         } else {
-            const error = await response.json();
-            showMessage(error.message || '状态更新失败', 'error');
+            let msg = '状态更新失败';
+            try {
+                const error = await response.json();
+                msg = error.message || error.error || msg;
+            } catch (e) { /* 忽略解析失败 */ }
+            showMessage(msg, 'error');
+            loadTaskDetail();
         }
     } catch (error) {
-        showMessage('状态更新失败', 'error');
+        if (error.message !== 'AccessDenied') {
+            showMessage('状态更新失败', 'error');
+        }
+        if (select) select.disabled = false;
+    }
+}
+
+// 下载任务附件（带登录态，失败时给出明确提示）
+async function downloadTaskFile(taskId, fileName) {
+    try {
+        const token = localStorage.getItem('stc_auth_token');
+        const headers = {};
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+
+        const resp = await fetch(`/api/tasks/${taskId}/download`, {
+            credentials: 'include',
+            headers: headers
+        });
+
+        if (!resp.ok) {
+            let msg = '下载失败';
+            try {
+                const data = await resp.json();
+                msg = data.message || data.error || msg;
+            } catch (e) { /* 非 JSON 响应 */ }
+            showMessage(msg, 'error');
+            return;
+        }
+
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName || 'download';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+        showMessage('下载失败，请稍后重试', 'error');
     }
 }
 

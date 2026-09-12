@@ -1188,8 +1188,14 @@ async function fetchWithAuth(url, options = {}) {
         throw new Error('Unauthorized');
     }
     if (response.status === 403) {
-        // 权限不足：抛出固定标识供调用方判断，避免把服务器内部信息透出到界面
-        throw new Error('PermissionDenied');
+        // 保留 PermissionDenied 标识供调用方判断，同时附带服务端的具体原因
+        // （如"CSRF Token无效或已过期"、"不能操作超级管理员"），便于定位问题
+        let detail = '';
+        try {
+            const d = await response.clone().json();
+            detail = d.message || d.error || '';
+        } catch (e) { /* 忽略解析失败 */ }
+        throw new Error(detail ? ('PermissionDenied: ' + detail) : 'PermissionDenied');
     }
     return response;
 }
@@ -1269,13 +1275,14 @@ async function toggleBan(userId, ban) {
             loadMembers();
             document.querySelector('.modal-overlay')?.remove();
         } else {
-            var data = await response.json();
-            showMessage(data.error || '操作失败', 'error');
-            CMDLog.log(`操作失败: ${data.error || '未知错误'}`, 'error');
+            var data = await response.json().catch(() => ({}));
+            var errMsg = data.message || data.error || ('操作失败（HTTP ' + response.status + '）');
+            showMessage(errMsg, 'error');
+            CMDLog.log(`封禁操作失败: ${errMsg}`, 'error');
         }
     } catch (error) {
-        showMessage('操作失败', 'error');
-        CMDLog.log(`操作失败: ${error.message}`, 'error');
+        showMessage('操作失败: ' + (error.message || '网络错误'), 'error');
+        CMDLog.log(`封禁操作失败: ${error.message}`, 'error');
     }
 }
 

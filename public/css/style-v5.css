@@ -3030,3 +3030,170 @@ body.light-theme .lang-option:hover {
         padding: 0 16px;
     }
 }
+
+/* ================= 移动端适配增强（2026-09） ================= */
+@media (max-width: 768px) {
+    /* 导航栏：菜单过多时允许横向滚动，避免挤压换行 */
+    .navbar .container {
+        height: auto;
+        min-height: 52px;
+        flex-wrap: nowrap;
+        gap: 8px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+    }
+
+    .nav-menu {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        max-width: 100%;
+    }
+
+    .nav-menu::-webkit-scrollbar {
+        display: none;
+    }
+
+    .nav-menu a {
+        white-space: nowrap;
+    }
+
+    /* 管理面板 */
+    .admin-page {
+        padding: 14px 12px;
+    }
+
+    .admin-header {
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .admin-header h1 {
+        font-size: 17px;
+    }
+
+    .admin-tabs {
+        width: 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .admin-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .admin-tab {
+        white-space: nowrap;
+        padding: 8px 12px;
+    }
+
+    .admin-content,
+    .admin-panel,
+    .admin-section {
+        padding: 14px;
+    }
+
+    .admin-stats {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        margin-bottom: 16px;
+    }
+
+    .admin-stat-card {
+        padding: 14px 10px;
+    }
+
+    .admin-stat-card .stat-value {
+        font-size: 22px;
+    }
+
+    .admin-actions {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .admin-panel h2,
+    .admin-panel h3 {
+        font-size: 16px;
+    }
+
+    /* 数据表格：保持横向滚动，压缩内边距 */
+    .data-table th,
+    .data-table td,
+    .admin-table th,
+    .admin-table td {
+        padding: 9px 10px;
+        white-space: nowrap;
+    }
+
+    /* 卡片与网格单列化 */
+    .members-grid,
+    .product-grid,
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .member-card,
+    .product-card,
+    .about-card,
+    .feature-card,
+    .team-card,
+    .stat-card,
+    .user-info,
+    .user-avatar-section,
+    .action-card {
+        padding: 16px;
+    }
+
+    /* 表单控件：16px 可避免 iOS Safari 聚焦时自动放大 */
+    .form-input,
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="number"],
+    input[type="search"],
+    select,
+    textarea {
+        font-size: 16px;
+    }
+
+    /* 弹窗自适应 */
+    .modal-box {
+        width: min(94vw, 520px) !important;
+        max-height: 86vh;
+        overflow-y: auto;
+    }
+
+    /* 长文本换行，避免撑破容器 */
+    .task-detail-text,
+    .announcement-content,
+    .member-desc,
+    .product-desc,
+    .admin-content {
+        word-break: break-word;
+        overflow-wrap: anywhere;
+    }
+}
+
+@media (max-width: 480px) {
+    .admin-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .hero-quote {
+        padding: 36px 18px 64px;
+    }
+
+    .hero-quote .quote-text {
+        font-size: 24px;
+    }
+
+    .admin-header {
+        padding: 14px;
+    }
+}

@@ -35,7 +35,7 @@ const APPEAL_EMAIL = '1968550750@qq.com';
 let kv = null;
 const KV_KEY = 'stc:database';
 const KV_ENABLED = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
-const KV_READ_TTL = 1500; // 从 KV 刷新数据的间隔（毫秒），避免每个请求都读 KV
+const KV_READ_TTL = 3000; // 从 KV 刷新数据的间隔（毫秒），避免每个请求都读 KV
 if (KV_ENABLED) {
     try {
         // 优先 @upstash/redis（@vercel/kv 的底层，已随依赖安装）。
@@ -281,6 +281,15 @@ class SimpleJSONDB {
         this._loadFailed = false;      // 解密失败保护：禁止覆写数据库文件
         this._needsUpgrade = false;    // 本地文件为历史明文，待迁移为密文
         this._kvFailed = false;        // KV 解密失败保护：禁止覆盖 KV 密文
+        // 数据一致性：记录本实例已修改的顶层集合（脏集合）。
+        // Serverless 多实例下，若直接用陈旧内存整库回写 KV，会把其他实例刚做的修改
+        // （账号封禁/解封、公告发布等）覆盖回旧值，表现为"过一会自动失效/消失"。
+        // 因此写入 KV 前先拉取远端最新数据打底，仅用本地脏集合覆盖。
+        this._dirtyKeys = new Set();
+        this._lastWriteAt = 0;
+        this._lastKvMergeAt = 0;
+        this._kvMergeInFlight = null;
+        this._kvFreshInFlight = null;
 
         this._loadFileSync();
         // 历史明文 → 自动迁移为加密存储（在具备密钥且加载成功时执行）
@@ -316,9 +325,8 @@ class SimpleJSONDB {
                 kvData = kvRaw;
             }
             if (kvData && typeof kvData === 'object') {
-                // KV 数据优先，合并默认值
-                this._data = kvData;
-                this._ensureDefaults();
+                // KV 数据优先，合并默认值（保留本地尚未落库的脏集合）
+                this._applyRemoteData(kvData);
                 this._kvLoaded = true;
                 console.log(`[KV] 数据已从 Vercel KV 加载（users=${(kvData.users || []).length}, tasks=${(kvData.tasks || []).length}）`);
                 // 同步到本地文件（仅作缓存，不回写 KV）
@@ -339,15 +347,52 @@ class SimpleJSONDB {
         }
     }
 
+    // 写入 KV 前的一致性合并：拉取远端最新数据作为基底，仅用本地"脏集合"覆盖。
+    // 这样即使本实例内存较旧，也不会覆盖其他实例对其它集合的修改。
+    async _mergeRemoteBeforeSave() {
+        if (!this._kvEnabled || this._kvFailed) return;
+        const now = Date.now();
+        // 节流：同一批修改只合并一次，避免高频写（如访问日志）反复拉取 KV
+        if (now - this._lastKvMergeAt < 400) return;
+        if (this._kvMergeInFlight) { await this._kvMergeInFlight; return; }
+        this._lastKvMergeAt = now;
+        this._kvMergeInFlight = (async () => {
+            try {
+                const kvRaw = await kv.get(KV_KEY);
+                let remote = null;
+                if (typeof kvRaw === 'string') {
+                    const result = dbEnc.deserializeDbText(kvRaw);
+                    if (result) remote = result.data;
+                } else if (kvRaw && typeof kvRaw === 'object') {
+                    remote = kvRaw; // 历史明文对象兼容
+                }
+                if (!remote || typeof remote !== 'object' || !this._data || typeof this._data !== 'object') return;
+                for (const key of Object.keys(remote)) {
+                    if (this._dirtyKeys.has(key)) continue; // 本地脏集合以本地为准
+                    this._data[key] = remote[key];
+                }
+                this._ensureDefaults();
+            } catch (e) {
+                console.warn('[KV] 写入前合并远端数据失败，按本地数据写入:', e.message);
+            } finally {
+                this._kvMergeInFlight = null;
+            }
+        })();
+        await this._kvMergeInFlight;
+    }
+
     async _saveKv() {
         if (!this._kvEnabled || this._kvFailed) return;
         try {
+            await this._mergeRemoteBeforeSave();
             await kv.set(KV_KEY, dbEnc.serializeDb(this._data));
+            this._dirtyKeys.clear();
         } catch (e) {
             console.warn('[KV] 写入 KV 失败:', e.message);
             // 失败重试一次（KV 网络抖动兜底）
             try {
                 await kv.set(KV_KEY, dbEnc.serializeDb(this._data));
+                this._dirtyKeys.clear();
             } catch (e2) {
                 console.error('[KV] 写入 KV 再次失败:', e2.message);
             }
@@ -423,64 +468,67 @@ class SimpleJSONDB {
         this._scheduleKvSave();
     }
 
-    _onMutate() {
+    // rootKey：当前修改所属的顶层集合名（如 users / tasks / announcements），
+    // 用于写入 KV 时识别"哪些集合是本实例改过的"，从而只覆盖这些集合。
+    _onMutate(rootKey) {
+        if (rootKey) this._dirtyKeys.add(rootKey);
         this._saveFile();
     }
 
-    _wrapArray(arr) {
+    _wrapArray(arr, rootKey) {
         const self = this;
         return new Proxy(arr, {
             get(target, prop) {
                 if (ARRAY_MUTATING_METHODS.includes(prop)) {
                     return function (...args) {
                         const result = target[prop].apply(target, args);
-                        self._onMutate();
+                        self._onMutate(rootKey);
                         return result;
                     };
                 }
                 const val = target[prop];
                 if (Array.isArray(val)) {
-                    return self._wrapArray(val);
+                    return self._wrapArray(val, rootKey);
                 }
                 if (val && typeof val === 'object') {
-                    return self._wrapObject(val);
+                    return self._wrapObject(val, rootKey);
                 }
                 return val;
             },
             set(target, prop, value) {
                 target[prop] = value;
-                self._onMutate();
+                self._onMutate(rootKey);
                 return true;
             },
             deleteProperty(target, prop) {
                 delete target[prop];
-                self._onMutate();
+                self._onMutate(rootKey);
                 return true;
             }
         });
     }
 
-    _wrapObject(obj) {
+    _wrapObject(obj, rootKey) {
         const self = this;
         return new Proxy(obj, {
             get(target, prop) {
                 const val = target[prop];
                 if (Array.isArray(val)) {
-                    return self._wrapArray(val);
+                    return self._wrapArray(val, rootKey);
                 }
                 if (val && typeof val === 'object' && val.constructor === Object) {
-                    return self._wrapObject(val);
+                    return self._wrapObject(val, rootKey);
                 }
                 return val;
             },
             set(target, prop, val) {
                 target[prop] = val;
-                self._onMutate();
+                self._onMutate(rootKey);
                 return true;
             },
             deleteProperty(target, prop) {
                 delete target[prop];
-                self._onMutate();
+                self._onMutate(rootKey);
                 return true;
             }
         });
@@ -490,26 +538,80 @@ class SimpleJSONDB {
         const self = this;
         return new Proxy(this._data, {
             get(target, prop) {
+                if (typeof prop === 'symbol') return target[prop];
                 const val = target[prop];
                 if (Array.isArray(val)) {
-                    return self._wrapArray(val);
+                    return self._wrapArray(val, String(prop));
                 }
                 if (val && typeof val === 'object' && val.constructor === Object) {
-                    return self._wrapObject(val);
+                    return self._wrapObject(val, String(prop));
                 }
                 return val;
             },
             set(target, prop, val) {
                 target[prop] = val;
-                self._onMutate();
+                self._onMutate(typeof prop === 'symbol' ? '' : String(prop));
                 return true;
             },
             deleteProperty(target, prop) {
                 delete target[prop];
-                self._onMutate();
+                self._onMutate(typeof prop === 'symbol' ? '' : String(prop));
                 return true;
             }
         });
+    }
+
+    // 将远端数据合并进本地：保留本地"脏集合"（本实例刚改过的），其余以远端为准。
+    // 相比整体替换 this._data，可避免把本地未落库的修改冲掉。
+    _applyRemoteData(remote) {
+        if (!remote || typeof remote !== 'object') return;
+        if (!this._data || typeof this._data !== 'object') {
+            this._data = remote;
+        } else {
+            for (const key of Object.keys(remote)) {
+                if (this._dirtyKeys.has(key)) continue;
+                this._data[key] = remote[key];
+            }
+        }
+        this._ensureDefaults();
+        // 数据被远端合并后通知外部同步内存索引（如封禁名单 Set）
+        if (typeof this._onDataApplied === 'function') {
+            try { this._onDataApplied(); } catch (e) { /* 忽略 */ }
+        }
+    }
+
+    // 强制从 KV 拉取最新数据（写操作前调用）。
+    // 保证"读-改-写"基于最新状态，避免用陈旧内存覆盖其他实例刚写入的封禁/公告等。
+    async readFresh() {
+        if (!this._kvEnabled || this._kvFailed) return this;
+        if (this._kvFreshInFlight) { await this._kvFreshInFlight; return this; }
+        this._kvFreshInFlight = (async () => {
+            try {
+                const kvRaw = await kv.get(KV_KEY);
+                let kvData = null;
+                if (typeof kvRaw === 'string') {
+                    const result = dbEnc.deserializeDbText(kvRaw);
+                    if (result) kvData = result.data;
+                } else if (kvRaw && typeof kvRaw === 'object') {
+                    kvData = kvRaw; // 历史明文对象兼容
+                }
+                if (kvData && typeof kvData === 'object') {
+                    // 写前以远端为唯一基准：清空本地脏标记后整体合并
+                    this._dirtyKeys.clear();
+                    this._applyRemoteData(kvData);
+                    this._writeFileSync();
+                    this._kvLoaded = true;
+                }
+            } catch (e) {
+                console.warn('[KV] 写前刷新失败，沿用当前数据:', e.message);
+            }
+            const now = Date.now();
+            this._kvReadAt = now;
+            this._lastKvMergeAt = now; // 抑制紧随其后的重复合并
+            this._kvFreshInFlight = null;
+        })();
+        await this._kvFreshInFlight;
+        return this;
     }
 
     async read() {
@@ -520,7 +622,7 @@ class SimpleJSONDB {
             if (!this._kvLoaded) {
                 await this._loadKv();
                 this._kvReadAt = now;
-            } else if (now - this._kvReadAt > KV_READ_TTL) {
+            } else if (now - this._kvReadAt > KV_READ_TTL && now - this._lastWriteAt > KV_READ_TTL) {
                 // 刷新去重：多个并发请求共享同一次刷新
                 if (!this._kvReadInFlight) {
                     this._kvReadInFlight = (async () => {
@@ -535,8 +637,7 @@ class SimpleJSONDB {
                                 kvData = kvRaw; // 历史明文对象兼容
                             }
                             if (kvData && typeof kvData === 'object') {
-                                this._data = kvData;
-                                this._ensureDefaults();
+                                this._applyRemoteData(kvData);
                                 this._writeFileSync();
                             }
                         } catch (e) {
@@ -572,6 +673,7 @@ class SimpleJSONDB {
     }
 
     async write() {
+        this._lastWriteAt = Date.now();
         this._saveFile();
         // 关键：等待 KV 保存完成，确保响应返回前数据已落库
         // （Serverless 实例可能在响应后立即冻结，不能依赖后台定时器）
@@ -587,6 +689,17 @@ const db = new SimpleJSONDB(dbPath, defaults);
 
 let bannedIPs = new Set();
 let bannedDevices = new Set();
+
+// KV 数据刷新/合并后同步内存封禁索引：
+// 多实例场景下，别的实例解封/封禁后，本实例的兜底 Set 也要立刻保持一致。
+db._onDataApplied = () => {
+    try {
+        const ips = db.data.banned_ips;
+        bannedIPs = new Set(Array.isArray(ips) ? ips : []);
+        const fps = db.data.banned_devices;
+        bannedDevices = new Set(Array.isArray(fps) ? fps : []);
+    } catch (e) { /* 忽略 */ }
+};
 
 // ==================== KV 存储的 CSRF + Rate Limit + Nonce 防护 ====================
 const CSRF_TOKEN_TTL = 15 * 60 * 1000; // 15分钟过期（防重放，原1小时太长）
@@ -807,15 +920,21 @@ function requireRateLimit(type) {
 }
 
 // ---------- CSRF Token（KV 存储 + 短过期 + 单次使用防重放） ----------
-function generateCSRFToken(sessionId) {
+async function generateCSRFToken(sessionId) {
     const token = crypto.randomBytes(32).toString('hex');
-    const key = `csrf:${sessionId}`;
-    _kvSet(key, { token, expires: Date.now() + CSRF_TOKEN_TTL, used: false }, CSRF_TOKEN_TTL).catch(() => {});
+    // 每个 token 独立存储：管理端同一会话可能有多个写请求并发获取 token，
+    // 若共用同一个 key 会互相覆盖，导致先发起的请求校验失败（随机"操作失败"）。
+    const key = `csrf:${sessionId}:${token}`;
+    // 必须等待写入完成再返回：Serverless 下响应返回后实例可能立即冻结，
+    // 未 await 的 KV 写入会被中断，导致随后的写请求校验失败（表现为"操作失败"）。
+    await _kvSet(key, { token, expires: Date.now() + CSRF_TOKEN_TTL, used: false }, CSRF_TOKEN_TTL).catch(() => {});
     return token;
 }
 
 async function validateCSRFToken(sessionId, token) {
-    const key = `csrf:${sessionId}`;
+    if (!token || typeof token !== 'string') return false;
+    // key 与生成时保持一致（每个 token 独立 key，互不影响）
+    const key = `csrf:${sessionId}:${token}`;
     const record = await _kvGet(key);
     if (!record) return false;
     if (Date.now() > record.expires) {
@@ -865,6 +984,13 @@ function requireCSRF(req, res, next) {
         const ok = await validateCSRFToken(sid, token);
         if (!ok) {
             return res.status(403).json({ success: false, message: 'CSRF Token无效或已过期，请刷新页面重试' });
+        }
+        // 写操作前强制拉取最新数据：保证"读-改-写"基于最新状态，
+        // 避免本实例的陈旧内存把其他实例刚写入的封禁/公告等覆盖回旧值。
+        try {
+            await db.readFresh();
+        } catch (e) {
+            // 刷新失败不阻断请求，沿用当前数据
         }
         next();
     })().catch(err => {
@@ -1081,6 +1207,51 @@ const upload = multer({
     },
     fileFilter: fileFilter
 });
+
+// ---------- 任务附件持久化 ----------
+// Serverless（Vercel）环境下上传目录 /tmp/uploads 随实例回收而丢失，
+// 导致任务附件"发布时能下、过一段时间 404"。因此上传后同步备份到 KV（小文件），
+// 下载时若本地文件已不存在则从 KV 兜底取回。
+const TASK_FILE_KV_PREFIX = 'stc:taskfile:';
+const TASK_FILE_KV_MAX = 6 * 1024 * 1024; // 超过 6MB 不写入 KV（避免超出 KV 单值限制）
+
+async function backupTaskFileToKv(taskId, filePath, fileName) {
+    if (!KV_ENABLED || !kv) return false;
+    try {
+        if (!filePath || !fs.existsSync(filePath)) return false;
+        const buf = fs.readFileSync(filePath);
+        if (buf.length > TASK_FILE_KV_MAX) {
+            console.warn(`[TASK-FILE] 附件超过 ${Math.round(TASK_FILE_KV_MAX / 1024 / 1024)}MB，未备份到 KV: ${fileName}`);
+            return false;
+        }
+        await kv.set(TASK_FILE_KV_PREFIX + taskId, {
+            name: fileName || 'download',
+            size: buf.length,
+            data: buf.toString('base64')
+        });
+        return true;
+    } catch (e) {
+        console.warn('[TASK-FILE] 附件备份到 KV 失败:', e.message);
+        return false;
+    }
+}
+
+async function loadTaskFileFromKv(taskId) {
+    if (!KV_ENABLED || !kv) return null;
+    try {
+        const rec = await kv.get(TASK_FILE_KV_PREFIX + taskId);
+        if (!rec || typeof rec !== 'object' || !rec.data) return null;
+        return { buffer: Buffer.from(String(rec.data), 'base64'), name: rec.name || 'download' };
+    } catch (e) {
+        console.warn('[TASK-FILE] 从 KV 读取附件失败:', e.message);
+        return null;
+    }
+}
+
+async function deleteTaskFileFromKv(taskId) {
+    if (!KV_ENABLED || !kv) return;
+    try { await kv.del(TASK_FILE_KV_PREFIX + taskId); } catch (e) { /* 忽略 */ }
+}
 
 app.set('trust proxy', 1);
 
@@ -2409,7 +2580,7 @@ app.post('/api/logout', requireCSRF, (req, res) => {
     });
 });
 
-app.get('/api/csrf-token', (req, res) => {
+app.get('/api/csrf-token', async (req, res) => {
     // 强制创建/保持 session：saveUninitialized:false 下仅 touch 不会下发 cookie，
     // 必须给 session 赋值才会触发 Set-Cookie，否则 CSRF token 绑定的 sessionID
     // 在两次请求间不一致，导致校验永远失败。
@@ -2418,7 +2589,7 @@ app.get('/api/csrf-token', (req, res) => {
     } catch (e) {
         // 忽略失败
     }
-    const token = generateCSRFToken(req.sessionID);
+    const token = await generateCSRFToken(req.sessionID);
     res.json({ success: true, csrfToken: token });
 });
 
@@ -2569,7 +2740,9 @@ function toPublicAnnouncement(a) {
 }
 
 // 主页公告列表（公开，无需登录）
-app.get('/api/announcements', (req, res) => {
+app.get('/api/announcements', async (req, res) => {
+    // 多实例部署下，公告刚发布时其他实例内存可能较旧：读取前强制刷新一次
+    try { await db.readFresh(); } catch (e) { /* 忽略，沿用当前数据 */ }
     const list = Array.isArray(db.data.announcements) ? db.data.announcements : [];
     const data = list.slice(-ANNOUNCEMENT_MAX_LIST).reverse()
         .map(toPublicAnnouncement).filter(Boolean);
@@ -3463,7 +3636,13 @@ app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), upload.single('f
     
     db.data.tasks.push(task);
     await db.write();
-    
+
+    // Serverless 下上传目录为临时目录，实例回收后文件即丢失：
+    // 上传成功后同步把附件备份到 KV，供后续下载兜底。
+    if (req.file) {
+        await backupTaskFileToKv(task.id, req.file.path, task.file_name);
+    }
+
     res.json({ success: true, message: '任务发布成功', data: task });
 });
 
@@ -3548,7 +3727,10 @@ app.delete('/api/tasks/:id', requireLogin, requireRateLimit('tasks'), requireCSR
     
     db.data.tasks = db.data.tasks.filter(t => t.id !== parseInt(req.params.id));
     await db.write();
-    
+
+    // 同步清理 KV 中备份的附件
+    await deleteTaskFileFromKv(task.id);
+
     res.json({ success: true, message: '任务已删除' });
 });
 
@@ -3557,16 +3739,28 @@ app.get('/api/tasks/:id/download', async (req, res) => {
     if (!task) {
         return res.status(404).json({ success: false, message: '任务不存在' });
     }
-    
-    if (!task.file_path || !fs.existsSync(task.file_path)) {
-        return res.status(404).json({ success: false, message: '文件不存在' });
+    if (!task.file_path && !task.file_name) {
+        return res.status(404).json({ success: false, message: '该任务没有附件' });
     }
-    
-    if (!isSafePath(task.file_path, uploadsDir)) {
-        return res.status(403).json({ success: false, message: '非法文件路径' });
+
+    // 1) 本地文件存在：直接下发
+    if (task.file_path && fs.existsSync(task.file_path)) {
+        if (!isSafePath(task.file_path, uploadsDir)) {
+            return res.status(403).json({ success: false, message: '非法文件路径' });
+        }
+        return res.download(task.file_path, task.file_name || 'download');
     }
-    
-    res.download(task.file_path, task.file_name || 'download');
+
+    // 2) 本地文件已被回收（Serverless 临时目录）：从 KV 兜底取回
+    const kvFile = await loadTaskFileFromKv(task.id);
+    if (kvFile) {
+        const filename = kvFile.name || 'download';
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        return res.send(kvFile.buffer);
+    }
+
+    return res.status(404).json({ success: false, message: '文件已丢失，请联系发布者重新上传' });
 });
 
 app.post('/api/invite/request', requireRateLimit('invite'), requireCSRF, requireCaptcha, async (req, res) => {
@@ -4316,6 +4510,8 @@ function canModifyUser(currentUser, targetUser, action) {
 }
 
 app.get('/api/members', requireAdmin, async (req, res) => {
+    // 封禁状态需要即时准确：读取前强制刷新一次（避免多实例下显示旧状态）
+    try { await db.readFresh(); } catch (e) { /* 忽略 */ }
     const members = db.data.users.map(u => ({
         id: u.id,
         username: u.username,
@@ -5187,11 +5383,14 @@ app.post('/api/ban-ip', requireSuperAdmin, requireRateLimit('admin'), requireCSR
 });
 
 app.get('/api/ban-ips', requireSuperAdmin, async (req, res) => {
+    // 解封/封禁后需要立即看到最新列表：读取前强制刷新
+    try { await db.readFresh(); } catch (e) { /* 忽略 */ }
     res.json({ success: true, data: db.data.banned_ip_info || [] });
 });
 
 // 已封禁设备列表（指纹信息，用于管理端展示/解封）
 app.get('/api/ban-devices', requireSuperAdmin, async (req, res) => {
+    try { await db.readFresh(); } catch (e) { /* 忽略 */ }
     res.json({ success: true, data: db.data.banned_device_info || [] });
 });
 
@@ -5262,6 +5461,8 @@ app.post('/api/unban-ip', requireSuperAdmin, requireRateLimit('admin'), requireC
 // IP → 页面 访问记录（管理面板展示）
 app.get('/api/access-logs', requireAdmin, async (req, res) => {
     try {
+        // 解封/封禁后刷新页面需要立刻反映最新状态：强制拉取最新数据
+        try { await db.readFresh(); } catch (e) { /* 忽略 */ }
         const limit = Math.min(parseInt(req.query.limit) || 100, 500);
         const logs = Array.isArray(db.data.access_logs) ? db.data.access_logs.slice(0, limit) : [];
         const banned = Array.isArray(db.data.banned_ips) ? db.data.banned_ips : [];

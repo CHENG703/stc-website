@@ -252,6 +252,23 @@
         .back-link:hover {
             color: #c9c9d1;
         }
+        /* 移动端适配 */
+        @media (max-width: 600px) {
+            .container {
+                padding: 26px 18px;
+                border-radius: 16px;
+            }
+            .version-select {
+                flex-direction: column;
+                gap: 10px;
+            }
+            .captcha-img {
+                width: 100px;
+            }
+            .submit-btn {
+                width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
