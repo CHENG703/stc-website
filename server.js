@@ -2150,6 +2150,38 @@ async function initDatabase() {
     if (!Array.isArray(db.data.banned_devices)) db.data.banned_devices = [];
     if (!Array.isArray(db.data.banned_device_info)) db.data.banned_device_info = [];
     if (!Array.isArray(db.data.announcements)) db.data.announcements = [];
+    // 历史公告可能缺 id（早期版本 / 手工写入）：JSON 序列化会直接丢掉值为 undefined 的字段，
+    // 管理端列表按钮就渲染成 onclick="deleteAnnouncement(undefined)"，
+    // 删除请求打到 /api/announcements/undefined 必然 404 —— 表现为"公告无法删除"。
+    // 这里幂等补全唯一数字 id（优先取 created_at，其次按顺序倒推）。
+    try {
+        const seenIds = new Set();
+        const keptAnnouncements = [];
+        let idRepaired = false;
+        db.data.announcements.forEach((a, i) => {
+            if (!a || typeof a !== 'object') { idRepaired = true; return; }
+            let id = Number(a.id);
+            if (!Number.isFinite(id) || id <= 0 || seenIds.has(id)) {
+                let base = Date.parse(a.created_at);
+                if (!Number.isFinite(base) || base <= 0) {
+                    base = Date.now() - (db.data.announcements.length - i) * 1000;
+                }
+                id = Math.floor(base);
+                while (seenIds.has(id)) id += 1;
+                a.id = id;
+                idRepaired = true;
+            }
+            seenIds.add(id);
+            keptAnnouncements.push(a);
+        });
+        if (idRepaired) {
+            db.data.announcements = keptAnnouncements;
+            console.log('[DB] 已修复公告缺失/重复的 id，共', keptAnnouncements.length, '条');
+            await db.write();
+        }
+    } catch (e) {
+        console.warn('[DB] 公告 id 修复失败:', e.message);
+    }
     if (!Array.isArray(db.data.ai_conversations)) db.data.ai_conversations = [];
     // 邀请码集合统一：历史上存在两套集合——invite_codes 是注册/校验真正使用的集合，
     // inviteCodes 仅被旧版管理面板写入且格式不一（纯字符串或带 is_used 的对象）。
@@ -3073,14 +3105,39 @@ app.post('/api/announcements', requireAdmin, requireCSRF, requireRateLimit('admi
 });
 
 // 管理员删除公告
-app.delete('/api/announcements/:id', requireAdmin, requireCSRF, async (req, res) => {
-    const id = Number(req.params.id);
-    const list = Array.isArray(db.data.announcements) ? db.data.announcements : [];
-    const idx = list.findIndex(a => a && a.id === id);
-    if (idx === -1) return res.status(404).json({ success: false, message: '公告不存在或已删除' });
-    list.splice(idx, 1);
-    await db.write();
-    res.json({ success: true });
+app.delete('/api/announcements/:id', requireAdmin, requireCSRF, requireRateLimit('admin'), async (req, res) => {
+    const rawId = String((req.params && req.params.id) || '').trim();
+    if (!rawId || rawId === 'undefined' || rawId === 'null') {
+        return res.status(400).json({
+            success: false,
+            message: '该公告缺少 ID（历史数据），请刷新公告列表后重试'
+        });
+    }
+    const idNum = Number(rawId);
+    try {
+        const list = Array.isArray(db.data.announcements) ? db.data.announcements : [];
+        if (!list.length) {
+            return res.status(404).json({ success: false, message: '当前没有公告' });
+        }
+        // id 兼容数字与字符串两种历史写法
+        const idx = list.findIndex(a => a && (
+            (Number.isFinite(idNum) && Number(a.id) === idNum) || String(a.id) === rawId
+        ));
+        if (idx === -1) {
+            return res.status(404).json({ success: false, message: '公告不存在或已删除' });
+        }
+        list.splice(idx, 1);
+        // db.write() 在持久化失败时会抛错，这里必须捕获并如实返回失败，
+        // 否则会出现"提示删除成功、刷新后公告又回来"的假成功。
+        await db.write();
+        res.json({ success: true, remaining: list.length });
+    } catch (e) {
+        console.error('[ANNOUNCEMENT] 删除失败:', e);
+        res.status(500).json({
+            success: false,
+            message: '删除失败，数据未能写入存储：' + (e && e.message ? e.message : String(e))
+        });
+    }
 });
 
 // ==================== AI 对话（SenseNova） ====================

@@ -414,6 +414,7 @@ const CMDLog = {
                 this.log('date         - 当前时间', 'system');
                 this.log('db           - 数据库持久化状态（排查"改了又变回来"）', 'system');
                 this.log('deltask      - 删除任务自检 (deltask <任务ID>，走与页面相同的鉴权链路)', 'system');
+                this.log('delannounce  - 删除公告自检 (delannounce <公告ID>，走与页面相同的鉴权链路)', 'system');
                 this.log('userinfo     - 查看用户信息 (userinfo <用户名或ID>)', 'system');
                 this.log('createuser   - 创建用户 (createuser <用户名> <邮箱> <密码> [admin])', 'system');
                 this.log('deleteuser   - 删除用户 (deleteuser <用户名或ID>)', 'system');
@@ -548,6 +549,57 @@ const CMDLog = {
                             this.log('   服务端 tasks 条数: ' + ((s.counts || {}).tasks), 'info');
                         } else {
                             this.log('   持久化状态查询失败: ' + ((ds && ds.message) || '未知错误'), 'error');
+                        }
+                    } catch (e) {
+                        this.log('自检异常: ' + String(e.message || e), 'error');
+                    }
+                })();
+                break;
+            }
+            case 'delannounce': {
+                // 删除公告自检：与页面上删除按钮完全相同的鉴权链路（CSRF + nonce + Bearer），
+                // 逐步打印 HTTP 状态与公告条数，用于区分"请求被挡住"与"删除没落库"。
+                const annId = String(args || '').trim();
+                if (!annId) { this.log('用法: delannounce <公告ID>（公告ID见公告管理表格的 ID 列）', 'error'); break; }
+                if (!confirm('将删除公告 #' + annId + '，确定继续？')) { this.log('已取消', 'system'); break; }
+                (async () => {
+                    const annListOnce = async (tag) => {
+                        const r = await fetch('/api/announcements?_t=' + Date.now(), { cache: 'no-store', credentials: 'include' });
+                        const j = await r.json().catch(() => ({}));
+                        const arr = j.data || [];
+                        const hit = arr.some(a => String(a && a.id) === annId);
+                        this.log(tag + '公告列表: 共 ' + arr.length + ' 条，含 #' + annId + ' = ' + (hit ? '是' : '否') + ' (HTTP ' + r.status + ')', 'info');
+                        return { n: arr.length, hit };
+                    };
+                    try {
+                        this.log('① 删除前读取公告列表...', 'warn');
+                        const b = await annListOnce('删除前');
+                        if (!b.hit) this.log('⚠ 删除前列表中就没有这条公告，请核对 ID 是否正确', 'warn');
+                        this.log('② 发送 DELETE /api/announcements/' + annId + ' ...', 'warn');
+                        let status = 0, body = '';
+                        try {
+                            const resp = await fetchWithAuth('/api/announcements/' + encodeURIComponent(annId), { method: 'DELETE' });
+                            status = resp.status;
+                            body = await resp.text();
+                        } catch (e) {
+                            if (e.message === 'PermissionDenied') this.log('✗ 请求被拒绝 403：CSRF/nonce 失效或权限不足（页面上的删除也会同样失败）', 'error');
+                            else if (e.message === 'Unauthorized') this.log('✗ 请求被拒绝 401：登录状态已失效，请重新登录', 'error');
+                            else this.log('✗ 请求异常: ' + e.message, 'error');
+                        }
+                        if (status) this.log('   HTTP ' + status + ' ' + String(body).slice(0, 300), status < 400 ? 'info' : 'error');
+                        this.log('③ 删除后重新读取公告列表...', 'warn');
+                        const a2 = await annListOnce('删除后');
+                        if (b.hit && !a2.hit) this.log('✓ 删除已生效（服务端与列表都不含该公告）', 'info');
+                        else if (b.hit && a2.hit) this.log('✗ 删除未生效：公告仍在（看第②步 HTTP 状态）', 'error');
+                        this.log('④ 查询持久化状态...', 'warn');
+                        const ds2 = await fetchWithAuth('/api/admin/db-status', { method: 'GET' }).then(r => r.json()).catch(() => null);
+                        if (ds2 && ds2.success) {
+                            const s2 = ds2.data || {};
+                            this.log('   最近 KV 写入成功: ' + (s2.kvLastSaveOkAt ? STCBeijing.datetimeStr(s2.kvLastSaveOkAt) : '从未成功')
+                                + (s2.kvLastWriteError ? '  ⚠ 错误: ' + s2.kvLastWriteError : ''), s2.kvLastWriteError ? 'error' : 'info');
+                            this.log('   服务端 announcements 条数: ' + ((s2.counts || {}).announcements), 'info');
+                        } else {
+                            this.log('   持久化状态查询失败: ' + ((ds2 && ds2.message) || '未知错误'), 'error');
                         }
                     } catch (e) {
                         this.log('自检异常: ' + String(e.message || e), 'error');
@@ -1216,7 +1268,9 @@ function jsStrForAttr(s) {
 let _adminCsrfCache = null;
 async function getCSRFTokenOnce() {
     try {
-        const resp = await fetch('/api/csrf-token', { credentials: 'include' });
+        // 必须绕开缓存：CSRF token 是一次性的，浏览器 / CDN 若复用了已用过的旧 token，
+        // 所有写请求（删除公告、删除任务等）都会统一 403，表现为"点了删除毫无反应"。
+        const resp = await fetch('/api/csrf-token?_t=' + Date.now(), { cache: 'no-store', credentials: 'include' });
         if (resp.ok) {
             const data = await resp.json();
             _adminCsrfCache = data.csrfToken;
@@ -1589,28 +1643,36 @@ async function loadAnnouncements() {
     const container = document.getElementById('announcements-table');
     if (!container) return;
     try {
-        const response = await fetchWithAuth('/api/announcements');
-        if (!response.ok) throw new Error('load failed');
+        // 带时间戳绕开浏览器 / CDN 缓存：否则"删除成功但列表还是旧的"会被误判为删除失败
+        const response = await fetchWithAuth('/api/announcements?_t=' + Date.now());
+        if (!response.ok) throw new Error('load failed (HTTP ' + response.status + ')');
         const result = await response.json();
         const announcements = result.data || [];
         if (announcements.length === 0) {
             container.innerHTML = '<p style="text-align:center;">暂无公告</p>';
             return;
         }
-        container.innerHTML = '<table class="admin-table"><thead><tr><th>标题</th><th>内容</th><th>发布人</th><th>发布时间</th><th>操作</th></tr></thead><tbody>' +
+        // 显示公告 ID：删除不生效时可直接在终端执行 delannounce <ID> 自检
+        container.innerHTML = '<table class="admin-table"><thead><tr><th>ID</th><th>标题</th><th>内容</th><th>发布人</th><th>发布时间</th><th>操作</th></tr></thead><tbody>' +
             announcements.map(a => {
+                const rawId = (a && a.id != null) ? String(a.id) : '';
+                const hasId = !!rawId && rawId !== 'undefined' && rawId !== 'null';
                 const content = escapeHtml(a.content || '').replace(/\n/g, '<br>');
-                return '<tr><td><b>' + escapeHtml(a.title || '') + '</b></td>' +
-                    '<td style="max-width:380px;">' + content + '</td>' +
+                const action = hasId
+                    ? '<button class="btn btn-sm" style="color:var(--error,#f85149);" onclick="deleteAnnouncement(\'' + jsStrForAttr(rawId) + '\')">删除</button>'
+                    : '<span style="color:var(--warning,#d29922);font-size:12px;" title="该公告在数据库中缺少 id 字段，服务端下次启动会自动补全">ID 缺失</span>';
+                return '<tr><td>' + escapeHtml(hasId ? rawId : '—') + '</td>' +
+                    '<td><b>' + escapeHtml(a.title || '') + '</b></td>' +
+                    '<td style="max-width:360px;">' + content + '</td>' +
                     '<td>' + escapeHtml(a.created_by || '管理员') + '</td>' +
                     '<td style="white-space:nowrap;">' + escapeHtml(a.created_at || '') + '</td>' +
-                    '<td><button class="btn btn-sm" style="color:#cf222e;" onclick="deleteAnnouncement(' + a.id + ')">删除</button></td></tr>';
+                    '<td>' + action + '</td></tr>';
             }).join('') +
             '</tbody></table>';
         CMDLog.log('公告列表已刷新，共 ' + announcements.length + ' 条', 'info');
     } catch (error) {
         console.error('Failed to load announcements:', error);
-        container.innerHTML = '<p style="text-align:center;color:red;">加载公告失败</p>';
+        container.innerHTML = '<p style="text-align:center;color:var(--error,#f85149);">加载公告失败</p>';
         CMDLog.log('公告列表加载失败: ' + error.message, 'error');
     }
 }
@@ -1647,20 +1709,38 @@ async function createAnnouncement() {
 
 // 删除公告（管理员）
 async function deleteAnnouncement(id) {
+    const rawId = (id == null) ? '' : String(id).trim();
+    if (!rawId || rawId === 'undefined' || rawId === 'null') {
+        alert('这条公告在数据库里缺少 ID，无法删除。请刷新页面后重试，若仍不行请把此提示告知开发者。');
+        CMDLog.log('公告删除中止：ID 无效 (' + rawId + ')', 'error');
+        return;
+    }
     if (!confirm('确定要删除这条公告吗？发布后用户将不再看到它。')) return;
     try {
-        const response = await fetchWithAuth('/api/announcements/' + id, { method: 'DELETE' });
+        const response = await fetchWithAuth('/api/announcements/' + encodeURIComponent(rawId), { method: 'DELETE' });
         if (response.ok) {
-            CMDLog.log('公告已删除 #' + id, 'info');
+            CMDLog.log('公告已删除 #' + rawId, 'info');
             loadAnnouncements();
         } else {
             const data = await response.json().catch(() => ({}));
-            alert(data.message || data.error || '删除失败');
-            CMDLog.log('公告删除失败: ' + (data.message || data.error || response.status), 'error');
+            const why = data.message || data.error || ('HTTP ' + response.status);
+            alert('删除失败：' + why);
+            CMDLog.log('公告删除失败: HTTP ' + response.status + ' ' + why, 'error');
         }
     } catch (error) {
-        console.error('Failed to delete announcement:', error);
-        CMDLog.log('公告删除失败: ' + error.message, 'error');
+        // fetchWithAuth 对 401/403 直接抛错：必须把原因显示出来，
+        // 否则页面上表现为"点了删除完全没反应"，无从定位。
+        const msg = String((error && error.message) || error);
+        let tip = msg;
+        if (msg.indexOf('PermissionDenied') >= 0) {
+            const detail = msg.replace('PermissionDenied', '').trim();
+            tip = '请求被拒绝（403）' + (detail ? '：' + detail : '') +
+                '。多为登录状态或 CSRF 校验失效，请刷新页面（必要时重新登录）后再试。';
+        } else if (msg === 'Unauthorized') {
+            tip = '登录状态已失效（401），请重新登录后再试。';
+        }
+        alert('删除失败：' + tip);
+        CMDLog.log('公告删除失败: ' + tip, 'error');
     }
 }
 
