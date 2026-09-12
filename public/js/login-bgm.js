@@ -1,12 +1,24 @@
 /**
  * 登录 / 注册页背景音乐（循环播放）
  *
- * 行为：
- * 1. 进入页面后尝试自动播放；被浏览器自动播放策略拦截时，挂一次性交互监听，
- *    用户第一次点击 / 按键 / 触摸时再开始播放（不静音强制播放是做不到的，这是浏览器限制）。
- * 2. 左下角悬浮按钮可随时静音 / 恢复，选择记在 localStorage，注册↔登录 之间保持一致。
- * 3. 注册 → 登录 跳转时用 sessionStorage 记住播放进度，续播而不是从头开始。
- * 4. 切到后台标签页暂停，回到页面自动续播（同样受自动播放策略约束）。
+ * 目标：让用户「不用点任何东西」就能听到音乐。
+ *
+ * 浏览器的自动播放策略决定了：**带声音的自动播放无法被网页强行绕过**
+ * （Chrome/Safari/Firefox 都要求「用户手势」或用户手动把本站加入声音白名单）。
+ * 唯一 100% 被允许的是「静音自动播放」。所以这里用三板斧：
+ *
+ * 1. 先尝试**带声音**自动播放。若浏览器此前已给过本站授权（用户点过页面、
+ *    或手动在站点设置里允许了声音），这里就直接成功，零交互出声。
+ * 2. 失败则立刻退回**静音自动播放**（这一步浏览器一定放行）——播放器已经在跑、
+ *    音频已经缓冲完；同时挂一次性交互监听，用户第一次**点击 / 触摸 / 敲键盘**
+ *    时同步取消静音并淡入。由于音频已就绪，出声是**瞬间**的，没有二次等待。
+ * 3. 连静音自动播放都被拒（如 iOS 低电量模式）时，才退化为「点击播放」。
+ *
+ * 另外：
+ * - 左下角悬浮按钮可随时静音 / 恢复，选择记在 localStorage，注册↔登录 保持一致，
+ *   且被用户手动静音过之后不再自动播放。
+ * - 注册 → 登录 跳转时用 sessionStorage 记住播放进度，续播而不是从头开始。
+ * - 切到后台标签页暂停，回到页面自动续播。
  *
  * 依赖：同源音频 /music/login-bgm.mp3（CSP media-src 'self' 已放行）。
  */
@@ -18,18 +30,21 @@
     var FADE_MS = 1400;         // 淡入 / 淡出时长
     var MUTE_KEY = 'stc_login_bgm_muted';
     var POS_KEY = 'stc_login_bgm_position';
-    var HINT_DELAY = 1500;      // 自动播放被拦截多久后给提示
-    var HINT_LIFE = 6000;       // 提示停留时长
+    var HINT_DELAY = 1600;      // 多久后给可见提示
+    var HINT_LIFE = 7000;       // 提示停留时长
+    var CLICK_GRACE = 600;      // 同一次点击里刚开过声音，就别再当作「暂停」处理
 
     var audio = null;
     var btn = null;
     var hintEl = null;
-    var muted = false;
+    var muted = false;          // 用户偏好：手动静音过
+    var pendingUnmute = false;  // 已在静音自动播放中，等一次交互取消静音
     var gestureArmed = false;
     var fadeTimer = null;
     var hintTimer = null;
     var lastPosSave = 0;
     var wasPlayingBeforeHide = false;
+    var justUnmutedAt = 0;
 
     var GESTURE_EVENTS = ['pointerdown', 'mousedown', 'touchstart', 'keydown', 'click'];
 
@@ -80,12 +95,18 @@
             '#login-bgm-toggle.is-playing::after{content:"";position:absolute;inset:-4px;border-radius:50%;',
             'border:2px solid rgba(102,126,234,.55);animation:loginBgmPulse 2.2s ease-out infinite;pointer-events:none;}',
             '@keyframes loginBgmPulse{0%{transform:scale(.9);opacity:.75;}100%{transform:scale(1.4);opacity:0;}}',
+            /* 静音待命状态：已自动播放但还没出声，用呼吸光环提醒「动一下就有声音」 */
+            '#login-bgm-toggle.is-waiting{border-color:rgba(102,126,234,.75);}',
+            '#login-bgm-toggle.is-waiting::after{content:"";position:absolute;inset:-3px;border-radius:50%;',
+            'border:2px solid rgba(102,126,234,.7);animation:loginBgmBreath 1.6s ease-in-out infinite;pointer-events:none;}',
+            '@keyframes loginBgmBreath{0%,100%{transform:scale(1);opacity:.35;}50%{transform:scale(1.12);opacity:1;}}',
             '#login-bgm-hint{position:fixed;left:68px;bottom:26px;z-index:9998;padding:6px 12px;border-radius:999px;',
             'background:rgba(15,17,24,.82);border:1px solid rgba(255,255,255,.18);color:#e6e8f0;font-size:12px;',
             'white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .4s ease;}',
             '#login-bgm-hint.show{opacity:1;}',
             '@media (prefers-reduced-motion: reduce){#login-bgm-toggle{transition:none;}',
-            '#login-bgm-toggle.is-playing::after{animation:none;opacity:.5;}}',
+            '#login-bgm-toggle.is-playing::after{animation:none;opacity:.5;}',
+            '#login-bgm-toggle.is-waiting::after{animation:none;opacity:.8;}}',
             '@media (max-width:480px){#login-bgm-toggle{width:38px;height:38px;font-size:16px;left:12px;bottom:12px;}',
             '#login-bgm-hint{left:58px;bottom:20px;font-size:11px;}}'
         ].join('');
@@ -101,13 +122,17 @@
 
         hintEl = document.createElement('span');
         hintEl.id = 'login-bgm-hint';
-        hintEl.textContent = '点击播放背景音乐';
         document.body.appendChild(hintEl);
 
         btn.addEventListener('click', function () {
+            // 这一次点击刚刚被用来「取消静音」，不要再当成暂停
+            if (Date.now() - justUnmutedAt < CLICK_GRACE) return;
             hideHint();
+            if (pendingUnmute) { unmute(); return; }
             if (audio.paused || audio.ended) {
-                play();
+                muted = false;
+                writePref(MUTE_KEY, '0');
+                playWithSound();
             } else {
                 muted = true;
                 writePref(MUTE_KEY, '1');
@@ -120,14 +145,20 @@
 
     function updateButton() {
         if (!btn) return;
-        var playing = !audio.paused && !audio.ended;
+        var playing = !audio.paused && !audio.ended && !pendingUnmute;
         btn.classList.toggle('is-playing', playing);
+        btn.classList.toggle('is-waiting', pendingUnmute);
         btn.textContent = playing ? '🔊' : '🔇';
-        btn.title = playing ? '点击暂停背景音乐' : '点击播放背景音乐';
+        if (pendingUnmute) {
+            btn.title = '点一下页面即可开启声音';
+        } else {
+            btn.title = playing ? '点击暂停背景音乐' : '点击播放背景音乐';
+        }
     }
 
-    function showHint() {
+    function showHint(text) {
         if (!hintEl) return;
+        if (text) hintEl.textContent = text;
         hintEl.classList.add('show');
         if (hintTimer) clearTimeout(hintTimer);
         hintTimer = setTimeout(hideHint, HINT_LIFE);
@@ -138,18 +169,13 @@
         if (hintEl) hintEl.classList.remove('show');
     }
 
-    // ---------- 播放控制 ----------
+    // ---------- 交互监听（用于取消静音 / 兜底播放） ----------
     function removeGestureHooks() {
         if (!gestureArmed) return;
         gestureArmed = false;
         GESTURE_EVENTS.forEach(function (ev) {
             document.removeEventListener(ev, onFirstGesture, true);
         });
-    }
-
-    function onFirstGesture() {
-        if (muted) { removeGestureHooks(); return; }
-        play();
     }
 
     function armGestureHooks() {
@@ -160,30 +186,106 @@
         });
     }
 
-    function play() {
-        hideHint();
+    // 必须在用户手势的同一个同步回调里改 muted / 调 play()，否则浏览器不认
+    function onFirstGesture() {
+        if (muted) { removeGestureHooks(); return; }
+        if (pendingUnmute) { unmute(); return; }
+        playWithSound();
+    }
+
+    // ---------- 播放控制 ----------
+    // 1) 带声音尝试自动播放
+    function playWithSound() {
+        audio.muted = false;
+        var p;
+        try {
+            p = audio.play();
+        } catch (e) {
+            startMutedAutoplay();
+            return;
+        }
+        if (p && typeof p.then === 'function') {
+            p.then(function () {
+                pendingUnmute = false;
+                removeGestureHooks();
+                hideHint();
+                fadeTo(TARGET_VOLUME);
+                updateButton();
+            }).catch(function () {
+                startMutedAutoplay();
+            });
+        } else {
+            pendingUnmute = false;
+            removeGestureHooks();
+            fadeTo(TARGET_VOLUME);
+            updateButton();
+        }
+    }
+
+    // 2) 静音自动播放：浏览器一定放行，先让音乐跑起来
+    function startMutedAutoplay() {
+        if (muted) { updateButton(); return; }
+        audio.muted = true;
+        audio.volume = 0;
         var p;
         try {
             p = audio.play();
         } catch (e) {
             armGestureHooks();
+            updateButton();
             return;
         }
+        var onOk = function () {
+            pendingUnmute = true;
+            armGestureHooks();
+            updateButton();
+            showHint('轻触或敲键盘即可开启声音');
+        };
+        var onFail = function () {
+            pendingUnmute = false;
+            armGestureHooks();
+            updateButton();
+            showHint('点击播放背景音乐');
+        };
         if (p && typeof p.then === 'function') {
-            p.then(function () {
-                removeGestureHooks();
+            p.then(onOk).catch(onFail);
+        } else {
+            onOk();
+        }
+    }
+
+    // 3) 用户交互后取消静音（在手势回调内同步执行）
+    function unmute() {
+        pendingUnmute = false;
+        justUnmutedAt = Date.now();
+        audio.muted = false;
+        audio.volume = 0;
+        removeGestureHooks();
+        hideHint();
+        if (audio.paused) {
+            var p;
+            try { p = audio.play(); } catch (e) { updateButton(); return; }
+            if (p && typeof p.then === 'function') {
+                p.then(function () { fadeTo(TARGET_VOLUME); updateButton(); })
+                 .catch(function () { armGestureHooks(); updateButton(); });
+            } else {
                 fadeTo(TARGET_VOLUME);
                 updateButton();
-            }).catch(function () {
-                // 自动播放被拦截：等用户第一次交互
-                updateButton();
-                armGestureHooks();
-                showHint();
-            });
+            }
         } else {
-            removeGestureHooks();
             fadeTo(TARGET_VOLUME);
             updateButton();
+        }
+    }
+
+    function resumePlayback() {
+        if (pendingUnmute) {
+            // 仍是静音待命状态，安静地续播即可
+            var p = audio.play();
+            if (p && typeof p.catch === 'function') p.catch(function () {});
+            updateButton();
+        } else {
+            playWithSound();
         }
     }
 
@@ -223,6 +325,7 @@
         audio.addEventListener('error', function () {
             // 音频加载失败（缺失 / 被拦截）时不再反复提示
             if (btn) btn.title = '背景音乐加载失败';
+            pendingUnmute = false;
             hideHint();
         });
     }
@@ -237,7 +340,7 @@
                 }
             } else if (wasPlayingBeforeHide && !muted) {
                 wasPlayingBeforeHide = false;
-                play();
+                resumePlayback();
             }
         });
         window.addEventListener('pagehide', savePosition);
@@ -247,8 +350,7 @@
     function boot() {
         if (document.getElementById('login-bgm-audio')) return;
 
-        var pref = readPref(MUTE_KEY);
-        muted = pref === '1';
+        muted = readPref(MUTE_KEY) === '1';
 
         injectStyle();
 
@@ -269,13 +371,20 @@
         updateButton();
 
         if (muted) {
+            // 用户明确关过音乐：不自动播，也不打扰
             hideHint();
             return;
         }
-        play();
-        // 若一直没能播放，给一次可见提示（避免用户以为坏了）
+
+        playWithSound();
+
         setTimeout(function () {
-            if (audio.paused && !muted) showHint();
+            if (muted) return;
+            if (pendingUnmute) {
+                showHint('轻触或敲键盘即可开启声音');
+            } else if (audio.paused) {
+                showHint('点击播放背景音乐');
+            }
         }, HINT_DELAY);
     }
 
