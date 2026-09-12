@@ -1488,7 +1488,7 @@ async function loadTasks() {
     const container = document.getElementById('tasks-table');
     if (!container) return;
     try {
-        const response = await fetchWithAuth('/api/tasks');
+        const response = await fetchWithAuth('/api/tasks?_t=' + Date.now(), { cache: 'no-store' });
         const result = await response.json();
         const tasks = result.data || [];
         if (tasks.length === 0) {

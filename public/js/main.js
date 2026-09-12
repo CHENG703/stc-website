@@ -482,7 +482,9 @@ async function loadTasks() {
     if (!listContainer) return;
 
     try {
-        const response = await fetch('/api/tasks');
+        // 加时间戳 + no-store：避免浏览器/CDN 复用旧的任务列表缓存，
+        // 否则"删除任务成功 → 刷新又出现"其实是读到了缓存的旧响应。
+        const response = await fetch('/api/tasks?_t=' + Date.now(), { cache: 'no-store' });
         if (response.ok) {
             const result = await response.json();
             const tasks = result.data || [];
@@ -662,8 +664,13 @@ async function deleteTask(taskId) {
             loadTasks();
         }
     } catch (error) {
-        if (error.message !== 'AccessDenied') {
-            showMessage('删除失败，请重试', 'error');
+        // fetchWithAuth 对 401/403 直接抛错（不返回 response），这里要给出可诊断的提示
+        if (error.message === 'Unauthorized') {
+            showMessage('登录已过期，请重新登录后再删除', 'error');
+        } else if (error.message === 'PermissionDenied') {
+            showMessage('删除失败：权限不足（仅管理员可删除任务）或登录状态已失效', 'error');
+        } else if (error.message !== 'AccessDenied') {
+            showMessage('删除失败：' + (error.message || '请重试'), 'error');
         }
     }
 }
