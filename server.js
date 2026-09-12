@@ -491,6 +491,37 @@ class SimpleJSONDB {
         this._ensureDefaults();
     }
 
+    // 写盘前合并磁盘上的最新内容（非 KV 模式）。
+    // 若数据库文件已被其它实例/进程改过，直接把陈旧内存整库写回会抹掉别人的删除/修改，
+    // 表现为"删掉的任务刷新后又回来"。这里同步合并一次，并保留本实例尚未落库的脏集合。
+    _refreshFromDiskSync() {
+        if (this._kvEnabled || this._loadFailed) return;
+        try {
+            if (!fs.existsSync(this.filePath)) return;
+            const stats = fs.statSync(this.filePath);
+            if (!this._lastModified || stats.mtimeMs <= this._lastModified) return; // 磁盘未变化
+            const rawText = fs.readFileSync(this.filePath, 'utf-8');
+            const result = dbEnc.deserializeDbText(rawText);
+            if (!result || !result.data || typeof result.data !== 'object') return;
+            if (!this._data || typeof this._data !== 'object') {
+                this._data = result.data;
+                this._ensureDefaults();
+                this._lastModified = stats.mtimeMs;
+                return;
+            }
+            const dirty = {};
+            for (const key of this._dirtyKeys) {
+                if (Object.prototype.hasOwnProperty.call(this._data, key)) dirty[key] = this._data[key];
+            }
+            this._data = result.data;
+            for (const key of Object.keys(dirty)) this._data[key] = dirty[key];
+            this._ensureDefaults();
+            this._lastModified = stats.mtimeMs;
+        } catch (e) {
+            console.warn('[DB] 写前合并磁盘数据失败:', e.message);
+        }
+    }
+
     _ensureDefaults() {
         for (const key of Object.keys(this._defaults)) {
             if (this._data[key] === undefined) {
@@ -506,11 +537,17 @@ class SimpleJSONDB {
             this._diskWriteError = new Error('本地数据库解密失败（db.key / DB_KEY 不匹配），已禁止写入以保护数据');
             return;
         }
+        // 非 KV 模式：先合并磁盘最新内容，避免用陈旧内存覆盖别人的写入
+        this._refreshFromDiskSync();
         try {
             fs.writeFileSync(this.filePath, dbEnc.serializeDb(this._data));
             const stats = fs.statSync(this.filePath);
             this._lastModified = stats.mtimeMs;
             this._diskWriteError = null;
+            // 非 KV 模式：本地文件就是唯一事实源，落盘成功即视为"已同步"。
+            // 否则脏集合会永久残留，导致后续合并时始终拒绝采用磁盘上的新数据
+            // （表现为别的实例删掉的任务被本实例的陈旧内存复活）。
+            if (!this._kvEnabled) this._dirtyKeys.clear();
         } catch (e) {
             console.error('[DB] 写入本地文件失败:', e.message);
             this._diskWriteError = e;
@@ -760,7 +797,13 @@ class SimpleJSONDB {
         } catch (e) {
             // 忽略 stat 错误，继续加载
         }
+        // 重新加载磁盘内容，但保留本实例尚未落库的脏集合（避免冲掉刚做的修改）
+        const dirtyBackup = {};
+        for (const key of this._dirtyKeys) {
+            if (this._data && Object.prototype.hasOwnProperty.call(this._data, key)) dirtyBackup[key] = this._data[key];
+        }
         this._loadFileSync();
+        for (const key of Object.keys(dirtyBackup)) this._data[key] = dirtyBackup[key];
         return this;
     }
 
@@ -1513,11 +1556,16 @@ app.use(cookieParser());
 app.use(express.json({ limit: '100kb', strict: true }));
 app.use(express.urlencoded({ extended: true, limit: '100kb', parameterLimit: 100 }));
 
-// 5.1 API 响应禁止缓存：避免浏览器 / CDN 复用旧数据
-// （典型表现：删除任务后刷新又出现，其实是读到了缓存的旧列表）
-app.use('/api', (req, res, next) => {
+// 5.1 API 响应禁止缓存 + 请求前刷新数据源
+// 1) no-store：避免浏览器 / CDN 复用旧数据（表现为"删除后刷新又出现"）
+// 2) db.read()：KV 模式按 TTL 从云端刷新；本地文件模式按 mtime 判断是否需要重载。
+//    这样多实例/多进程共享同一份数据时，各实例都能读到最新数据，而不是各读各的内存。
+app.use('/api', async (req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
+    try {
+        if (db && typeof db.read === 'function') await db.read();
+    } catch (e) { /* 刷新失败不影响请求，沿用当前内存 */ }
     next();
 });
 
@@ -5481,7 +5529,7 @@ app.post('/api/admin/db-lock', requireSuperAdmin, requireRateLimit('admin'), req
     });
 });
 
-// 查看数据库状态API
+// 查看数据库状态API（同时返回持久化健康详情，供管理端 db 命令排查"改了又变回来"）
 app.get('/api/admin/db-status', requireSuperAdmin, (req, res) => {
     res.json({
         success: true,
@@ -5492,7 +5540,8 @@ app.get('/api/admin/db-status', requireSuperAdmin, (req, res) => {
             dataSize: JSON.stringify(db.data).length,
             usersCount: db.data.users.length,
             tasksCount: db.data.tasks.length
-        }
+        },
+        data: db.getStatus()
     });
 });
 
@@ -5857,12 +5906,6 @@ app.get('/api/site-events', (req, res) => {
         clearInterval(heartbeat);
         siteEventsClients = siteEventsClients.filter(client => client !== res);
     });
-});
-
-// 数据库持久化状态诊断（超级管理员）
-// 排查"改了数据刷新又回来"类问题：可直接看到 KV 是否可用、最近一次写入是否成功。
-app.get('/api/admin/db-status', requireSuperAdmin, (req, res) => {
-    res.json({ success: true, data: db.getStatus() });
 });
 
 // 统一错误响应：数据库持久化失败等异常必须返回 JSON（而不是 HTML 500），
