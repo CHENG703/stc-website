@@ -413,6 +413,7 @@ const CMDLog = {
                 this.log('whoami       - 当前用户', 'system');
                 this.log('date         - 当前时间', 'system');
                 this.log('db           - 数据库持久化状态（排查"改了又变回来"）', 'system');
+                this.log('deltask      - 删除任务自检 (deltask <任务ID>，走与页面相同的鉴权链路)', 'system');
                 this.log('userinfo     - 查看用户信息 (userinfo <用户名或ID>)', 'system');
                 this.log('createuser   - 创建用户 (createuser <用户名> <邮箱> <密码> [admin])', 'system');
                 this.log('deleteuser   - 删除用户 (deleteuser <用户名或ID>)', 'system');
@@ -503,6 +504,57 @@ const CMDLog = {
                     this.log('集合条数: ' + Object.keys(s.counts||{}).map(k=>k+'='+s.counts[k]).join('   '), 'info');
                 }).catch(e=>this.log('查询失败: '+String(e.message||e),'error'));
                 break;
+            case 'deltask': {
+                // 删除任务自检：完全复刻页面上删除按钮的鉴权链路（CSRF + nonce + Bearer），
+                // 并把每一步的 HTTP 状态与任务数量打印出来，用于区分"没删掉"与"读到了旧缓存"。
+                const delId = parseInt(args, 10);
+                if (!delId) { this.log('用法: deltask <任务ID>（任务ID见首页/任务列表）', 'error'); break; }
+                if (!confirm('将删除任务 #' + delId + '，确定继续？')) { this.log('已取消', 'system'); break; }
+                (async () => {
+                    const listOnce = async (tag) => {
+                        const r = await fetch('/api/tasks?_t=' + Date.now(), { cache: 'no-store', credentials: 'include' });
+                        const j = await r.json().catch(() => ({}));
+                        const arr = j.data || [];
+                        const hit = arr.some(t => t.id === delId);
+                        this.log(tag + '列表: 共 ' + arr.length + ' 条，含 #' + delId + ' = ' + (hit ? '是' : '否') + ' (HTTP ' + r.status + ')', 'info');
+                        return { n: arr.length, hit };
+                    };
+                    try {
+                        this.log('① 删除前读取任务列表...', 'warn');
+                        const b = await listOnce('删除前');
+                        if (!b.hit) this.log('⚠ 删除前列表中就没有该任务，请确认 ID 是否正确', 'warn');
+                        this.log('② 发送 DELETE /api/tasks/' + delId + ' ...', 'warn');
+                        let status = 0, body = '';
+                        try {
+                            const resp = await fetchWithAuth('/api/tasks/' + delId, { method: 'DELETE' });
+                            status = resp.status;
+                            body = await resp.text();
+                        } catch (e) {
+                            if (e.message === 'PermissionDenied') this.log('✗ 请求被拒绝 403：CSRF/nonce 失效或权限不足（页面上的删除也会同样失败）', 'error');
+                            else if (e.message === 'Unauthorized') this.log('✗ 请求被拒绝 401：登录状态已失效，请重新登录', 'error');
+                            else this.log('✗ 请求异常: ' + e.message, 'error');
+                        }
+                        if (status) this.log('   HTTP ' + status + ' ' + String(body).slice(0, 300), status < 400 ? 'info' : 'error');
+                        this.log('③ 删除后重新读取任务列表...', 'warn');
+                        const a = await listOnce('删除后');
+                        if (b.hit && !a.hit) this.log('✓ 删除已生效（服务端与列表都不含该任务）', 'info');
+                        else if (b.hit && a.hit) this.log('✗ 删除未生效：任务仍在（看第②步 HTTP 状态）', 'error');
+                        this.log('④ 查询持久化状态...', 'warn');
+                        const ds = await fetchWithAuth('/api/admin/db-status', { method: 'GET' }).then(r => r.json()).catch(() => null);
+                        if (ds && ds.success) {
+                            const s = ds.data || {};
+                            this.log('   最近 KV 写入成功: ' + (s.kvLastSaveOkAt ? STCBeijing.datetimeStr(s.kvLastSaveOkAt) : '从未成功')
+                                + (s.kvLastWriteError ? '  ⚠ 错误: ' + s.kvLastWriteError : ''), s.kvLastWriteError ? 'error' : 'info');
+                            this.log('   服务端 tasks 条数: ' + ((s.counts || {}).tasks), 'info');
+                        } else {
+                            this.log('   持久化状态查询失败: ' + ((ds && ds.message) || '未知错误'), 'error');
+                        }
+                    } catch (e) {
+                        this.log('自检异常: ' + String(e.message || e), 'error');
+                    }
+                })();
+                break;
+            }
             case 'banip':
                 if (!args) {
                     this.log('用法: banip <IP地址>', 'error');
