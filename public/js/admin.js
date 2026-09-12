@@ -1547,8 +1547,9 @@ async function loadTasks() {
             container.innerHTML = '<p style="text-align:center;">暂无任务</p>';
             return;
         }
-        container.innerHTML = '<table class="admin-table"><thead><tr><th>标题</th><th>状态</th><th>创建时间</th></tr></thead><tbody>' +
-            tasks.map(t => '<tr><td>' + escapeHtml(t.title || '') + '</td><td>' + escapeHtml(t.status || 'pending') + '</td><td>' + escapeHtml(t.created_at || '') + '</td></tr>').join('') +
+        // 显示任务 ID：排查"删除不生效"时可直接在终端执行 deltask <ID>
+        container.innerHTML = '<table class="admin-table"><thead><tr><th>ID</th><th>标题</th><th>状态</th><th>创建时间</th></tr></thead><tbody>' +
+            tasks.map(t => '<tr><td>' + escapeHtml(String(t.id)) + '</td><td>' + escapeHtml(t.title || '') + '</td><td>' + escapeHtml(t.status || 'pending') + '</td><td>' + escapeHtml(t.created_at || '') + '</td></tr>').join('') +
             '</tbody></table>';
         CMDLog.log('任务列表已刷新', 'info');
     } catch (error) {
