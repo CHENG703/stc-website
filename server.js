@@ -36,6 +36,11 @@ let kv = null;
 const KV_KEY = 'stc:database';
 const KV_ENABLED = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 const KV_READ_TTL = 3000; // 从 KV 刷新数据的间隔（毫秒），避免每个请求都读 KV
+
+// 高频、低价值 / 运行态集合：变更时只更新内存与本地缓存文件，KV 侧最多每分钟同步一次。
+// （机器人每 2 秒轮询一次、每个请求都写一条访问日志，若每次都整库上传 KV，
+//  会迅速耗尽 KV 配额/带宽，导致删除任务等真正的写操作失败甚至静默丢失）
+const DELAYED_KV_KEYS = new Set(['access_logs', 'bot_instances', 'bot_send_queue', 'bot_send_results', 'bot_messages']);
 if (KV_ENABLED) {
     try {
         // 优先 @upstash/redis（@vercel/kv 的底层，已随依赖安装）。
@@ -290,6 +295,14 @@ class SimpleJSONDB {
         this._lastKvMergeAt = 0;
         this._kvMergeInFlight = null;
         this._kvFreshInFlight = null;
+        // 持久化健康状态：用于诊断，并保证"写入失败必须暴露"（避免接口假成功：
+        // 前端提示删除成功、刷新后数据又回来）
+        this._kvWriteError = null;    // 最近一次 KV 写入错误
+        this._diskWriteError = null;  // 最近一次本地文件写入错误
+        this._lastKvSaveOkAt = 0;     // 最近一次 KV 写入成功时刻
+        this._lastKvLogSaveAt = 0;    // 最近一次因访问日志触发的 KV 写入时刻（限流用）
+        this._remoteSnapshot = null;  // 上次从 KV 读到的各集合快照（写前差异检测，含嵌套修改）
+        this._mergeOkOnce = false;    // 写前合并是否成功（false 时禁止覆盖写入）
 
         this._loadFileSync();
         // 历史明文 → 自动迁移为加密存储（在具备密钥且加载成功时执行）
@@ -350,51 +363,87 @@ class SimpleJSONDB {
     // 写入 KV 前的一致性合并：拉取远端最新数据作为基底，仅用本地"脏集合"覆盖。
     // 这样即使本实例内存较旧，也不会覆盖其他实例对其它集合的修改。
     async _mergeRemoteBeforeSave() {
-        if (!this._kvEnabled || this._kvFailed) return;
+        if (!this._kvEnabled || this._kvFailed) return true;
         const now = Date.now();
-        // 节流：同一批修改只合并一次，避免高频写（如访问日志）反复拉取 KV
-        if (now - this._lastKvMergeAt < 400) return;
-        if (this._kvMergeInFlight) { await this._kvMergeInFlight; return; }
-        this._lastKvMergeAt = now;
+        // 节流：刚刚成功合并过（400ms 内）说明本地足够新，可跳过拉取
+        if (this._lastKvMergeAt && now - this._lastKvMergeAt < 400) return true;
+        if (this._kvMergeInFlight) { await this._kvMergeInFlight; return this._mergeOkOnce; }
         this._kvMergeInFlight = (async () => {
+            this._mergeOkOnce = false;
             try {
                 const kvRaw = await kv.get(KV_KEY);
                 let remote = null;
                 if (typeof kvRaw === 'string') {
                     const result = dbEnc.deserializeDbText(kvRaw);
-                    if (result) remote = result.data;
+                    if (!result) {
+                        // 密钥不匹配 / 密文损坏：绝不能覆盖，否则会写坏云端数据
+                        console.error('[DB-ENC] KV 数据解密失败（DB_KEY 不匹配？），已中止写入以保护数据。');
+                        this._kvFailed = true;
+                        return;
+                    }
+                    remote = result.data;
                 } else if (kvRaw && typeof kvRaw === 'object') {
                     remote = kvRaw; // 历史明文对象兼容
                 }
-                if (!remote || typeof remote !== 'object' || !this._data || typeof this._data !== 'object') return;
-                for (const key of Object.keys(remote)) {
-                    if (this._dirtyKeys.has(key)) continue; // 本地脏集合以本地为准
-                    this._data[key] = remote[key];
+                if (remote && typeof remote === 'object' && this._data && typeof this._data === 'object') {
+                    const snap = this._remoteSnapshot;
+                    for (const key of Object.keys(remote)) {
+                        if (this._dirtyKeys.has(key)) continue; // 本地脏集合以本地为准
+                        if (snap) {
+                            // 本地未标记脏，但内容与上次远端快照不同 → 本地确实改过（含嵌套修改）
+                            let cur = null;
+                            try { cur = JSON.stringify(this._data[key]); } catch (e) { cur = null; }
+                            if (cur !== snap[key]) continue;     // 保留本地修改
+                        }
+                        // 本地没动过（或本地基线未知）→ 采用远端，避免用陈旧内存覆盖云端
+                        this._data[key] = remote[key];
+                    }
+                    this._ensureDefaults();
                 }
-                this._ensureDefaults();
+                this._updateRemoteSnapshot(remote && typeof remote === 'object' ? remote : this._data);
+                this._lastKvMergeAt = Date.now(); // 仅成功时计时，失败不允许抑制后续合并
+                this._mergeOkOnce = true;
             } catch (e) {
-                console.warn('[KV] 写入前合并远端数据失败，按本地数据写入:', e.message);
+                console.warn('[KV] 写入前合并远端数据失败，已中止本次写入:', e.message);
             } finally {
                 this._kvMergeInFlight = null;
             }
         })();
         await this._kvMergeInFlight;
+        return this._mergeOkOnce;
     }
 
     async _saveKv() {
-        if (!this._kvEnabled || this._kvFailed) return;
+        if (!this._kvEnabled) return;
+        if (this._kvFailed) {
+            // 云端密文无法解密：绝不能覆盖，同时让调用方感知失败
+            this._kvWriteError = new Error('KV 中的数据无法解密（DB_KEY 与云端密文不匹配），已停止写入 KV');
+            return;
+        }
+        // 写前必须确认远端状态；无法确认时中止写入，避免用陈旧内存覆盖云端
+        const merged = await this._mergeRemoteBeforeSave();
+        if (!merged) {
+            this._kvWriteError = new Error('写入前拉取云端最新数据失败，已中止写入以避免覆盖云端数据');
+            return;
+        }
         try {
-            await this._mergeRemoteBeforeSave();
             await kv.set(KV_KEY, dbEnc.serializeDb(this._data));
             this._dirtyKeys.clear();
+            this._kvWriteError = null;
+            this._lastKvSaveOkAt = Date.now();
+            this._updateRemoteSnapshot(this._data); // 远端已与本地一致
         } catch (e) {
             console.warn('[KV] 写入 KV 失败:', e.message);
             // 失败重试一次（KV 网络抖动兜底）
             try {
                 await kv.set(KV_KEY, dbEnc.serializeDb(this._data));
                 this._dirtyKeys.clear();
+                this._kvWriteError = null;
+                this._lastKvSaveOkAt = Date.now();
+                this._updateRemoteSnapshot(this._data); // 远端已与本地一致
             } catch (e2) {
                 console.error('[KV] 写入 KV 再次失败:', e2.message);
+                this._kvWriteError = e2;
             }
         }
     }
@@ -452,13 +501,19 @@ class SimpleJSONDB {
 
     // 仅写本地缓存文件（不同步 KV，用于 KV 读回数据的缓存）。落盘前加密。
     _writeFileSync() {
-        if (this._loadFailed) return; // 密钥不符时禁止覆写，保护已有密文数据
+        if (this._loadFailed) {
+            // 密钥不符时禁止覆写，保护已有密文数据
+            this._diskWriteError = new Error('本地数据库解密失败（db.key / DB_KEY 不匹配），已禁止写入以保护数据');
+            return;
+        }
         try {
             fs.writeFileSync(this.filePath, dbEnc.serializeDb(this._data));
             const stats = fs.statSync(this.filePath);
             this._lastModified = stats.mtimeMs;
+            this._diskWriteError = null;
         } catch (e) {
             console.error('[DB] 写入本地文件失败:', e.message);
+            this._diskWriteError = e;
         }
     }
 
@@ -472,6 +527,17 @@ class SimpleJSONDB {
     // 用于写入 KV 时识别"哪些集合是本实例改过的"，从而只覆盖这些集合。
     _onMutate(rootKey) {
         if (rootKey) this._dirtyKeys.add(rootKey);
+        // 高频低价值集合（访问日志）：只更新内存与本地缓存文件，不立即触发 KV 全量写入。
+        // 否则每个请求都会把整库上传一次，极易打满 KV 配额/带宽，导致删除任务等写操作失败。
+        if (rootKey && DELAYED_KV_KEYS.has(rootKey)) {
+            this._writeFileSync();
+            const lastKv = Math.max(this._lastKvSaveOkAt || 0, this._lastKvLogSaveAt || 0);
+            if (this._kvEnabled && Date.now() - lastKv > 60000) {
+                this._lastKvLogSaveAt = Date.now();
+                this._scheduleKvSave();
+            }
+            return;
+        }
         this._saveFile();
     }
 
@@ -574,10 +640,36 @@ class SimpleJSONDB {
             }
         }
         this._ensureDefaults();
+        // 记录"远端当时的状态"，用于写前差异检测（字符串比较）
+        this._updateRemoteSnapshot(remote);
         // 数据被远端合并后通知外部同步内存索引（如封禁名单 Set）
         if (typeof this._onDataApplied === 'function') {
             try { this._onDataApplied(); } catch (e) { /* 忽略 */ }
         }
+    }
+
+    // 记录远端快照：写前用它判断"本地某集合是否真的被改过"。
+    // 必须包含嵌套属性修改（如 task.status = 'done'）——这类修改不会触发 Proxy 脏标记，
+    // 若不做差异检测，会被远端的旧值覆盖，表现为"改了/删了但刷新后又变回去"。
+    _updateRemoteSnapshot(data) {
+        const snap = {};
+        for (const key of Object.keys(data || {})) {
+            try { snap[key] = JSON.stringify(data[key]); } catch (e) { snap[key] = null; }
+        }
+        this._remoteSnapshot = snap;
+    }
+
+    // 是否可跳过本次整库 KV 上传：仅当"变化只发生在延迟同步集合"时成立。
+    _canSkipKvUpload() {
+        if (!this._remoteSnapshot) return false; // 远端基线未知时不跳过（保守）
+        for (const key of Object.keys(this._data || {})) {
+            if (DELAYED_KV_KEYS.has(key)) continue;
+            let cur = null;
+            try { cur = JSON.stringify(this._data[key]); } catch (e) { cur = null; }
+            if (cur !== this._remoteSnapshot[key]) return false; // 有实质变化，必须上传
+        }
+        // 距上次成功写入超过 1 分钟时也同步一次，保证延迟集合最终落库
+        return Date.now() - (this._lastKvSaveOkAt || 0) <= 60000;
     }
 
     // 强制从 KV 拉取最新数据（写操作前调用）。
@@ -674,14 +766,58 @@ class SimpleJSONDB {
 
     async write() {
         this._lastWriteAt = Date.now();
+        // 仅"高频延迟集合"（访问日志、机器人轮询数据）发生变化时，跳过整库上传，
+        // 最多每分钟同步一次。否则每 2 秒一次的机器人轮询会把 KV 配额耗尽，
+        // 导致删除任务等写操作静默失败（前端提示成功、刷新后数据又回来）。
+        if (this._kvEnabled && !this._kvFailed && this._canSkipKvUpload()) {
+            this._writeFileSync();
+            return;
+        }
         this._saveFile();
         // 关键：等待 KV 保存完成，确保响应返回前数据已落库
         // （Serverless 实例可能在响应后立即冻结，不能依赖后台定时器）
         await this.flush();
+        // 持久化失败必须暴露：否则接口"假成功"（前端提示删除成功、刷新后数据又回来）
+        if (this._kvEnabled) {
+            if (this._kvWriteError) {
+                const err = this._kvWriteError;
+                this._kvWriteError = null;
+                throw new Error('数据未能保存到云端（KV）：' + err.message);
+            }
+        } else if (this._diskWriteError) {
+            const err = this._diskWriteError;
+            this._diskWriteError = null;
+            throw new Error('数据未能保存到本地文件：' + err.message);
+        }
     }
 
     async flush() {
         await this._pendingKvSave;
+    }
+
+    // 持久化状态诊断（供 /api/admin/db-status 使用，不包含业务数据内容）
+    getStatus() {
+        const counts = {};
+        for (const key of Object.keys(this._data || {})) {
+            const v = this._data[key];
+            if (Array.isArray(v)) counts[key] = v.length;
+        }
+        let persistedSize = -1;
+        try { persistedSize = Buffer.byteLength(dbEnc.serializeDb(this._data)); } catch (e) { /* 忽略 */ }
+        return {
+            mode: this._kvEnabled ? 'kv' : 'file',
+            kvEnabled: this._kvEnabled,
+            kvLoaded: this._kvLoaded,
+            kvDecryptFailed: this._kvFailed,
+            kvLastWriteError: this._kvWriteError ? this._kvWriteError.message : null,
+            kvLastSaveOkAt: this._lastKvSaveOkAt || 0,
+            kvPendingDirtyKeys: Array.from(this._dirtyKeys),
+            localFile: this.filePath,
+            localLoadFailed: this._loadFailed,
+            localWriteError: this._diskWriteError ? this._diskWriteError.message : null,
+            persistedSizeBytes: persistedSize,
+            counts
+        };
     }
 }
 
@@ -1376,6 +1512,14 @@ app.use(cookieParser());
 // JSON body 最大 100KB，urlencoded 表单最大 100KB，文件上传走 multer 单独限制
 app.use(express.json({ limit: '100kb', strict: true }));
 app.use(express.urlencoded({ extended: true, limit: '100kb', parameterLimit: 100 }));
+
+// 5.1 API 响应禁止缓存：避免浏览器 / CDN 复用旧数据
+// （典型表现：删除任务后刷新又出现，其实是读到了缓存的旧列表）
+app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    next();
+});
 
 // 6. XSS 输入过滤（所有入站字符串自动转义）
 app.use(xssFilter);
@@ -3810,7 +3954,15 @@ app.put('/api/tasks/:id/status', requireLogin, requireRateLimit('tasks'), requir
 });
 
 app.delete('/api/tasks/:id', requireLogin, requireRateLimit('tasks'), requireCSRF, async (req, res) => {
-    const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
+    const taskId = parseInt(req.params.id);
+    if (!taskId) {
+        return res.status(400).json({ success: false, message: '无效的任务 ID' });
+    }
+
+    // 写前拉取云端最新数据：避免用陈旧内存判断/写回（多实例部署下删除会被覆盖回来）
+    try { await db.readFresh(); } catch (e) { /* 忽略 */ }
+
+    const task = db.data.tasks.find(t => t.id === taskId);
     
     if (!task) {
         return res.status(404).json({ success: false, message: '任务不存在' });
@@ -3824,11 +3976,20 @@ app.delete('/api/tasks/:id', requireLogin, requireRateLimit('tasks'), requireCSR
         return res.status(403).json({ success: false, message: '无权删除此任务' });
     }
     
-    db.data.tasks = db.data.tasks.filter(t => t.id !== parseInt(req.params.id));
-    await db.write();
+    // 原地删除（触发脏标记，确保整库回写到 KV 时不会被远端旧数据覆盖）
+    const idx = db.data.tasks.findIndex(t => t.id === taskId);
+    if (idx !== -1) db.data.tasks.splice(idx, 1);
+
+    try {
+        await db.write();
+    } catch (e) {
+        // 持久化失败必须明确报错，不能让前端"假成功"
+        console.error('[TASK] 删除任务写入失败:', e.message);
+        return res.status(500).json({ success: false, message: '任务删除失败（数据未保存）：' + e.message });
+    }
 
     // 同步清理 KV 中备份的附件
-    await deleteTaskFileFromKv(task.id);
+    try { await deleteTaskFileFromKv(task.id); } catch (e) { console.warn('[TASK] 清理附件备份失败:', e.message); }
 
     res.json({ success: true, message: '任务已删除' });
 });
@@ -5696,6 +5857,24 @@ app.get('/api/site-events', (req, res) => {
         clearInterval(heartbeat);
         siteEventsClients = siteEventsClients.filter(client => client !== res);
     });
+});
+
+// 数据库持久化状态诊断（超级管理员）
+// 排查"改了数据刷新又回来"类问题：可直接看到 KV 是否可用、最近一次写入是否成功。
+app.get('/api/admin/db-status', requireSuperAdmin, (req, res) => {
+    res.json({ success: true, data: db.getStatus() });
+});
+
+// 统一错误响应：数据库持久化失败等异常必须返回 JSON（而不是 HTML 500），
+// 否则前端拿不到具体原因，只能显示笼统的"操作失败"。
+app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    console.error('[UNHANDLED]', (err && err.stack) || err);
+    const message = (err && err.message) || '服务器内部错误';
+    if (req.path && req.path.indexOf('/api/') === 0) {
+        return res.status(500).json({ success: false, message });
+    }
+    res.status(500).send('服务器内部错误');
 });
 
 const startPromise = (async () => {

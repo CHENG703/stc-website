@@ -651,8 +651,15 @@ async function deleteTask(taskId) {
             showMessage('任务删除成功');
             loadTasks();
         } else {
-            const error = await response.json();
-            showMessage(error.error || '删除失败', 'error');
+            // 展示服务端的具体原因（如"数据未保存"），避免只看到笼统的"删除失败"
+            let msg = '删除失败';
+            try {
+                const err = await response.json();
+                msg = err.message || err.error || msg;
+            } catch (e) { /* 响应非 JSON */ }
+            showMessage(msg, 'error');
+            // 删除失败时也刷新一次，避免界面与服务器状态不一致
+            loadTasks();
         }
     } catch (error) {
         if (error.message !== 'AccessDenied') {

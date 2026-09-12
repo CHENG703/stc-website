@@ -412,6 +412,7 @@ const CMDLog = {
                 this.log('users        - 用户数量', 'system');
                 this.log('whoami       - 当前用户', 'system');
                 this.log('date         - 当前时间', 'system');
+                this.log('db           - 数据库持久化状态（排查"改了又变回来"）', 'system');
                 this.log('userinfo     - 查看用户信息 (userinfo <用户名或ID>)', 'system');
                 this.log('createuser   - 创建用户 (createuser <用户名> <邮箱> <密码> [admin])', 'system');
                 this.log('deleteuser   - 删除用户 (deleteuser <用户名或ID>)', 'system');
@@ -483,6 +484,24 @@ const CMDLog = {
                 break;
             case 'date':
                 this.log('时间: '+STCBeijing.datetimeStr(), 'info');
+                break;
+            case 'db':
+                this.log('正在查询数据库持久化状态...', 'warn');
+                fetchWithAuth('/api/admin/db-status', {method:'GET'}).then(r=>r.json()).then(d=>{
+                    if (!d.success) { this.log('查询失败: '+(d.message||'未知错误'), 'error'); return; }
+                    const s = d.data || {};
+                    this.log('存储模式: ' + (s.mode === 'kv' ? 'Vercel KV（云端）' : '本地文件'), 'info');
+                    this.log('KV 启用: ' + (s.kvEnabled ? '是' : '否') + ' / 已加载: ' + (s.kvLoaded ? '是' : '否'), 'info');
+                    if (s.kvDecryptFailed) this.log('⚠ KV 数据解密失败（DB_KEY 与云端密文不匹配），已停止写入 KV！', 'error');
+                    this.log('最近一次 KV 写入成功: ' + (s.kvLastSaveOkAt ? STCBeijing.datetimeStr(s.kvLastSaveOkAt) : '从未成功'), 'info');
+                    if (s.kvLastWriteError) this.log('⚠ 最近 KV 写入错误: ' + s.kvLastWriteError, 'error');
+                    if (s.kvPendingDirtyKeys && s.kvPendingDirtyKeys.length) this.log('待同步集合: ' + s.kvPendingDirtyKeys.join(', '), 'warn');
+                    this.log('本地文件: ' + s.localFile, 'info');
+                    if (s.localLoadFailed) this.log('⚠ 本地数据库解密失败（db.key/DB_KEY 不匹配），已禁止写入！', 'error');
+                    if (s.localWriteError) this.log('⚠ 本地文件写入错误: ' + s.localWriteError, 'error');
+                    this.log('数据体积: ' + (s.persistedSizeBytes >= 0 ? (s.persistedSizeBytes/1024).toFixed(1) + ' KB' : '未知'), 'info');
+                    this.log('集合条数: ' + Object.keys(s.counts||{}).map(k=>k+'='+s.counts[k]).join('   '), 'info');
+                }).catch(e=>this.log('查询失败: '+String(e.message||e),'error'));
                 break;
             case 'banip':
                 if (!args) {
