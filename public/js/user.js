@@ -10,7 +10,18 @@ function showMessage(message, type = 'success') {
     }, 3000);
 }
 
-// 封装的fetch函数，处理403错误
+// 生成一次性请求 nonce（服务端 requireCSRF 对写请求强制校验）
+function genNonce() {
+    try {
+        const arr = new Uint8Array(16);
+        (window.crypto || window.msCrypto).getRandomValues(arr);
+        return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) {
+        return Date.now().toString(16) + Math.random().toString(16).slice(2, 10);
+    }
+}
+
+// 封装的fetch函数，处理403错误（写请求自动补 CSRF token 与 nonce）
 async function fetchWithAuth(url, options = {}) {
     // 确保发送cookies以维持session
     options.credentials = 'include';
@@ -20,6 +31,22 @@ async function fetchWithAuth(url, options = {}) {
     if (token) {
         options.headers = options.headers || {};
         options.headers['Authorization'] = 'Bearer ' + token;
+    }
+    
+    // 写请求需要一次性 CSRF token + 请求 nonce，否则服务端直接 403
+    const method = (options.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+        options.headers = options.headers || {};
+        try {
+            const tkResp = await fetch('/api/csrf-token', { credentials: 'include' });
+            if (tkResp.ok) {
+                const tkData = await tkResp.json();
+                if (tkData && tkData.csrfToken) {
+                    options.headers['X-CSRF-Token'] = tkData.csrfToken;
+                }
+            }
+        } catch (e) { /* 忽略，交由服务端返回明确错误 */ }
+        options.headers['X-Request-Nonce'] = genNonce();
     }
     
     const response = await fetch(url, options);
@@ -228,12 +255,12 @@ async function handlePublishTask(event) {
     }
 
     try {
-        // 检查文件大小（最大1.5GB）
+        // 基础大小检查（云端环境的真实上限以服务端返回提示为准）
         if (fileInput.files.length > 0) {
             const file = fileInput.files[0];
-            const maxSize = 1.5 * 1024 * 1024 * 1024; // 1.5GB
+            const maxSize = 2 * 1024 * 1024 * 1024; // 2GB
             if (file.size > maxSize) {
-                showMessage('文件大小不能超过1.5GB', 'warning');
+                showMessage('文件大小不能超过2GB', 'warning');
                 return;
             }
         }
@@ -254,11 +281,20 @@ async function handlePublishTask(event) {
         });
 
         if (response.ok) {
-            showMessage('任务发布成功');
+            let msg = '任务发布成功';
+            try {
+                const data = await response.json();
+                if (data && data.message) msg = data.message;
+            } catch (e) { /* 忽略 */ }
+            showMessage(msg);
             document.getElementById('task-form').reset();
         } else {
-            const error = await response.json();
-            showMessage(error.error || '发布失败', 'error');
+            let msg = '发布失败';
+            try {
+                const error = await response.json();
+                msg = error.message || error.error || msg;
+            } catch (e) { /* 忽略 */ }
+            showMessage(msg, 'error');
         }
     } catch (error) {
         if (error.message !== 'AccessDenied') {

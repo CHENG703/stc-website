@@ -1203,41 +1203,81 @@ const storage = multer.diskStorage({
 const upload = multer({
     storage: storage,
     limits: {
-        fileSize: IS_VERCEL ? 50 * 1024 * 1024 : 2 * 1024 * 1024 * 1024
+        // Vercel Serverless 请求体上限约 4.5MB，设更大的值只会得到平台层的 413 错误页
+        fileSize: IS_VERCEL ? 4 * 1024 * 1024 : 2 * 1024 * 1024 * 1024
     },
     fileFilter: fileFilter
 });
 
+const UPLOAD_SIZE_LIMIT_MB = IS_VERCEL ? 4 : 2048;
+
 // ---------- 任务附件持久化 ----------
 // Serverless（Vercel）环境下上传目录 /tmp/uploads 随实例回收而丢失，
-// 导致任务附件"发布时能下、过一段时间 404"。因此上传后同步备份到 KV（小文件），
+// 导致任务附件"发布时能下、过一段时间 404"。因此上传后同步备份到 KV，
 // 下载时若本地文件已不存在则从 KV 兜底取回。
-const TASK_FILE_KV_PREFIX = 'stc:taskfile:';
-const TASK_FILE_KV_MAX = 6 * 1024 * 1024; // 超过 6MB 不写入 KV（避免超出 KV 单值限制）
+//
+// 注意：KV（Upstash/Vercel KV）单个 value 有大小限制（约 1MB），
+// 之前把整个文件 base64 塞进一个 key，超过限制就静默失败（文件永远无法下载）。
+// 现在改为「元数据 + 分片」存储：每个分片 ≤384KB，base64 后约 512KB，安全落在限制内。
+const TASK_FILE_KV_PREFIX = 'stc:taskfile:';    // 旧格式（单键整包），仅用于读取兼容
+const TASK_FILE_KV2_PREFIX = 'stc:taskfile2:';  // 新格式（meta + 分片）
+const TASK_FILE_KV_CHUNK = 384 * 1024;          // 每个分片的原始字节数
+const TASK_FILE_KV_MAX = 3.5 * 1024 * 1024;     // 可持久化的最大附件（受 Vercel 响应体 4.5MB 限制）
+const TASK_FILE_KV_PART_TAG = 'b64:';           // 分片内容前缀，防止被 KV 客户端当数字反序列化
 
 async function backupTaskFileToKv(taskId, filePath, fileName) {
-    if (!KV_ENABLED || !kv) return false;
+    if (!KV_ENABLED || !kv) return { ok: false, reason: 'kv_disabled' };
     try {
-        if (!filePath || !fs.existsSync(filePath)) return false;
+        if (!filePath || !fs.existsSync(filePath)) return { ok: false, reason: 'local_missing' };
         const buf = fs.readFileSync(filePath);
         if (buf.length > TASK_FILE_KV_MAX) {
-            console.warn(`[TASK-FILE] 附件超过 ${Math.round(TASK_FILE_KV_MAX / 1024 / 1024)}MB，未备份到 KV: ${fileName}`);
-            return false;
+            console.warn(`[TASK-FILE] 附件 ${buf.length} 字节超过云端持久化上限，未备份: ${fileName}`);
+            return { ok: false, reason: 'too_large', size: buf.length };
         }
-        await kv.set(TASK_FILE_KV_PREFIX + taskId, {
+        const total = Math.max(1, Math.ceil(buf.length / TASK_FILE_KV_CHUNK));
+        const parts = [];
+        for (let i = 0; i < total; i++) {
+            const key = TASK_FILE_KV2_PREFIX + taskId + ':' + i;
+            const chunk = buf.subarray(i * TASK_FILE_KV_CHUNK, (i + 1) * TASK_FILE_KV_CHUNK);
+            // 加固定前缀，避免纯数字内容被 KV 客户端反序列化成 number
+            await kv.set(key, TASK_FILE_KV_PART_TAG + chunk.toString('base64'));
+            parts.push(key);
+        }
+        await kv.set(TASK_FILE_KV2_PREFIX + taskId, {
             name: fileName || 'download',
             size: buf.length,
-            data: buf.toString('base64')
+            parts: parts
         });
-        return true;
+        console.log(`[TASK-FILE] 附件已备份到 KV: taskId=${taskId} size=${buf.length} chunks=${total}`);
+        return { ok: true, size: buf.length, chunks: total };
     } catch (e) {
         console.warn('[TASK-FILE] 附件备份到 KV 失败:', e.message);
-        return false;
+        return { ok: false, reason: e.message };
     }
 }
 
 async function loadTaskFileFromKv(taskId) {
     if (!KV_ENABLED || !kv) return null;
+    // 新格式：meta + 分片
+    try {
+        const meta = await kv.get(TASK_FILE_KV2_PREFIX + taskId);
+        if (meta && typeof meta === 'object' && Array.isArray(meta.parts) && meta.parts.length) {
+            const buffers = [];
+            for (const key of meta.parts) {
+                const part = await kv.get(key);
+                const text = typeof part === 'string' ? part : (typeof part === 'number' ? String(part) : '');
+                if (!text || text.slice(0, 4) !== TASK_FILE_KV_PART_TAG) {
+                    console.warn('[TASK-FILE] 附件分片缺失或格式异常:', key);
+                    return null;
+                }
+                buffers.push(Buffer.from(text.slice(TASK_FILE_KV_PART_TAG.length), 'base64'));
+            }
+            return { buffer: Buffer.concat(buffers), name: meta.name || 'download' };
+        }
+    } catch (e) {
+        console.warn('[TASK-FILE] 从 KV 读取分片附件失败:', e.message);
+    }
+    // 旧格式兼容
     try {
         const rec = await kv.get(TASK_FILE_KV_PREFIX + taskId);
         if (!rec || typeof rec !== 'object' || !rec.data) return null;
@@ -1250,7 +1290,14 @@ async function loadTaskFileFromKv(taskId) {
 
 async function deleteTaskFileFromKv(taskId) {
     if (!KV_ENABLED || !kv) return;
-    try { await kv.del(TASK_FILE_KV_PREFIX + taskId); } catch (e) { /* 忽略 */ }
+    try {
+        const keys = [TASK_FILE_KV_PREFIX + taskId, TASK_FILE_KV2_PREFIX + taskId];
+        const meta = await kv.get(TASK_FILE_KV2_PREFIX + taskId);
+        if (meta && typeof meta === 'object' && Array.isArray(meta.parts)) {
+            meta.parts.forEach(k => keys.push(k));
+        }
+        await Promise.all(keys.map(k => kv.del(k).catch(() => {})));
+    } catch (e) { /* 忽略 */ }
 }
 
 app.set('trust proxy', 1);
@@ -3573,7 +3620,17 @@ app.post('/api/messages', requireLogin, requireRateLimit('messages'), requireCSR
     });
 });
 
-app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), upload.single('file'), requireCSRF, async (req, res) => {
+app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), (req, res, next) => {
+    upload.single('file')(req, res, (err) => {
+        if (err) {
+            const msg = err.code === 'LIMIT_FILE_SIZE'
+                ? `文件过大，云端环境最大支持 ${UPLOAD_SIZE_LIMIT_MB}MB，请压缩后再上传`
+                : (err.message || '文件上传失败');
+            return res.status(400).json({ success: false, message: msg, error: msg });
+        }
+        next();
+    });
+}, requireCSRF, async (req, res) => {
     const { title, description, reward, deadline, status, isPinned } = req.body;
     const content = description || req.body.content;
     
@@ -3631,19 +3688,29 @@ app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), upload.single('f
             catch (e) { return req.file.originalname; }
         })() : null,
         file_path: req.file ? req.file.path : null,
+        file_cloud: false,
+        file_cloud_note: null,
         created_at: new Date().toISOString()
     };
-    
+
+    // Serverless 下上传目录为临时目录，实例回收后文件即丢失：
+    // 写库前先把附件备份到 KV（分片），供后续下载兜底。
+    if (req.file) {
+        const bk = await backupTaskFileToKv(task.id, req.file.path, task.file_name);
+        task.file_cloud = !!(bk && bk.ok);
+        if (bk && !bk.ok) {
+            const r = String(bk.reason || 'failed');
+            task.file_cloud_note = ['too_large', 'local_missing', 'kv_disabled'].includes(r) ? r : 'failed';
+        }
+    }
+
     db.data.tasks.push(task);
     await db.write();
 
-    // Serverless 下上传目录为临时目录，实例回收后文件即丢失：
-    // 上传成功后同步把附件备份到 KV，供后续下载兜底。
-    if (req.file) {
-        await backupTaskFileToKv(task.id, req.file.path, task.file_name);
-    }
-
-    res.json({ success: true, message: '任务发布成功', data: task });
+    const warn = (req.file && !task.file_cloud)
+        ? `（附件未写入云端长期存储，超过 ${Math.round(TASK_FILE_KV_MAX / 1024 / 1024)}MB 的文件请压缩后再上传）`
+        : '';
+    res.json({ success: true, message: '任务发布成功' + warn, data: task });
 });
 
 app.put('/api/tasks/:id', requireLogin, requireRateLimit('tasks'), requireCSRF, async (req, res) => {
@@ -3735,7 +3802,13 @@ app.delete('/api/tasks/:id', requireLogin, requireRateLimit('tasks'), requireCSR
 });
 
 app.get('/api/tasks/:id/download', async (req, res) => {
-    const task = db.data.tasks.find(t => t.id === parseInt(req.params.id));
+    const taskId = parseInt(req.params.id);
+    let task = db.data.tasks.find(t => t.id === taskId);
+    if (!task) {
+        // 多实例部署下，任务刚发布时本实例内存可能较旧：强制拉取一次最新数据
+        try { await db.readFresh(); } catch (e) { /* 忽略 */ }
+        task = db.data.tasks.find(t => t.id === taskId);
+    }
     if (!task) {
         return res.status(404).json({ success: false, message: '任务不存在' });
     }
@@ -3743,24 +3816,28 @@ app.get('/api/tasks/:id/download', async (req, res) => {
         return res.status(404).json({ success: false, message: '该任务没有附件' });
     }
 
-    // 1) 本地文件存在：直接下发
-    if (task.file_path && fs.existsSync(task.file_path)) {
-        if (!isSafePath(task.file_path, uploadsDir)) {
-            return res.status(403).json({ success: false, message: '非法文件路径' });
-        }
+    // 1) 本地文件存在且路径合法：直接下发
+    if (task.file_path && fs.existsSync(task.file_path) && isSafePath(task.file_path, uploadsDir)) {
         return res.download(task.file_path, task.file_name || 'download');
     }
 
     // 2) 本地文件已被回收（Serverless 临时目录）：从 KV 兜底取回
-    const kvFile = await loadTaskFileFromKv(task.id);
-    if (kvFile) {
-        const filename = kvFile.name || 'download';
+    const kvFile = await loadTaskFileFromKv(taskId);
+    if (kvFile && kvFile.buffer && kvFile.buffer.length) {
+        const filename = kvFile.name || task.file_name || 'download';
         res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Length', kvFile.buffer.length);
         res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
         return res.send(kvFile.buffer);
     }
 
-    return res.status(404).json({ success: false, message: '文件已丢失，请联系发布者重新上传' });
+    if (task.file_cloud_note === 'too_large') {
+        return res.status(404).json({
+            success: false,
+            message: `附件超过 ${Math.round(TASK_FILE_KV_MAX / 1024 / 1024)}MB，云端未长期保存，请联系发布者压缩后重新上传`
+        });
+    }
+    return res.status(404).json({ success: false, message: '文件已过期（云端临时存储已回收），请联系发布者重新上传' });
 });
 
 app.post('/api/invite/request', requireRateLimit('invite'), requireCSRF, requireCaptcha, async (req, res) => {

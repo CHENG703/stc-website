@@ -613,8 +613,12 @@ async function downloadFile(taskId) {
             document.body.removeChild(a);
             showMessage('文件下载成功');
         } else {
-            const error = await response.json();
-            showMessage(error.error || '文件下载失败', 'error');
+            let msg = '文件下载失败';
+            try {
+                const error = await response.json();
+                msg = error.message || error.error || msg;
+            } catch (e) { /* 非 JSON 响应 */ }
+            showMessage(msg, 'error');
         }
     } catch (error) {
         showMessage('文件下载失败，请重试', 'error');
@@ -746,7 +750,7 @@ async function publishTask() {
                         </select>
                     </div>
                     <div style="margin-bottom:15px;">
-                        <label style="display:block;color:#8b949e;font-size:12px;margin-bottom:6px;">附件（可选，最大 2GB，支持所有类型）</label>
+                        <label style="display:block;color:#8b949e;font-size:12px;margin-bottom:6px;">附件（可选，支持所有类型；云端环境单次上传上限约 4MB）</label>
                         <input type="file" id="task-file" style="width:100%;padding:8px;background:#161b22;border:1px dashed #30363d;border-radius:6px;color:#f0f6fc;box-sizing:border-box;font-size:12px;" onchange="window._taskFile=this.files[0];window._taskFileSizeText=this.files[0]?'已选 '+this.files[0].name+' ('+formatSize(this.files[0].size)+')':'';">
                         <div id="task-file-info" style="color:#8b949e;font-size:11px;margin-top:4px;"></div>
                     </div>
@@ -830,7 +834,12 @@ async function publishTask() {
                 });
                 
                 if (response.ok) {
-                    showMessage('任务发布成功');
+                    let okMsg = '任务发布成功';
+                    try {
+                        const data = await response.json();
+                        if (data && data.message) okMsg = data.message;
+                    } catch (e) { /* 忽略 */ }
+                    showMessage(okMsg);
                     closePublishModal();
                     loadTasks();
                 } else {

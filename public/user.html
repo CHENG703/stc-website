@@ -112,9 +112,9 @@
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label for="task-file">上传文件（可选，最大1.5GB）</label>
+                                <label for="task-file">上传文件（可选）</label>
                                 <input type="file" id="task-file" name="file" accept="*/*">
-                                <small style="color: var(--text-secondary);">支持任意格式文件，最大1.5GB</small>
+                                <small style="color: var(--text-secondary);">支持任意格式；云端环境单次上传上限约 4MB，超大文件请压缩后再上传</small>
                             </div>
                             <div class="form-group">
                                 <label>
@@ -156,7 +156,7 @@
         <!-- 版权水印 -->
         <div class="copyright-watermark">© 2025-2026 STC 版权所有</div>
         
-        <script src="js/user.js"></script>
+        <script src="js/user.js?v=16"></script>
         <script>
             function showTerms(type) {
                 window.open('/terms.html?type=' + type, 'terms', 'width=800,height=600,scrollbars=yes,resizable=yes');
