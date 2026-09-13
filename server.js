@@ -41,6 +41,9 @@ const KV_READ_TTL = 3000; // 从 KV 刷新数据的间隔（毫秒），避免�
 // （机器人每 2 秒轮询一次、每个请求都写一条访问日志，若每次都整库上传 KV，
 //  会迅速耗尽 KV 配额/带宽，导致删除任务等真正的写操作失败甚至静默丢失）
 const DELAYED_KV_KEYS = new Set(['access_logs', 'bot_instances', 'bot_send_queue', 'bot_send_results', 'bot_messages']);
+
+// 访问记录条数上限（超出裁剪最旧的）。定义在数据库类之前：合并/落盘逻辑也要用它。
+const ACCESS_LOG_MAX = 1000;
 if (KV_ENABLED) {
     try {
         // 优先 @upstash/redis（@vercel/kv 的底层，已随依赖安装）。
@@ -268,8 +271,13 @@ app.use((req, res, next) => {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Access-Control-Allow-Credentials', 'true');
         res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-CSRF-Token,Authorization');
+        // 预检必须覆盖前端真正会发的自定义头，否则跨域（GitHub Pages 镜像）请求会被浏览器
+        // 拦在预检阶段、连响应都拿不到：
+        //   X-CSRF-Token / X-Request-Nonce —— 每个写请求都带（各 fetchWithAuth 里补）
+        //   Authorization / X-Auth-Token  —— 镜像端在第三方 cookie 被拦时用 token 自持登录态
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-CSRF-Token,X-Request-Nonce,Authorization,X-Auth-Token');
         res.setHeader('Access-Control-Expose-Headers', 'Content-Length');
+        res.setHeader('Access-Control-Max-Age', '600'); // 预检结果缓存 10 分钟，少一轮往返
     }
     if (req.method === 'OPTIONS') {
         return res.status(204).end();
@@ -446,7 +454,9 @@ class SimpleJSONDB {
                 }
                 if (remote && typeof remote === 'object' && this._data && typeof this._data === 'object') {
                     const snap = this._remoteSnapshot;
+                    const beforeMono = this._monotonicLocalSnapshot();
                     for (const key of Object.keys(remote)) {
+                        if (key === 'access_logs') continue; // 访问记录走并集合并（见下）
                         if (this._dirtyKeys.has(key)) continue; // 本地脏集合以本地为准
                         if (snap) {
                             // 本地未标记脏，但内容与上次远端快照不同 → 本地确实改过（含嵌套修改）
@@ -458,6 +468,8 @@ class SimpleJSONDB {
                         this._data[key] = remote[key];
                     }
                     this._ensureDefaults();
+                    this._restoreMonotonic(beforeMono);
+                    this._mergeAccessLogsFrom(remote);
                 }
                 this._updateRemoteSnapshot(remote && typeof remote === 'object' ? remote : this._data);
                 this._lastKvMergeAt = Date.now(); // 仅成功时计时，失败不允许抑制后续合并
@@ -586,6 +598,92 @@ class SimpleJSONDB {
             if (this._data[key] === undefined) {
                 this._data[key] = Array.isArray(this._defaults[key]) ? [] : this._defaults[key];
             }
+        }
+    }
+
+    // "只增不减"字段：目前只有访问记录的清空水位线 access_logs_cleared_at。
+    // 任何一次与远端的合并（KV 回读 / 写前合并 / 多实例互写）都不允许把它拉回旧值，
+    // 否则"读侧按水位线过滤"失效，被清空的旧记录看起来又整批回来了。
+    // 典型触发场景：清空请求还没把 KV 写上去，同实例另一个请求（面板轮询 / 任意写请求）
+    // 触发 readFresh() → 用 KV 的旧数据整体覆盖内存 → 排队中的上传把旧水位线写回云端。
+    // 用法：合并**前**取快照，合并**后**用 _restoreMonotonic 补回不低于本地的值。
+    _monotonicLocalSnapshot() {
+        const snap = {};
+        try {
+            snap.access_logs_cleared_at = Number(this._data && this._data.access_logs_cleared_at) || 0;
+        } catch (e) { /* 忽略 */ }
+        return snap;
+    }
+
+    _restoreMonotonic(snapshot) {
+        if (!snapshot || !this._data || typeof this._data !== 'object') return;
+        for (const key of Object.keys(snapshot)) {
+            try {
+                const before = Number(snapshot[key]) || 0;
+                const cur = Number(this._data[key]) || 0;
+                if (before > cur) this._data[key] = before;
+            } catch (e) { /* 忽略 */ }
+        }
+    }
+
+    // 访问记录按"并集"合并，而不是"远端覆盖本地 / 本地覆盖远端"。
+    // 必要性：
+    //   ① access_logs 属 DELAYED_KV_KEYS（最多 60 秒才上传 KV），本实例刚产生的记录
+    //      此时只存在内存里；一旦 readFresh() 用 KV 覆盖本地（打开管理面板就会触发），
+    //      这些新记录就永久丢了 → 表现为"刚访问的页面在面板里看不到"。
+    //   ② 反方向：别的实例已上传的记录要能拿到 → 表现为"别人的访问看不到"。
+    // 已清空的旧记录靠"水位线"在这里一并过滤掉，所以清空不会因此复活。
+    _mergeAccessLogsList(localArr, remoteArr, watermark) {
+        const seen = new Set();
+        const out = [];
+        const add = (l) => {
+            if (!l || typeof l !== 'object') return;
+            const t = Number(l.t) || 0;
+            if (watermark > 0 && t < watermark) return; // 早于清空水位线 = 已删除
+            const key = t + '|' + (l.ip || '') + '|' + (l.page || '') + '|' + (l.fp || '');
+            if (seen.has(key)) return;
+            seen.add(key);
+            out.push(l);
+        };
+        for (const l of (Array.isArray(localArr) ? localArr : [])) add(l);
+        for (const l of (Array.isArray(remoteArr) ? remoteArr : [])) add(l);
+        out.sort((a, b) => (Number(b.t) || 0) - (Number(a.t) || 0));
+        if (out.length > ACCESS_LOG_MAX) out.length = ACCESS_LOG_MAX;
+        return out;
+    }
+
+    // 把远端(或磁盘)的访问记录并进内存（保持并集语义）
+    _mergeAccessLogsFrom(remote) {
+        if (!remote || !Array.isArray(remote.access_logs)) return;
+        try {
+            const w = Number(this._data && this._data.access_logs_cleared_at) || 0;
+            this._data.access_logs = this._mergeAccessLogsList(this._data && this._data.access_logs, remote.access_logs, w);
+        } catch (e) { /* 忽略 */ }
+    }
+
+    // 清空访问记录后的回读校验：确认云端确实已按 clearedAt 清空。
+    // 不能只信"kv.set 没抛错"——历史上出现过接口返回成功、云端其实没落库的情况，
+    // 表现为用户点清空 → 刷新 → 旧记录又回来（前端却提示成功）。
+    async verifyAccessLogsCleared(clearedAt) {
+        if (!this._kvEnabled || this._kvFailed) return true; // 非 KV 模式：本地落盘成功即认可
+        try {
+            const kvRaw = await kv.get(KV_KEY);
+            let remote = null;
+            if (typeof kvRaw === 'string') {
+                const r = dbEnc.deserializeDbText(kvRaw);
+                if (r) remote = r.data;
+            } else if (kvRaw && typeof kvRaw === 'object') {
+                remote = kvRaw; // 历史明文对象兼容
+            }
+            if (!remote || typeof remote !== 'object') return false;
+            const w = Number(remote.access_logs_cleared_at) || 0;
+            if (w < clearedAt) return false;
+            const arr = Array.isArray(remote.access_logs) ? remote.access_logs : [];
+            // 只校验"清空之前的记录已经不在"：清空之后的新访问（含别的实例刚写回的）属正常数据
+            return !arr.some(l => (Number(l && l.t) || 0) < clearedAt);
+        } catch (e) {
+            console.warn('[KV] 清空回读校验失败:', e.message);
+            return false;
         }
     }
 
@@ -727,15 +825,21 @@ class SimpleJSONDB {
     // 相比整体替换 this._data，可避免把本地未落库的修改冲掉。
     _applyRemoteData(remote) {
         if (!remote || typeof remote !== 'object') return;
+        // 合并前记住"只增不减"字段（清空水位线）的本地值：合并可能用云端旧值覆盖它，
+        // 覆盖后读侧过滤就失效了。合并后必须补回不低于本地的值。
+        const beforeMono = this._monotonicLocalSnapshot();
         if (!this._data || typeof this._data !== 'object') {
             this._data = remote;
         } else {
             for (const key of Object.keys(remote)) {
+                if (key === 'access_logs') continue; // 访问记录走并集合并（见下）
                 if (this._dirtyKeys.has(key)) continue;
                 this._data[key] = remote[key];
             }
         }
         this._ensureDefaults();
+        this._restoreMonotonic(beforeMono);
+        this._mergeAccessLogsFrom(remote);
         // 记录"远端当时的状态"，用于写前差异检测（字符串比较）
         this._updateRemoteSnapshot(remote);
         // 数据被远端合并后通知外部同步内存索引（如封禁名单 Set）
@@ -2209,7 +2313,6 @@ app.use((req, res, next) => {
 
 // 访问日志中间件 - 记录每个 IP 访问了哪个页面（必须在静态与页面路由之前，否则路由直接返回不会被记录）
 // 记录持久化到 db（配置了 Vercel KV 时跨实例共享），同时推送到实时日志
-const ACCESS_LOG_MAX = 1000;
 app.use(async (req, res, next) => {
     try {
         if (req.method !== 'GET' && req.method !== 'HEAD') return next();
@@ -2653,7 +2756,12 @@ app.get('/api/debug', async (req, res) => {
                 VERCEL: process.env.VERCEL,
                 VERCEL_URL: process.env.VERCEL_URL,
                 SITE_URL: process.env.SITE_URL,
-                hasAdminEnv: !!(process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD)
+                hasAdminEnv: !!(process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD),
+                // 便于确认"线上跑的是哪次部署"（排查"代码改了、线上现象还在"）
+                gitCommit: process.env.VERCEL_GIT_COMMIT_SHA || null,
+                gitCommitRef: process.env.VERCEL_GIT_COMMIT_REF || null,
+                gitCommitMsg: process.env.VERCEL_GIT_COMMIT_MESSAGE || null,
+                deploymentId: process.env.VERCEL_DEPLOYMENT_ID || null
             },
             session: {
                 userId: req.session.userId,
@@ -6028,7 +6136,8 @@ app.get('/api/access-logs', requireAdmin, async (req, res) => {
         const logs = (clearedAt > 0 ? allLogs.filter(l => (Number(l && l.t) || 0) >= clearedAt) : allLogs).slice(0, limit);
         const banned = Array.isArray(db.data.banned_ips) ? db.data.banned_ips : [];
         const bannedDevices = Array.isArray(db.data.banned_devices) ? db.data.banned_devices : [];
-        res.json({ success: true, data: logs, banned: banned, bannedDevices: bannedDevices });
+        // 一并回传水位线：前端可显示"上次清空时间"，让"清空之后的新访问"一眼可辨
+        res.json({ success: true, data: logs, banned: banned, bannedDevices: bannedDevices, clearedAt: clearedAt });
     } catch (e) {
         res.status(500).json({ success: false, message: '获取访问记录失败: ' + e.message });
     }
@@ -6048,6 +6157,21 @@ app.delete('/api/access-logs', requireAdmin, async (req, res) => {
         db.data.access_logs_cleared_at = clearedAt;
         // force：绕过高频集合的"延迟上传"跳过逻辑，确保响应返回前已落库 KV
         await db.write({ force: true });
+        // 回读校验 + 重试一次：清空必须真的落到云端，否则宁可报错也不能"假成功"
+        // （假成功的表现就是：提示已清空 → 刷新 → 旧记录整批回来）
+        let confirmed = await db.verifyAccessLogsCleared(clearedAt);
+        if (!confirmed) {
+            db.data.access_logs = [];
+            db.data.access_logs_cleared_at = clearedAt;
+            await db.write({ force: true });
+            confirmed = await db.verifyAccessLogsCleared(clearedAt);
+        }
+        if (!confirmed) {
+            return res.status(500).json({
+                success: false,
+                message: '清空未生效：云端未确认写入，请稍后重试（可用 db 命令查看 kvLastWriteError）'
+            });
+        }
         res.json({ success: true, clearedAt: clearedAt });
     } catch (e) {
         res.status(500).json({ success: false, message: '清空访问记录失败: ' + e.message });

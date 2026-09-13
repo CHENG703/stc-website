@@ -1825,7 +1825,18 @@ async function loadAccessLogs() {
         const bannedSet = new Set(data.banned || []);
         const devBannedSet = new Set(data.bannedDevices || []);
         const countEl = document.getElementById('access-count');
-        if (countEl) countEl.textContent = `共 ${logs.length} 条 · 封禁 IP ${bannedSet.size} 个 · 设备 ${devBannedSet.size} 个`;
+        if (countEl) {
+            let countTxt = `共 ${logs.length} 条 · 封禁 IP ${bannedSet.size} 个 · 设备 ${devBannedSet.size} 个`;
+            // 显示"清空水位线"：清空之后产生的新访问会照常记录，写清楚免得看着像"没清掉"
+            const clearedAt = Number(data.clearedAt) || 0;
+            if (clearedAt > 0) {
+                const t = (window.STCBeijing && STCBeijing.datetimeStr)
+                    ? STCBeijing.datetimeStr(clearedAt)
+                    : new Date(clearedAt).toLocaleString();
+                countTxt += ` · 清空于 ${t}（之后的新访问仍会记录）`;
+            }
+            countEl.textContent = countTxt;
+        }
         if (logs.length === 0) {
             container.innerHTML = '<div style="color:#8b949e; padding:8px;">暂无访问记录</div>';
             return;

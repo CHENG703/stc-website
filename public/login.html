@@ -1358,7 +1358,10 @@
                 }
 
                 if (data.success) {
-                    // 登录态由服务端写入 httpOnly cookie（前端不接触 token，XSS 也偷不走）
+                    // 登录态由服务端写入 httpOnly cookie（前端不接触 token，XSS 也偷不走）；
+                    // 跨域部署（GitHub Pages 镜像）可能拿不到第三方 cookie，
+                    // 此时服务端会在响应体里回 token，交给 config.js 的跨域登录态兜底
+                    if (window.STCAPI) STCAPI.setToken(data.token);
                     showSuccess('登录成功！正在跳转...');
                     if (isCode) {
                         // 参考视频的确认动效：一叠牌发光 → 绿色印章 +「验证成功」
