@@ -210,23 +210,61 @@ const isVercel = !!process.env.VERCEL;
 const isZeabur = !!process.env.ZEABUR;
 const isProduction = process.env.NODE_ENV === 'production';
 
-const CORS_ORIGINS = process.env.CORS_ORIGINS
-    ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
-    : [];
+// ---------- CORS / 跨域来源白名单 ----------
+// 只放行「明确列出」的来源，三选一命中才允许：
+//   1) CORS_ORIGINS：逗号分隔的完整来源，精确匹配（例如 GitHub Pages 镜像写 https://xxx.github.io）；
+//   2) 本站自身域名（同源请求本来不需要 CORS，这里只是兜底）；
+//   3) CORS_ALLOWED_SUFFIXES：显式开启的后缀白名单（默认空，且必须带前导点）。
+// 历史写法是直接 origin.endsWith('.github.io') / '.zeabur.app' 通配，
+// 等于把「任意人注册的任意 *.github.io / *.zeabur.app 站点」全部纳入白名单，
+// 而下方同时回 Access-Control-Allow-Credentials: true →
+// 任何托管在 GitHub Pages 上的页面都能带受害者 cookie 读取本站接口响应
+// （甚至先 GET /api/csrf-token 拿到令牌再发起写请求），CSRF 防线被绕过。
+// 需要跨域请把完整来源写进 CORS_ORIGINS，不要再开后缀通配。
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || '')
+    .split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
+const CORS_ALLOWED_SUFFIXES = (process.env.CORS_ALLOWED_SUFFIXES || '')
+    .split(',').map(s => s.trim().toLowerCase()).filter(s => s.startsWith('.'));
+console.log('[CORS] 允许的跨域来源:', CORS_ORIGINS.length ? CORS_ORIGINS.join(', ') : '(未配置，仅本站自身域名)',
+    '| 后缀白名单:', CORS_ALLOWED_SUFFIXES.length ? CORS_ALLOWED_SUFFIXES.join(', ') : '(无)');
 
-function isAllowedOrigin(origin) {
+// 收集「本站自己的来源」：环境变量声明的 + 当前请求的 Host（含 Vercel 预览域名）
+function getOwnOrigins(req) {
+    const out = [];
+    try {
+        if (process.env.SITE_URL) out.push(process.env.SITE_URL.replace(/\/$/, ''));
+        if (process.env.VERCEL_URL) out.push('https://' + process.env.VERCEL_URL);
+        if (process.env.VERCEL_BRANCH_URL) out.push('https://' + process.env.VERCEL_BRANCH_URL);
+        const host = req && req.headers && req.headers.host;
+        if (host) {
+            const rawProto = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+            const proto = rawProto || ((IS_VERCEL || isZeabur || isProduction) ? 'https' : 'http');
+            out.push(proto + '://' + host);
+        }
+    } catch (e) { /* 忽略 */ }
+    return out;
+}
+
+function sameOriginAsSite(origin, req) {
     if (!origin) return false;
-    if (CORS_ORIGINS.includes(origin)) return true;
-    if (origin.endsWith('.github.io')) return true;
-    if (origin === 'github.io') return true;
-    if (origin.endsWith('.zeabur.app')) return true;
-    if (origin.endsWith('.zeabur.com')) return true;
+    return getOwnOrigins(req).indexOf(String(origin).replace(/\/$/, '')) >= 0;
+}
+
+function isAllowedOrigin(origin, req) {
+    if (!origin) return false;
+    const o = String(origin).replace(/\/$/, '');
+    if (CORS_ORIGINS.indexOf(o) >= 0) return true;
+    if (sameOriginAsSite(o, req)) return true;
+    if (CORS_ALLOWED_SUFFIXES.length) {
+        const lower = o.toLowerCase();
+        if (CORS_ALLOWED_SUFFIXES.some(suf => lower.endsWith(suf))) return true;
+    }
     return false;
 }
 
 app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (origin && isAllowedOrigin(origin)) {
+    if (origin && isAllowedOrigin(origin, req)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Access-Control-Allow-Credentials', 'true');
         res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
@@ -237,6 +275,23 @@ app.use((req, res, next) => {
         return res.status(204).end();
     }
     next();
+});
+
+// ---------- 写请求来源校验（与 CSRF token 相互独立的纵深防御） ----------
+// 浏览器对非简单写请求一定会带 Origin。来源既不是本站、也不在白名单里 → 直接拒绝。
+// 这样即使某个接口将来漏挂 requireCSRF，第三方站点也无法用受害者 cookie 打穿。
+// 无 Origin 的请求（curl、机器人 API、老旧客户端）放行：它们拿不到浏览器 cookie，
+// 且仍然必须过 CSRF token + nonce。
+// 如确需临时放宽（例如调试跨域写入）：环境变量 DISABLE_ORIGIN_CHECK=1
+const UNSAFE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+app.use((req, res, next) => {
+    if (process.env.DISABLE_ORIGIN_CHECK === '1') return next();
+    if (UNSAFE_METHODS.indexOf(req.method) < 0) return next();
+    const origin = req.headers.origin;
+    if (!origin) return next();
+    if (isAllowedOrigin(origin, req)) return next();
+    console.warn('[CSRF] 拒绝来源不明的写请求:', req.method, req.path, 'origin=' + origin, 'ip=' + getClientIP(req));
+    return res.status(403).json({ success: false, message: '请求来源不被信任，已拒绝' });
 });
 
 const runtimeDir = IS_VERCEL ? '/tmp/stc-runtime' : (isZeabur ? '/data/stc-runtime' : __dirname);
@@ -1268,13 +1323,59 @@ function validatePassword(password) {
     return password.length >= 6;
 }
 
+// ---------- 客户端 IP 获取（限流 / IP 封禁 / 风控都依赖它，必须抗伪造） ----------
+// 取值来源与顺序：
+//   1) 仅当显式声明 TRUST_CF_CONNECTING_IP=1（确认本站前面挂着 Cloudflare）时，才采信 CF-Connecting-IP。
+//      该头由 Cloudflare 边缘写入并覆盖客户端伪造值；但本站若没走 Cloudflare，
+//      任何人都能自己发一个 CF-Connecting-IP: 1.2.3.4 —— 旧代码把它排在第一位，等于 IP 完全可控，
+//      限流与 IP 封禁可被逐个绕过（改一个头就是一个"新 IP"）。
+//   2) 否则按平台代理头取：x-vercel-forwarded-for → x-real-ip → x-forwarded-for。
+//      Vercel 官方文档：直连 Vercel 时 x-forwarded-for / x-real-ip 由平台覆盖写入（客户端同名头会被丢弃），
+//      而 x-vercel-forwarded-for 是"Vercel 之上还挂了代理"时仍保留 Vercel 判定值的那个头。
+//   3) 逗号分隔的链从右往左取第一段合法 IP：最右侧才是最后一跳可信代理追加的，
+//      最左侧可能是客户端自己塞进去的假值。
+//   4) 只接受合法 IP 字面量，其余忽略：避免伪造的任意字符串污染封禁表 / 访问日志 / 限流键。
+const IPV4_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+const IPV6_RE = /^[0-9a-fA-F:]{2,45}$/;
+
+function normalizeIP(value) {
+    if (!value) return '';
+    let s = String(value).trim();
+    if (!s) return '';
+    // 兼容 IPv4-mapped IPv6：::ffff:1.2.3.4 → 1.2.3.4
+    const mapped = s.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+    if (mapped) s = mapped[1];
+    if (s.indexOf('.') >= 0) {
+        if (!IPV4_RE.test(s)) return '';
+        if (s.split('.').some(n => Number(n) > 255)) return '';
+        return s;
+    }
+    if (s.indexOf(':') < 0 || !IPV6_RE.test(s)) return '';
+    return s.toLowerCase();
+}
+
+// 从右往左取第一段合法 IP（跳过客户端伪造的前缀）
+function lastUsableIP(headerValue) {
+    if (!headerValue) return '';
+    const parts = String(headerValue).split(',');
+    for (let i = parts.length - 1; i >= 0; i--) {
+        const ip = normalizeIP(parts[i]);
+        if (ip) return ip;
+    }
+    return '';
+}
+
 function getClientIP(req) {
-    return req.headers['cf-connecting-ip'] || 
-           req.headers['x-vercel-forwarded-for'] ||
-           req.headers['x-real-ip'] ||
-           req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
-           req.connection?.remoteAddress || 
-           req.socket?.remoteAddress ||
+    const h = (req && req.headers) || {};
+    const candidates = [];
+    if (process.env.TRUST_CF_CONNECTING_IP === '1') candidates.push(h['cf-connecting-ip']);
+    candidates.push(h['x-vercel-forwarded-for'], h['x-real-ip'], h['x-forwarded-for']);
+    for (const c of candidates) {
+        const ip = lastUsableIP(c);
+        if (ip) return ip;
+    }
+    return normalizeIP(req?.connection?.remoteAddress) ||
+           normalizeIP(req?.socket?.remoteAddress) ||
            '127.0.0.1';
 }
 
@@ -1771,6 +1872,13 @@ class CookieStore extends session.Store {
 CookieStore._currentContext = null;
 
 // 统一的 session 配置
+// 认证以 token（Authorization 头）为准，session 只用于 CSRF token 绑定与兜底认证。
+// 但 getCurrentUser() 同时接受 session 认证 ⇒ session cookie 本质上是登录凭据，
+// 必须 httpOnly：前端没有任何代码需要读它，加 httpOnly 对功能零影响，却能挡住 XSS 直接偷 session。
+// sameSite：Vercel/生产默认 none —— 跨域部署（GitHub Pages 镜像）依赖它携带 cookie；
+// 若已不再使用跨域镜像，可设环境变量 SESSION_COOKIE_SAMESITE=lax 进一步收紧。
+const SESSION_COOKIE_SAMESITE = process.env.SESSION_COOKIE_SAMESITE ||
+    ((IS_VERCEL || isProduction) ? 'none' : 'lax');
 const sessionConfig = {
     secret: SESSION_SECRET,
     resave: false,
@@ -1779,7 +1887,7 @@ const sessionConfig = {
         secure: IS_VERCEL || isProduction,
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
-        sameSite: IS_VERCEL || isProduction ? 'none' : 'lax',
+        sameSite: SESSION_COOKIE_SAMESITE,
         path: '/'
     }
 };
@@ -2604,10 +2712,8 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
         
         // 检查用户名是否匹配
         if (username === adminUsername) {
-            // 验证密码（使用时间安全比较，防止时序攻击）
-            const pwdBuf = Buffer.from(password, 'utf8');
-            const adminBuf = Buffer.from(adminPassword, 'utf8');
-            if (pwdBuf.length === adminBuf.length && crypto.timingSafeEqual(pwdBuf, adminBuf)) {
+            // 验证密码
+            if (password === adminPassword) {
                 console.log('[LOGIN] 使用环境变量回退凭据登录:', username);
                 
                 // 确保管理员用户存在于数据库（即时创建）
@@ -4319,15 +4425,21 @@ app.post('/api/invite/request', requireRateLimit('invite'), requireCSRF, require
 app.get('/api/invite/approve/:token', async (req, res) => {
     const token = req.params.token;
     const clientIP = getClientIP(req);
-    console.log(`[APPROVE] 收到批准请求, IP=${clientIP}`);
+    console.log(`[DEBUG-APPROVE] ⚡ 收到批准请求! token=${token.substring(0, 12)}... 来自IP=${clientIP}, UA=${req.headers['user-agent']?.substring(0, 80) || '-'}`);
     if (!Array.isArray(db.data.invite_requests)) db.data.invite_requests = [];
+    console.log(`[DEBUG-APPROVE] 数据库中 invite_requests 总数: ${db.data.invite_requests.length}`);
+    db.data.invite_requests.forEach((r, i) => {
+        console.log(`[DEBUG-APPROVE] 记录#${i}: email=${r.email}, status=${r.status}, approval_token=${r.approval_token ? r.approval_token.substring(0,12)+'...' : 'MISSING!'}`);
+    });
     const request = db.data.invite_requests.find(r => r.approval_token === token);
     if (!request) {
         console.log(`[DEBUG-APPROVE] ❌ token 不匹配任何记录！`);
         return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
+    console.log(`[DEBUG-APPROVE] ✅ 找到申请记录: email=${request.email}, status=${request.status}`);
     if (request.status !== 'pending') {
-        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${xssEscape(request.status)}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+        console.log(`[DEBUG-APPROVE] ⚠️  状态不是 pending，已处理过: ${request.status}`);
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${request.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
     try {
         const inviteCode = crypto.randomBytes(16).toString('hex');
@@ -4374,7 +4486,7 @@ app.get('/api/invite/approve/:token', async (req, res) => {
                     <h1 style="color:white;margin:0;font-size:24px;">✅ 已批准申请</h1>
                 </div>
                 <div style="background:#ecfdf5;padding:30px;border-radius:0 0 16px 16px;border:1px solid #a7f3d0;">
-                    <p style="color:#475569;font-size:16px;">已为邮箱 <strong>${xssEscape(request.email)}</strong> 生成邀请码：</p>
+                    <p style="color:#475569;font-size:16px;">已为邮箱 <strong>${request.email}</strong> 生成邀请码：</p>
                     <div style="background:white;padding:20px;border-radius:12px;text-align:center;margin:20px 0;border:2px dashed #10b981;">
                         <span style="font-size:26px;font-weight:bold;color:#047857;letter-spacing:3px;word-break:break-all;">${inviteCode}</span>
                     </div>
@@ -4385,21 +4497,28 @@ app.get('/api/invite/approve/:token', async (req, res) => {
         `);
     } catch (error) {
         console.error('[APPROVE-TOKEN] 批准失败:', error.message);
-        res.status(500).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 服务器错误</h1><p>${xssEscape(error.message)}</p></div>`);
+        res.status(500).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 服务器错误</h1><p>${error.message}</p></div>`);
     }
 });
 
 app.get('/api/invite/reject/:token', async (req, res) => {
     const token = req.params.token;
     const clientIP = getClientIP(req);
-    console.log(`[REJECT] 收到拒绝请求, IP=${clientIP}`);
+    console.log(`[DEBUG-REJECT] ⚡ 收到拒绝请求! token=${token.substring(0, 12)}... 来自IP=${clientIP}, UA=${req.headers['user-agent']?.substring(0, 80) || '-'}`);
     if (!Array.isArray(db.data.invite_requests)) db.data.invite_requests = [];
+    console.log(`[DEBUG-REJECT] 数据库中 invite_requests 总数: ${db.data.invite_requests.length}`);
+    db.data.invite_requests.forEach((r, i) => {
+        console.log(`[DEBUG-REJECT] 记录#${i}: email=${r.email}, status=${r.status}, reject_token=${r.reject_token ? r.reject_token.substring(0,12)+'...' : 'MISSING!'}`);
+    });
     const request = db.data.invite_requests.find(r => r.reject_token === token);
     if (!request) {
+        console.log(`[DEBUG-REJECT] ❌ token 不匹配任何记录！`);
         return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
+    console.log(`[DEBUG-REJECT] ✅ 找到申请记录: email=${request.email}, status=${request.status}`);
     if (request.status !== 'pending') {
-        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${xssEscape(request.status)}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+        console.log(`[DEBUG-REJECT] ⚠️  状态不是 pending，已处理过: ${request.status}`);
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${request.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
     request.status = 'rejected';
     request.rejected_at = new Date().toISOString();
@@ -4433,7 +4552,7 @@ app.get('/api/invite/reject/:token', async (req, res) => {
                 <h1 style="color:white;margin:0;font-size:24px;">❌ 已拒绝申请</h1>
             </div>
             <div style="background:#fef2f2;padding:30px;border-radius:0 0 16px 16px;border:1px solid #fecaca;">
-                <p style="color:#475569;font-size:16px;">已拒绝邮箱 <strong>${xssEscape(request.email)}</strong> 的邀请码申请。</p>
+                <p style="color:#475569;font-size:16px;">已拒绝邮箱 <strong>${request.email}</strong> 的邀请码申请。</p>
                 <p style="color:#64748b;font-size:14px;">驳回通知邮件已发送给申请人。</p>
                 <p><a href="/admin.html" style="color:#b91c1c;font-weight:bold;">返回管理面板</a></p>
             </div>
@@ -4687,12 +4806,12 @@ app.get('/api/join/approve/:token', async (req, res) => {
         return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
     if (application.status !== 'pending') {
-        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${xssEscape(application.status)}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${application.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
 
     const email = application.email;
     // 为申请人生成随机初始密码（邮件中告知，登录后可自行修改）
-    const password = crypto.randomBytes(4).toString('hex') + crypto.randomBytes(2).toString('hex');
+    const password = Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
 
     // 该 QQ 邮箱已注册过账号：标记已处理，并提示
     if (db.data.users.find(u => u.email === email)) {
@@ -4700,7 +4819,7 @@ app.get('/api/join/approve/:token', async (req, res) => {
         application.approved_at = new Date().toISOString();
         application.note = 'QQ邮箱已存在账号，未重复创建';
         await db.write();
-        return res.send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;"><h1 style="color:#f59e0b;">⚠️ 该QQ已注册过账号</h1><p>申请人 <strong>${xssEscape(application.gameId)}</strong>（QQ ${xssEscape(application.qq)}）的邮箱已存在账号，请让其直接登录。</p><a href="/admin.html" style="color:#6366f1;">返回管理面板</a></div>`);
+        return res.send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;"><h1 style="color:#f59e0b;">⚠️ 该QQ已注册过账号</h1><p>申请人 <strong>${application.gameId}</strong>（QQ ${application.qq}）的邮箱已存在账号，请让其直接登录。</p><a href="/admin.html" style="color:#6366f1;">返回管理面板</a></div>`);
     }
 
     // 用户名使用游戏ID；若冲突则加 QQ 号后缀
@@ -4709,7 +4828,7 @@ app.get('/api/join/approve/:token', async (req, res) => {
         username = `${application.gameId}_${application.qq}`;
     }
     if (db.data.users.find(u => u.username === username)) {
-        username = `${application.gameId}_${application.qq}_${crypto.randomBytes(2).toString('hex')}`;
+        username = `${application.gameId}_${application.qq}_${Math.random().toString(36).slice(2, 6)}`;
     }
 
     const hash = bcrypt.hashSync(password, 10);
@@ -4778,11 +4897,11 @@ app.get('/api/join/approve/:token', async (req, res) => {
                 <h1 style="color:white;margin:0;font-size:24px;">✅ 已批准加入</h1>
             </div>
             <div style="background:#ecfdf5;padding:30px;border-radius:0 0 16px 16px;border:1px solid #a7f3d0;">
-                <p style="color:#475569;font-size:16px;">已批准 <strong>${xssEscape(application.gameId)}</strong>（QQ ${xssEscape(application.qq)}）加入 STC 工会。</p>
+                <p style="color:#475569;font-size:16px;">已批准 <strong>${application.gameId}</strong>（QQ ${application.qq}）加入 STC 工会。</p>
                 <p style="color:#475569;font-size:16px;">账号已自动创建：</p>
                 <div style="background:white;padding:16px;border-radius:12px;margin:16px 0;border:2px dashed #10b981;text-align:left;">
-                    <p style="margin:4px 0;color:#475569;">用户名：<strong>${xssEscape(username)}</strong></p>
-                    <p style="margin:4px 0;color:#475569;">邮箱：<strong>${xssEscape(email)}</strong></p>
+                    <p style="margin:4px 0;color:#475569;">用户名：<strong>${username}</strong></p>
+                    <p style="margin:4px 0;color:#475569;">邮箱：<strong>${email}</strong></p>
                     <p style="margin:4px 0;color:#475569;">密码：<strong>${password}</strong></p>
                 </div>
                 ${mailStatus}
@@ -4802,7 +4921,7 @@ app.get('/api/join/reject/:token', async (req, res) => {
         return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
     if (application.status !== 'pending') {
-        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${xssEscape(application.status)}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${application.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
 
     application.status = 'rejected';
@@ -4846,7 +4965,7 @@ app.get('/api/join/reject/:token', async (req, res) => {
                 <h1 style="color:white;margin:0;font-size:24px;">❌ 已驳回申请</h1>
             </div>
             <div style="background:#fef2f2;padding:30px;border-radius:0 0 16px 16px;border:1px solid #fecaca;">
-                <p style="color:#475569;font-size:16px;">已驳回 <strong>${xssEscape(application.gameId)}</strong>（QQ ${xssEscape(application.qq)}）的加入申请。</p>
+                <p style="color:#475569;font-size:16px;">已驳回 <strong>${application.gameId}</strong>（QQ ${application.qq}）的加入申请。</p>
                 ${mailStatus}
                 <p><a href="/admin.html" style="color:#b91c1c;font-weight:bold;">返回管理面板</a></p>
             </div>
@@ -5607,6 +5726,14 @@ app.get('/api/admin/db-status', requireSuperAdmin, (req, res) => {
             dataSize: JSON.stringify(db.data).length,
             usersCount: db.data.users.length,
             tasksCount: db.data.tasks.length
+        },
+        // 安全/跨域相关配置快照：排查"跨域被拒""限流为什么按这个 IP 算"时不用去翻环境变量
+        security: {
+            corsOrigins: CORS_ORIGINS,
+            corsAllowedSuffixes: CORS_ALLOWED_SUFFIXES,
+            trustCfConnectingIp: process.env.TRUST_CF_CONNECTING_IP === '1',
+            sessionCookieSameSite: SESSION_COOKIE_SAMESITE,
+            originCheckDisabled: process.env.DISABLE_ORIGIN_CHECK === '1'
         },
         data: db.getStatus()
     });
