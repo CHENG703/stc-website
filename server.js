@@ -267,6 +267,10 @@ const defaults = {
     banned_device_info: [],
     join_applications: [],
     access_logs: [],
+    // 访问记录"清空水位线"：早于该时间的访问记录一律视为已删除（对全部实例生效）。
+    // 必要性：access_logs 属 DELAYED_KV_KEYS（默认不整库上传 KV），且其他热实例内存里
+    // 可能还留着旧记录，会在 60 秒节流到达时把旧记录整批写回 KV → 只把数组清空是清不掉的。
+    access_logs_cleared_at: 0,
     announcements: []
 };
 
@@ -807,12 +811,15 @@ class SimpleJSONDB {
         return this;
     }
 
-    async write() {
+    // opts.force = true：绕过高频集合的"延迟上传"跳过逻辑，立即整库上传 KV。
+    // 用于必须立刻生效、不能被别的实例旧内存覆盖的操作（如清空访问记录）。
+    async write(opts) {
+        const forceKv = !!(opts && opts.force);
         this._lastWriteAt = Date.now();
         // 仅"高频延迟集合"（访问日志、机器人轮询数据）发生变化时，跳过整库上传，
         // 最多每分钟同步一次。否则每 2 秒一次的机器人轮询会把 KV 配额耗尽，
         // 导致删除任务等写操作静默失败（前端提示成功、刷新后数据又回来）。
-        if (this._kvEnabled && !this._kvFailed && this._canSkipKvUpload()) {
+        if (!forceKv && this._kvEnabled && !this._kvFailed && this._canSkipKvUpload()) {
             this._writeFileSync();
             return;
         }
@@ -2062,8 +2069,12 @@ app.use(async (req, res, next) => {
         const ip = getClientIP(req);
         const ua = String(req.headers['user-agent'] || '').slice(0, 120);
         const fp = getDeviceFP(req);
-        if (!Array.isArray(db.data.access_logs)) db.data.access_logs = [];
-        db.data.access_logs.unshift({
+        const clearedAt = Number(db.data.access_logs_cleared_at) || 0;
+        const prev = Array.isArray(db.data.access_logs) ? db.data.access_logs : [];
+        // 按"清空水位线"剪枝（见 DELETE /api/access-logs）：
+        // 边写边丢掉已被清空的旧记录，避免本实例的陈旧内存把它们重新写回 KV。
+        const next = prev.filter(l => clearedAt === 0 || (Number(l && l.t) || 0) >= clearedAt);
+        next.unshift({
             t: Date.now(),
             ts: new Date().toISOString(),
             ip: ip,
@@ -2071,7 +2082,9 @@ app.use(async (req, res, next) => {
             page: p,
             ua: ua
         });
-        if (db.data.access_logs.length > ACCESS_LOG_MAX) db.data.access_logs.length = ACCESS_LOG_MAX;
+        if (next.length > ACCESS_LOG_MAX) next.length = ACCESS_LOG_MAX;
+        // 整体赋值：只触发一次脏标记/落盘（原先 unshift + length 赋值会写两次盘）
+        db.data.access_logs = next;
         addServerLog(`[${ip}] 访问页面: ${p}`, 'info');
         // 页面访问量小，直接等待落库，保证 KV/Serverless 下不丢
         await db.write().catch(() => {});
@@ -5840,7 +5853,11 @@ app.get('/api/access-logs', requireAdmin, async (req, res) => {
         // 解封/封禁后刷新页面需要立刻反映最新状态：强制拉取最新数据
         try { await db.readFresh(); } catch (e) { /* 忽略 */ }
         const limit = Math.min(parseInt(req.query.limit) || 100, 500);
-        const logs = Array.isArray(db.data.access_logs) ? db.data.access_logs.slice(0, limit) : [];
+        // 过滤掉"清空水位线"之前的记录：即便别的实例把已被清空的旧记录写回了 KV，
+        // 这里也不会显示出来，清空操作才是真正生效的。
+        const clearedAt = Number(db.data.access_logs_cleared_at) || 0;
+        const allLogs = Array.isArray(db.data.access_logs) ? db.data.access_logs : [];
+        const logs = (clearedAt > 0 ? allLogs.filter(l => (Number(l && l.t) || 0) >= clearedAt) : allLogs).slice(0, limit);
         const banned = Array.isArray(db.data.banned_ips) ? db.data.banned_ips : [];
         const bannedDevices = Array.isArray(db.data.banned_devices) ? db.data.banned_devices : [];
         res.json({ success: true, data: logs, banned: banned, bannedDevices: bannedDevices });
@@ -5850,11 +5867,20 @@ app.get('/api/access-logs', requireAdmin, async (req, res) => {
 });
 
 // 清空访问记录
+// 原先的实现有三个坑，导致"点了清空但记录还在"：
+//   ① access_logs 属 DELAYED_KV_KEYS，清空只落到本地缓存，KV 里的旧记录没动；
+//   ② 紧接着的 db.write() 又被 _canSkipKvUpload() 判定为"只改了延迟集合"而整库上传跳过；
+//   ③ 前端刷新时 GET 里的 db.readFresh() 会清掉本地脏标记、整体采用 KV 的旧数据 → 清空被覆盖。
+// 现在：写一条"清空水位线" + force 立即上传 KV；读写两侧都按水位线过滤，其它实例也回写不回来。
 app.delete('/api/access-logs', requireAdmin, async (req, res) => {
     try {
+        await db.readFresh();
+        const clearedAt = Date.now();
         db.data.access_logs = [];
-        await db.write().catch(() => {});
-        res.json({ success: true });
+        db.data.access_logs_cleared_at = clearedAt;
+        // force：绕过高频集合的"延迟上传"跳过逻辑，确保响应返回前已落库 KV
+        await db.write({ force: true });
+        res.json({ success: true, clearedAt: clearedAt });
     } catch (e) {
         res.status(500).json({ success: false, message: '清空访问记录失败: ' + e.message });
     }
