@@ -1,0 +1,24 @@
+[versions]
+agp = "8.13.2"
+kotlin = "2.3.21"
+coreKtx = "1.13.1"
+activityCompose = "1.9.1"
+lifecycle = "2.8.5"
+# 必须与 compileSdk 36 / AGP 8.13 匹配：2025.09.00 对应 Compose 1.9.x（最低需要 compileSdk 36）
+# 更新版本（如 2026.x）要求 compileSdk 37 + AGP 9.1+，会在 :app:checkDebugAarMetadata 报 22 个错
+composeBom = "2025.09.00"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
