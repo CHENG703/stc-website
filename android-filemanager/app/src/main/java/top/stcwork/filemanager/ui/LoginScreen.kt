@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -63,7 +64,9 @@ import top.stcwork.filemanager.data.Prefs
 @Composable
 fun LoginScreen(
     onSuccess: () -> Unit,
-    onSkip: () -> Unit
+    onSkip: () -> Unit,
+    /** 被服务端踢出（账号封禁 / 会话失效）时的提示，如「账号已被永久封禁…（原因：xx）」 */
+    noticeText: String = ""
 ) {
     val scope = rememberCoroutineScope()
     var registerMode by rememberSaveable { mutableStateOf(false) }
@@ -160,6 +163,23 @@ fun LoginScreen(
 
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+
+                    // 被踢出的原因（封禁 / 会话失效）——放在最上面，避免用户以为是自己点错了
+                    if (noticeText.isNotBlank()) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            )
+                        ) {
+                            Text(
+                                noticeText,
+                                modifier = Modifier.padding(12.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
 
                     if (!registerMode) {
                         Row(

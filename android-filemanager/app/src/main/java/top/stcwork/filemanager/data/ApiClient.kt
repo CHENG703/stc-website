@@ -280,13 +280,39 @@ object Api {
         }
     }
 
-    /** 校验当前 token 是否仍有效 */
-    fun checkSession(baseUrl: String, bearer: String): Boolean {
+    /** 会话校验结果：ok = token 有效；banned = 账号被封禁（服务端下发 banned:true） */
+    data class SessionCheck(val ok: Boolean, val banned: Boolean, val message: String = "")
+
+    /**
+     * 用 /api/user 校验当前 token 是否仍有效。
+     *
+     * 账号被封禁时服务端返回 403 + `{ banned: true, message: "账号已被封禁…（原因…）" }`
+     * （server.js 的 authFailure / banMessage），这里直接调用 [Session.kick]：
+     * 界面观察到后立刻清空会话并回到登录页，不必等 token 24 小时过期。
+     * token 失效（其它 403）同样踢出；网络异常不踢人，下次再校验。
+     */
+    fun checkSession(baseUrl: String, bearer: String): SessionCheck {
         return try {
             val resp = request(baseUrl, "/api/user", "GET", bearer = bearer)
-            resp.code in 200..299
+            if (resp.code in 200..299) return SessionCheck(true, false)
+
+            val json = runCatching { JSONObject(resp.body) }.getOrNull()
+            val banned = json?.optBoolean("banned") ?: false
+            val msg = json?.optString("message").orEmpty().ifBlank { json?.optString("error").orEmpty() }
+
+            if (banned) {
+                Session.kick(msg.ifBlank { "账号已被封禁，请联系管理员" })
+                return SessionCheck(false, true, msg)
+            }
+            // 会话失效（服务端 authFailure 回「请先登录」）→ 同样立刻退出登录。
+            // 注意：IP/设备封禁（403 + "您的IP已被封禁"）、CSRF/Origin 拒绝也都是 403，
+            // 含义不同，不能在这里踢人，否则会被误判成"登录失效"。
+            if (resp.code == 403 && msg.contains("请先登录")) {
+                Session.kick("登录状态已失效，请重新登录")
+            }
+            SessionCheck(false, false, msg)
         } catch (e: Exception) {
-            false
+            SessionCheck(false, false, e.message ?: "网络异常")
         }
     }
 }
