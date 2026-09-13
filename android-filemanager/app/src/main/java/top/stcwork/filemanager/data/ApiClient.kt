@@ -138,7 +138,9 @@ object Api {
 
     /**
      * 用网站账号登录。
-     * 密码登录（loginType=password），与网站登录页行为一致。
+     * 第一个参数既可以是用户名，也可以是注册时用的邮箱（服务端两者都认，见 server.js 的
+     * `/api/login`：`u.username === username || u.email === username`），
+     * 所以直接填 QQ 邮箱也能登录。
      */
     fun login(baseUrl: String, username: String, password: String): LoginResult {
         val csrf = fetchCsrf(baseUrl)
@@ -152,7 +154,30 @@ object Api {
             .put("app_client", APP_CLIENT)
             .toString()
 
-        val resp = request(baseUrl, "/api/login", "POST", payload, csrf, nonce())
+        return parseLogin(request(baseUrl, "/api/login", "POST", payload, csrf, nonce()))
+    }
+
+    /**
+     * 邮箱验证码登录（QQ 邮箱等，与网站登录页的「验证码登录」完全同一条链路）：
+     *   1. sendCode(url, email, "login") —— 邮箱必须已注册
+     *   2. loginWithCode(url, code)     —— loginType='code'，不需要用户名
+     */
+    fun loginWithCode(baseUrl: String, code: String): LoginResult {
+        val csrf = fetchCsrf(baseUrl)
+        if (csrf.isBlank()) {
+            return LoginResult(false, "无法获取安全令牌，请检查网络或服务器地址")
+        }
+        val payload = JSONObject()
+            .put("code", code)
+            .put("loginType", "code")
+            .put("app_client", APP_CLIENT)
+            .toString()
+
+        return parseLogin(request(baseUrl, "/api/login", "POST", payload, csrf, nonce()))
+    }
+
+    /** 解析 /api/login 的响应（密码登录与验证码登录共用） */
+    private fun parseLogin(resp: Response): LoginResult {
         val json = runCatching { JSONObject(resp.body) }.getOrNull()
             ?: return LoginResult(false, "服务器返回异常（HTTP ${resp.code}）")
 
@@ -217,14 +242,17 @@ object Api {
         return if (login.success) login.copy(message = "注册成功，已自动登录") else login.copy(message = "注册成功，请返回登录")
     }
 
-    /** 发送邮箱验证码（App 通道，跳过图形验证码） */
-    fun sendCode(baseUrl: String, email: String): SendCodeResult {
+    /**
+     * 发送邮箱验证码（App 通道，跳过图形验证码）。
+     * @param type "register"（注册，邮箱不能已存在）或 "login"（登录，邮箱必须已注册）
+     */
+    fun sendCode(baseUrl: String, email: String, type: String = "register"): SendCodeResult {
         return try {
             val csrf = fetchCsrf(baseUrl)
             if (csrf.isBlank()) return SendCodeResult(false, "无法获取安全令牌，请检查网络")
             val payload = JSONObject()
                 .put("email", email)
-                .put("type", "register")
+                .put("type", type)
                 .put("app_client", APP_CLIENT)
                 .toString()
             val resp = request(baseUrl, "/api/send-code", "POST", payload, csrf, nonce())

@@ -73,13 +73,13 @@ fun ProfileScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        // 身份：访客 / 成员 / 管理员（由网站下发）
+                        // 身份：访客 / 成员 / 管理员（由网站下发；仅用于区分人员，不影响可用功能）
                         val roleText = Prefs.roleLabel.ifBlank {
                             if (Prefs.loggedIn) "成员" else ""
                         }
                         if (roleText.isNotBlank()) {
                             Text(
-                                "身份：$roleText" + if (Prefs.isGuest) "（非工会）" else "",
+                                "身份：$roleText（仅作区分）",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -141,7 +141,7 @@ fun ProfileScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        "账号：软件内注册的账号为「访客」身份，可被管理员在网站后台限时封禁；封禁期间无法登录使用。",
+                        "账号：「访客 / 成员」只是身份区分（非会员 / 会员），登录后功能完全一致；管理员可对账号限时封禁，封禁期间无法登录。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
