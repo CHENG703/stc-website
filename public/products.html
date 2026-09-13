@@ -6,14 +6,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>STC - 产品中心</title>
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
-    <link rel="stylesheet" href="css/style-v5.css?v=18">
+    <link rel="stylesheet" href="css/style-v5.css?v=19">
     <script src="js/lang.js"></script>
     <script src="js/config.js"></script>
     <script src="js/bj-time.js?v=16"></script>
     <style>
         /* 与关于我们页面一致的清爽蓝白风格 */
         body.about-page {
-            background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 50%, #ffffff 100%);
+            /* 背景改由 .page-bg 图层提供（见下方），此处只留兜底底色 */
+            background: #05060a;
             min-height: 100vh;
         }
         body.about-page .navbar {
@@ -222,9 +223,90 @@
                 gap: 0.75rem;
             }
         }
+
+        /* ===== 背景图 + 毛玻璃（深色主题） ===== */
+        body.about-page .navbar {
+            background: rgba(9, 11, 18, 0.5);
+            backdrop-filter: saturate(180%) blur(18px);
+            -webkit-backdrop-filter: saturate(180%) blur(18px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        body.about-page .navbar a,
+        body.about-page .nav-brand a {
+            color: #e2e8f0;
+        }
+        body.about-page .navbar a.active {
+            color: #7dd3fc;
+        }
+        body.about-page .section-title,
+        .products-hero h1 {
+            color: #f1f5f9;
+        }
+        body.about-page .footer {
+            background: rgba(14, 17, 27, 0.45);
+            color: #9ca8c2;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(14px) saturate(160%);
+            -webkit-backdrop-filter: blur(14px) saturate(160%);
+        }
+        .products-hero .hero-subtitle,
+        .products-section .section-desc {
+            color: #cbd5e1;
+        }
+        .product-card {
+            background: rgba(18, 22, 34, 0.42);
+            border-color: rgba(255, 255, 255, 0.13);
+            backdrop-filter: blur(16px) saturate(160%);
+            -webkit-backdrop-filter: blur(16px) saturate(160%);
+        }
+        .product-card:hover {
+            border-color: rgba(125, 211, 252, 0.45);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.4);
+        }
+        .product-card .product-icon {
+            background: rgba(56, 189, 248, 0.14);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+        }
+        .product-card h3 {
+            color: #f1f5f9;
+        }
+        .product-card .product-desc,
+        .join-section .join-content p {
+            color: #9ca8c2;
+        }
+        .product-status.status-live {
+            background: rgba(34, 197, 94, 0.16);
+            color: #4ade80;
+        }
+        .product-status.status-wip {
+            background: rgba(250, 204, 21, 0.16);
+            color: #fbbf24;
+        }
+        .product-status.status-plan {
+            background: rgba(148, 163, 184, 0.16);
+            color: #cbd5e1;
+        }
+        .dev-banner-box {
+            color: #fbbf24;
+        }
+        .join-section .join-content {
+            background: rgba(18, 22, 34, 0.42);
+            border-color: rgba(255, 255, 255, 0.13);
+            backdrop-filter: blur(16px) saturate(160%);
+            -webkit-backdrop-filter: blur(16px) saturate(160%);
+        }
+        @media (max-width: 768px) {
+            .product-card,
+            .join-section .join-content {
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+                background: rgba(18, 22, 34, 0.5);
+            }
+        }
     </style>
 </head>
-<body class="about-page">
+<body class="bg-image about-page">
+    <div class="page-bg" aria-hidden="true"></div>
     <div class="aurora-bg">
         <div class="aurora-blob aurora-blob-1"></div>
         <div class="aurora-blob aurora-blob-2"></div>

@@ -6,13 +6,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>STC工会 - 成员列表</title>
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
-    <link rel="stylesheet" href="css/style-v5.css?v=18">
+    <link rel="stylesheet" href="css/style-v5.css?v=19">
     <script src="js/lang.js"></script>
     <script src="js/config.js"></script>
     <script src="js/bj-time.js?v=16"></script>
     <style>
         body.members-page {
-            background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 50%, #ffffff 100%);
+            /* 背景改由 .page-bg 图层提供（见下方），此处只留兜底底色 */
+            background: #05060a;
             min-height: 100vh;
         }
         body.members-page .navbar {
@@ -167,9 +168,65 @@
                 gap: 1rem;
             }
         }
+
+        /* ===== 背景图 + 毛玻璃（深色主题） ===== */
+        body.members-page .navbar {
+            background: rgba(9, 11, 18, 0.5);
+            backdrop-filter: saturate(180%) blur(18px);
+            -webkit-backdrop-filter: saturate(180%) blur(18px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        body.members-page .navbar a,
+        body.members-page .nav-brand a {
+            color: #e2e8f0;
+        }
+        body.members-page .navbar a.active {
+            color: #7dd3fc;
+        }
+        body.members-page .section-title {
+            color: #f1f5f9;
+        }
+        .members-header p {
+            color: #cbd5e1;
+        }
+        .members-stat-label {
+            color: #9ca8c2;
+        }
+        .member-card {
+            background: rgba(18, 22, 34, 0.42);
+            border-color: rgba(255, 255, 255, 0.13);
+            backdrop-filter: blur(16px) saturate(160%);
+            -webkit-backdrop-filter: blur(16px) saturate(160%);
+        }
+        .member-card:hover {
+            border-color: rgba(125, 211, 252, 0.45);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }
+        .member-card h3 {
+            color: #f1f5f9;
+        }
+        .member-desc {
+            color: #9ca8c2;
+        }
+        .member-role {
+            background: rgba(56, 189, 248, 0.14);
+            color: #7dd3fc;
+        }
+        .member-avatar {
+            background: rgba(56, 189, 248, 0.12);
+            border-color: rgba(56, 189, 248, 0.3);
+        }
+        @media (max-width: 768px) {
+            .member-card {
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+                background: rgba(18, 22, 34, 0.5);
+            }
+        }
     </style>
 </head>
-<body class="members-page">
+<body class="bg-image members-page">
+    <div class="page-bg" aria-hidden="true"></div>
     <div class="aurora-bg">
         <div class="aurora-blob aurora-blob-1"></div>
         <div class="aurora-blob aurora-blob-2"></div>

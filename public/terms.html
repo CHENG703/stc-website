@@ -6,7 +6,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>服务条款与隐私协议 - STC网站</title>
-    <link rel="stylesheet" href="css/style-v5.css?v=18">
+    <link rel="stylesheet" href="css/style-v5.css?v=19">
     <style>
         .terms-modal {
             position: fixed;
@@ -150,9 +150,23 @@
             border-radius: 3px;
             font-style: normal;
         }
+
+        /* ===== 背景图 + 毛玻璃 ===== */
+        body.bg-image .terms-modal {
+            background: rgba(5, 6, 10, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        body.bg-image .terms-content {
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(20px) saturate(160%);
+            -webkit-backdrop-filter: blur(20px) saturate(160%);
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+        }
     </style>
 </head>
-<body>
+<body class="bg-image">
+    <div class="page-bg" aria-hidden="true"></div>
     <div class="aurora-bg">
         <div class="aurora-blob aurora-blob-1"></div>
         <div class="aurora-blob aurora-blob-2"></div>

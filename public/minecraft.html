@@ -17,7 +17,8 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             min-height: 100vh;
             overflow: hidden;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            /* 背景改由 .page-bg 图层提供（见下方），此处只留兜底底色 */
+            background: #05060a;
             position: relative;
         }
 
@@ -241,9 +242,38 @@
                 font-size: 24px;
             }
         }
+
+        /* ===== 背景图 + 毛玻璃 ===== */
+        .page-bg {
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background: #05060a url('/bg-hero.jpg') center center / cover no-repeat;
+        }
+
+        /* 原来的白点纹理是给紫色渐变配的，背景图下关掉 */
+        body::before {
+            display: none;
+        }
+
+        .glass-card {
+            background: rgba(18, 22, 34, 0.5);
+            border-color: rgba(255, 255, 255, 0.16);
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45);
+        }
+
+        .server-item {
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .server-item.active {
+            background: rgba(16, 185, 129, 0.18);
+        }
     </style>
 </head>
-<body>
+<body class="bg-image">
+    <div class="page-bg" aria-hidden="true"></div>
     <div class="aurora-bg">
         <div class="aurora-blob aurora-blob-1"></div>
         <div class="aurora-blob aurora-blob-2"></div>

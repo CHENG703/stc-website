@@ -3314,3 +3314,109 @@ body.bg-image.light-theme .task-stats .stat-card {
         background: rgba(18, 22, 34, 0.5);
     }
 }
+
+/* ============================================================
+   内页延伸：关于我们 / 管理面板 / 用户中心 / 任务详情
+   这几个页面本来就是暗色主题，加上 body.bg-image 后
+   直接把面板换成同样的毛玻璃即可。
+   ============================================================ */
+
+/* ---------- 关于我们（about.html，页面自带的 .ld-* 卡片） ---------- */
+body.bg-image .ld-card,
+body.bg-image .ld-feature,
+body.bg-image .ld-team,
+body.bg-image .ld-tl-card,
+body.bg-image .ld-gallery-item,
+body.bg-image .ld-panel,
+body.bg-image .ld-join {
+    background: rgba(18, 22, 34, 0.42);
+    border-color: rgba(255, 255, 255, 0.13);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+
+body.bg-image .ld-stats {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(168, 85, 247, 0.12)),
+                rgba(18, 22, 34, 0.35);
+}
+
+body.bg-image .ld-toolbar .theme-toggle,
+body.bg-image .ld-toolbar #nav-user a,
+body.bg-image .ld-hero-timer {
+    background: rgba(18, 22, 34, 0.45);
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+/* ---------- 管理面板（admin.html） ---------- */
+body.bg-image .admin-section {
+    background: rgba(18, 22, 34, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+
+body.bg-image .admin-section .data-table th {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+body.bg-image .admin-section .data-table tr:hover td {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* ---------- 用户中心（user.html） ---------- */
+body.bg-image .user-info,
+body.bg-image .user-avatar-section,
+body.bg-image .action-card {
+    background: rgba(18, 22, 34, 0.42);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+
+body.bg-image .user-info,
+body.bg-image .user-avatar-section,
+body.bg-image .action-card,
+body.bg-image .user-info .form-group input,
+body.bg-image .action-card .form-group input {
+    border-color: rgba(255, 255, 255, 0.13);
+}
+
+body.bg-image .avatar-preview {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* ---------- 任务详情（task.html，正文由 js/task.js 生成） ---------- */
+body.bg-image .task-detail {
+    background: rgba(18, 22, 34, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: var(--radius-4);
+    padding: 24px;
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+
+body.bg-image .task-detail-header,
+body.bg-image .task-detail-meta,
+body.bg-image .task-detail-content,
+body.bg-image .task-detail-text {
+    background: transparent;
+}
+
+/* 小屏统一降模糊 */
+@media (max-width: 768px) {
+    body.bg-image .ld-card,
+    body.bg-image .ld-feature,
+    body.bg-image .ld-team,
+    body.bg-image .ld-tl-card,
+    body.bg-image .ld-gallery-item,
+    body.bg-image .ld-panel,
+    body.bg-image .ld-join,
+    body.bg-image .admin-section,
+    body.bg-image .user-info,
+    body.bg-image .user-avatar-section,
+    body.bg-image .action-card,
+    body.bg-image .task-detail {
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        background: rgba(18, 22, 34, 0.5);
+    }
+}
