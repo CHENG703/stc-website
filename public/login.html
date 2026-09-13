@@ -18,11 +18,14 @@
         body {
             font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
             min-height: 100vh;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            /* 背景改由 .page-bg 图层提供（见下方），此处只留兜底底色 */
+            background: #05060a;
             display: flex;
-            justify-content: center;
+            /* 靠右对齐：背景图的「無畏進歩」logo 居中，靠右能让左侧露出文字 */
+            justify-content: flex-end;
             align-items: center;
             padding: 20px;
+            padding-right: clamp(28px, 5vw, 80px);
             position: relative;
             overflow: hidden;
         }
@@ -597,18 +600,70 @@
             display: none !important;
         }
 
+        @media (max-width: 640px) {
+            body {
+                justify-content: center;
+                padding-right: 20px;
+            }
+        }
+
         @media (max-width: 480px) {
             .glass-card {
                 padding: 28px 20px;
             }
-            
+
             .title {
                 font-size: 22px;
             }
         }
+
+        /* ===== 背景图 + 毛玻璃 ===== */
+        .page-bg {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background: #05060a url('/bg-hero.jpg') center center / cover no-repeat;
+        }
+
+        .page-bg::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(5, 6, 10, 0.25) 0%, rgba(5, 6, 10, 0.6) 100%);
+        }
+
+        /* 主卡片：毛玻璃（覆盖上面的基础样式） */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(24px) saturate(160%);
+            -webkit-backdrop-filter: blur(24px) saturate(160%);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45),
+                        inset 0 1px 1px rgba(255, 255, 255, 0.12);
+        }
+
+        /* 卡片内的次级模块：半透明玻璃感（不再叠加 backdrop-filter，省 GPU） */
+        .form-input,
+        .login-tabs,
+        .login-steps {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+        }
+
+        .form-input:focus {
+            background: rgba(255, 255, 255, 0.11);
+        }
+
+        /* 登录步骤面板：独立成块，单独毛玻璃 */
+        .login-steps {
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
     </style>
 </head>
 <body>
+    <div class="page-bg" aria-hidden="true"></div>
     <div class="login-container">
         <div class="glass-card">
             <div class="header">

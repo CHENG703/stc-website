@@ -17,30 +17,27 @@
         body {
             font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
             min-height: 100vh;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            /* 背景改由 .page-bg 图层提供（见下方），此处只留兜底底色 */
+            background: #05060a;
             display: flex;
-            justify-content: center;
+            /* 靠右对齐：背景图的「無畏進歩」logo 居中，靠右能让左侧露出文字 */
+            justify-content: flex-end;
             align-items: center;
             padding: 20px;
+            padding-right: clamp(28px, 5vw, 80px);
             position: relative;
             overflow: hidden;
         }
 
+        /* 背景图之上的一层静态柔光（原旋转光晕已移除，避免全屏重绘掉帧） */
         body::before {
             content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle at 30% 30%, rgba(102, 126, 234, 0.3) 0%, transparent 50%),
-                        radial-gradient(circle at 70% 70%, rgba(118, 75, 162, 0.3) 0%, transparent 50%);
-            animation: bgMove 20s linear infinite;
-        }
-
-        @keyframes bgMove {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            pointer-events: none;
+            background: radial-gradient(ellipse 70% 50% at 50% 0%, rgba(102, 126, 234, 0.16) 0%, transparent 60%),
+                        radial-gradient(ellipse 60% 50% at 100% 100%, rgba(118, 75, 162, 0.14) 0%, transparent 60%);
         }
 
         .register-container {
@@ -328,26 +325,70 @@
             color: #667eea;
         }
 
+        @media (max-width: 640px) {
+            body {
+                justify-content: center;
+                padding-right: 20px;
+            }
+        }
+
         @media (max-width: 480px) {
             .glass-card {
                 padding: 28px 20px;
             }
-            
+
             .title {
                 font-size: 22px;
             }
-            
+
             .invite-code-wrapper {
                 flex-direction: column;
             }
-            
+
             .invite-code-wrapper .send-btn {
                 width: 100%;
             }
         }
+
+        /* ===== 背景图 + 毛玻璃 ===== */
+        .page-bg {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background: #05060a url('/bg-hero.jpg') center center / cover no-repeat;
+        }
+
+        .page-bg::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(5, 6, 10, 0.25) 0%, rgba(5, 6, 10, 0.6) 100%);
+        }
+
+        /* 主卡片：毛玻璃（覆盖上面的基础样式） */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(24px) saturate(160%);
+            -webkit-backdrop-filter: blur(24px) saturate(160%);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45),
+                        inset 0 1px 1px rgba(255, 255, 255, 0.12);
+        }
+
+        /* 卡片内的次级模块：半透明玻璃感（不再叠加 backdrop-filter，省 GPU） */
+        .form-input {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+        }
+
+        .form-input:focus {
+            background: rgba(255, 255, 255, 0.11);
+        }
     </style>
 </head>
 <body>
+    <div class="page-bg" aria-hidden="true"></div>
     <div class="aurora-bg">
         <div class="aurora-blob aurora-blob-1"></div>
         <div class="aurora-blob aurora-blob-2"></div>

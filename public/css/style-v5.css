@@ -3197,3 +3197,110 @@ body.light-theme .lang-option:hover {
         padding: 14px;
     }
 }
+
+/* ============================================================
+   背景图 + 毛玻璃主题
+   仅对带 body.bg-image 的页面生效（当前为 index.html），
+   其它页面不受影响。
+   说明：
+   - 背景层用 position:fixed 的 .page-bg，而不是
+     background-attachment:fixed —— iOS Safari 不支持后者。
+   - 前提：html 不能设置背景色。body 背景会传播到画布，
+     z-index:-1 的固定层才可见；若给 html 加背景，背景图会被
+     整块盖住。
+   ============================================================ */
+.page-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: #05060a url('/bg-hero.jpg') center center / cover no-repeat;
+}
+
+/* 极光光斑减弱，避免盖住背景图 */
+body.bg-image .aurora-blob {
+    opacity: 0.22;
+}
+
+/* 顶栏：半透明毛玻璃，滚动时不遮挡背景 */
+body.bg-image .navbar {
+    background: rgba(9, 11, 18, 0.5);
+    backdrop-filter: saturate(180%) blur(18px);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+}
+
+/* 卡片类模块：半透明 + 毛玻璃 */
+body.bg-image .hero-quote,
+body.bg-image .task-stats,
+body.bg-image .task-categories,
+body.bg-image .task-card,
+body.bg-image .message-form,
+body.bg-image .message-item,
+body.bg-image .announcement-card {
+    background: rgba(18, 22, 34, 0.42);
+    border-color: rgba(255, 255, 255, 0.13);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+
+/* 卡片内部的次级元素：只做半透明玻璃感，不叠加 backdrop-filter（省 GPU） */
+body.bg-image .task-stats .stat-card,
+body.bg-image .category-btn.active {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.13);
+}
+
+body.bg-image .message-form textarea,
+body.bg-image .message-form textarea:focus {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.13);
+}
+
+/* hover 态：略微提亮 */
+body.bg-image .task-card:hover,
+body.bg-image .message-item:hover {
+    background: rgba(38, 45, 68, 0.55);
+    border-color: rgba(255, 255, 255, 0.22);
+}
+
+body.bg-image .task-card.pinned {
+    background: linear-gradient(180deg, rgba(251, 191, 36, 0.1) 0%, rgba(18, 22, 34, 0.42) 100%);
+}
+
+/* 页脚 */
+body.bg-image .footer {
+    background: rgba(14, 17, 27, 0.45);
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+}
+
+/* 浅色主题下换成浅色玻璃，避免深色块突兀 */
+body.bg-image.light-theme .hero-quote,
+body.bg-image.light-theme .task-stats,
+body.bg-image.light-theme .task-categories,
+body.bg-image.light-theme .task-card,
+body.bg-image.light-theme .message-form,
+body.bg-image.light-theme .message-item,
+body.bg-image.light-theme .announcement-card {
+    background: rgba(255, 255, 255, 0.62);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+body.bg-image.light-theme .task-stats .stat-card {
+    background: rgba(255, 255, 255, 0.55);
+}
+
+/* 小屏降低模糊半径，减少合成开销 */
+@media (max-width: 768px) {
+    body.bg-image .hero-quote,
+    body.bg-image .task-stats,
+    body.bg-image .task-categories,
+    body.bg-image .task-card,
+    body.bg-image .message-form,
+    body.bg-image .message-item,
+    body.bg-image .announcement-card {
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        background: rgba(18, 22, 34, 0.5);
+    }
+}
