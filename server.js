@@ -1778,7 +1778,7 @@ const sessionConfig = {
     cookie: {
         secure: IS_VERCEL || isProduction,
         maxAge: 24 * 60 * 60 * 1000,
-        httpOnly: false,
+        httpOnly: true,
         sameSite: IS_VERCEL || isProduction ? 'none' : 'lax',
         path: '/'
     }
@@ -2604,8 +2604,10 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
         
         // 检查用户名是否匹配
         if (username === adminUsername) {
-            // 验证密码
-            if (password === adminPassword) {
+            // 验证密码（使用时间安全比较，防止时序攻击）
+            const pwdBuf = Buffer.from(password, 'utf8');
+            const adminBuf = Buffer.from(adminPassword, 'utf8');
+            if (pwdBuf.length === adminBuf.length && crypto.timingSafeEqual(pwdBuf, adminBuf)) {
                 console.log('[LOGIN] 使用环境变量回退凭据登录:', username);
                 
                 // 确保管理员用户存在于数据库（即时创建）
@@ -4317,21 +4319,15 @@ app.post('/api/invite/request', requireRateLimit('invite'), requireCSRF, require
 app.get('/api/invite/approve/:token', async (req, res) => {
     const token = req.params.token;
     const clientIP = getClientIP(req);
-    console.log(`[DEBUG-APPROVE] ⚡ 收到批准请求! token=${token.substring(0, 12)}... 来自IP=${clientIP}, UA=${req.headers['user-agent']?.substring(0, 80) || '-'}`);
+    console.log(`[APPROVE] 收到批准请求, IP=${clientIP}`);
     if (!Array.isArray(db.data.invite_requests)) db.data.invite_requests = [];
-    console.log(`[DEBUG-APPROVE] 数据库中 invite_requests 总数: ${db.data.invite_requests.length}`);
-    db.data.invite_requests.forEach((r, i) => {
-        console.log(`[DEBUG-APPROVE] 记录#${i}: email=${r.email}, status=${r.status}, approval_token=${r.approval_token ? r.approval_token.substring(0,12)+'...' : 'MISSING!'}`);
-    });
     const request = db.data.invite_requests.find(r => r.approval_token === token);
     if (!request) {
         console.log(`[DEBUG-APPROVE] ❌ token 不匹配任何记录！`);
         return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
-    console.log(`[DEBUG-APPROVE] ✅ 找到申请记录: email=${request.email}, status=${request.status}`);
     if (request.status !== 'pending') {
-        console.log(`[DEBUG-APPROVE] ⚠️  状态不是 pending，已处理过: ${request.status}`);
-        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${request.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${xssEscape(request.status)}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
     try {
         const inviteCode = crypto.randomBytes(16).toString('hex');
@@ -4378,7 +4374,7 @@ app.get('/api/invite/approve/:token', async (req, res) => {
                     <h1 style="color:white;margin:0;font-size:24px;">✅ 已批准申请</h1>
                 </div>
                 <div style="background:#ecfdf5;padding:30px;border-radius:0 0 16px 16px;border:1px solid #a7f3d0;">
-                    <p style="color:#475569;font-size:16px;">已为邮箱 <strong>${request.email}</strong> 生成邀请码：</p>
+                    <p style="color:#475569;font-size:16px;">已为邮箱 <strong>${xssEscape(request.email)}</strong> 生成邀请码：</p>
                     <div style="background:white;padding:20px;border-radius:12px;text-align:center;margin:20px 0;border:2px dashed #10b981;">
                         <span style="font-size:26px;font-weight:bold;color:#047857;letter-spacing:3px;word-break:break-all;">${inviteCode}</span>
                     </div>
@@ -4389,28 +4385,21 @@ app.get('/api/invite/approve/:token', async (req, res) => {
         `);
     } catch (error) {
         console.error('[APPROVE-TOKEN] 批准失败:', error.message);
-        res.status(500).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 服务器错误</h1><p>${error.message}</p></div>`);
+        res.status(500).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 服务器错误</h1><p>${xssEscape(error.message)}</p></div>`);
     }
 });
 
 app.get('/api/invite/reject/:token', async (req, res) => {
     const token = req.params.token;
     const clientIP = getClientIP(req);
-    console.log(`[DEBUG-REJECT] ⚡ 收到拒绝请求! token=${token.substring(0, 12)}... 来自IP=${clientIP}, UA=${req.headers['user-agent']?.substring(0, 80) || '-'}`);
+    console.log(`[REJECT] 收到拒绝请求, IP=${clientIP}`);
     if (!Array.isArray(db.data.invite_requests)) db.data.invite_requests = [];
-    console.log(`[DEBUG-REJECT] 数据库中 invite_requests 总数: ${db.data.invite_requests.length}`);
-    db.data.invite_requests.forEach((r, i) => {
-        console.log(`[DEBUG-REJECT] 记录#${i}: email=${r.email}, status=${r.status}, reject_token=${r.reject_token ? r.reject_token.substring(0,12)+'...' : 'MISSING!'}`);
-    });
     const request = db.data.invite_requests.find(r => r.reject_token === token);
     if (!request) {
-        console.log(`[DEBUG-REJECT] ❌ token 不匹配任何记录！`);
         return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
-    console.log(`[DEBUG-REJECT] ✅ 找到申请记录: email=${request.email}, status=${request.status}`);
     if (request.status !== 'pending') {
-        console.log(`[DEBUG-REJECT] ⚠️  状态不是 pending，已处理过: ${request.status}`);
-        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${request.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${xssEscape(request.status)}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
     request.status = 'rejected';
     request.rejected_at = new Date().toISOString();
@@ -4444,7 +4433,7 @@ app.get('/api/invite/reject/:token', async (req, res) => {
                 <h1 style="color:white;margin:0;font-size:24px;">❌ 已拒绝申请</h1>
             </div>
             <div style="background:#fef2f2;padding:30px;border-radius:0 0 16px 16px;border:1px solid #fecaca;">
-                <p style="color:#475569;font-size:16px;">已拒绝邮箱 <strong>${request.email}</strong> 的邀请码申请。</p>
+                <p style="color:#475569;font-size:16px;">已拒绝邮箱 <strong>${xssEscape(request.email)}</strong> 的邀请码申请。</p>
                 <p style="color:#64748b;font-size:14px;">驳回通知邮件已发送给申请人。</p>
                 <p><a href="/admin.html" style="color:#b91c1c;font-weight:bold;">返回管理面板</a></p>
             </div>
@@ -4698,12 +4687,12 @@ app.get('/api/join/approve/:token', async (req, res) => {
         return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
     if (application.status !== 'pending') {
-        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${application.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${xssEscape(application.status)}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
 
     const email = application.email;
     // 为申请人生成随机初始密码（邮件中告知，登录后可自行修改）
-    const password = Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
+    const password = crypto.randomBytes(4).toString('hex') + crypto.randomBytes(2).toString('hex');
 
     // 该 QQ 邮箱已注册过账号：标记已处理，并提示
     if (db.data.users.find(u => u.email === email)) {
@@ -4711,7 +4700,7 @@ app.get('/api/join/approve/:token', async (req, res) => {
         application.approved_at = new Date().toISOString();
         application.note = 'QQ邮箱已存在账号，未重复创建';
         await db.write();
-        return res.send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;"><h1 style="color:#f59e0b;">⚠️ 该QQ已注册过账号</h1><p>申请人 <strong>${application.gameId}</strong>（QQ ${application.qq}）的邮箱已存在账号，请让其直接登录。</p><a href="/admin.html" style="color:#6366f1;">返回管理面板</a></div>`);
+        return res.send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;"><h1 style="color:#f59e0b;">⚠️ 该QQ已注册过账号</h1><p>申请人 <strong>${xssEscape(application.gameId)}</strong>（QQ ${xssEscape(application.qq)}）的邮箱已存在账号，请让其直接登录。</p><a href="/admin.html" style="color:#6366f1;">返回管理面板</a></div>`);
     }
 
     // 用户名使用游戏ID；若冲突则加 QQ 号后缀
@@ -4720,7 +4709,7 @@ app.get('/api/join/approve/:token', async (req, res) => {
         username = `${application.gameId}_${application.qq}`;
     }
     if (db.data.users.find(u => u.username === username)) {
-        username = `${application.gameId}_${application.qq}_${Math.random().toString(36).slice(2, 6)}`;
+        username = `${application.gameId}_${application.qq}_${crypto.randomBytes(2).toString('hex')}`;
     }
 
     const hash = bcrypt.hashSync(password, 10);
@@ -4789,11 +4778,11 @@ app.get('/api/join/approve/:token', async (req, res) => {
                 <h1 style="color:white;margin:0;font-size:24px;">✅ 已批准加入</h1>
             </div>
             <div style="background:#ecfdf5;padding:30px;border-radius:0 0 16px 16px;border:1px solid #a7f3d0;">
-                <p style="color:#475569;font-size:16px;">已批准 <strong>${application.gameId}</strong>（QQ ${application.qq}）加入 STC 工会。</p>
+                <p style="color:#475569;font-size:16px;">已批准 <strong>${xssEscape(application.gameId)}</strong>（QQ ${xssEscape(application.qq)}）加入 STC 工会。</p>
                 <p style="color:#475569;font-size:16px;">账号已自动创建：</p>
                 <div style="background:white;padding:16px;border-radius:12px;margin:16px 0;border:2px dashed #10b981;text-align:left;">
-                    <p style="margin:4px 0;color:#475569;">用户名：<strong>${username}</strong></p>
-                    <p style="margin:4px 0;color:#475569;">邮箱：<strong>${email}</strong></p>
+                    <p style="margin:4px 0;color:#475569;">用户名：<strong>${xssEscape(username)}</strong></p>
+                    <p style="margin:4px 0;color:#475569;">邮箱：<strong>${xssEscape(email)}</strong></p>
                     <p style="margin:4px 0;color:#475569;">密码：<strong>${password}</strong></p>
                 </div>
                 ${mailStatus}
@@ -4813,7 +4802,7 @@ app.get('/api/join/reject/:token', async (req, res) => {
         return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
     if (application.status !== 'pending') {
-        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${application.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
+        return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${xssEscape(application.status)}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
 
     application.status = 'rejected';
@@ -4857,7 +4846,7 @@ app.get('/api/join/reject/:token', async (req, res) => {
                 <h1 style="color:white;margin:0;font-size:24px;">❌ 已驳回申请</h1>
             </div>
             <div style="background:#fef2f2;padding:30px;border-radius:0 0 16px 16px;border:1px solid #fecaca;">
-                <p style="color:#475569;font-size:16px;">已驳回 <strong>${application.gameId}</strong>（QQ ${application.qq}）的加入申请。</p>
+                <p style="color:#475569;font-size:16px;">已驳回 <strong>${xssEscape(application.gameId)}</strong>（QQ ${xssEscape(application.qq)}）的加入申请。</p>
                 ${mailStatus}
                 <p><a href="/admin.html" style="color:#b91c1c;font-weight:bold;">返回管理面板</a></p>
             </div>
