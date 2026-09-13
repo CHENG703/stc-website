@@ -19,13 +19,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+// 灰阶头像底色：与整体灰色主题保持一致，不再使用彩色
 private val AvatarPalette = listOf(
-    Color(0xFF7EA6FF),
-    Color(0xFF8AD3A0),
-    Color(0xFFFFC978),
-    Color(0xFFFF9AA2),
-    Color(0xFFB39DFF),
-    Color(0xFF7FD8E8)
+    Color(0xFF7A7A7A),
+    Color(0xFF8E8E8E),
+    Color(0xFF6B6B6B),
+    Color(0xFF9A9A9A),
+    Color(0xFF808080),
+    Color(0xFF707070)
 )
 
 /** 首字母头像：比加载真实图标省内存，列表滚动也更顺 */
@@ -37,7 +38,7 @@ fun LetterAvatar(text: String, size: Int = 40) {
         modifier = Modifier
             .size(size.dp)
             .clip(CircleShape)
-            .background(color.copy(alpha = 0.20f)),
+            .background(color.copy(alpha = 0.22f)),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -61,6 +62,7 @@ fun SectionHeader(title: String) {
     )
 }
 
+/** 空列表提示：按需求「软件内不要图标」，纯文字 */
 @Composable
 fun EmptyHint(text: String) {
     Column(
@@ -69,13 +71,11 @@ fun EmptyHint(text: String) {
             .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("\uD83D\uDCED", fontSize = 30.sp)
         Text(
             text,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 8.dp)
+            textAlign = TextAlign.Center
         )
     }
 }

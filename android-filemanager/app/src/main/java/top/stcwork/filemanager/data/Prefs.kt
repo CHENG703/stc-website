@@ -43,6 +43,15 @@ object Prefs {
         get() = p().getBoolean("is_admin", false)
         set(value) = p().edit().putBoolean("is_admin", value).apply()
 
+    /** 角色：guest(访客) / member(成员) / admin / superadmin，由服务端下发 */
+    var role: String
+        get() = p().getString("role", "") ?: ""
+        set(value) = p().edit().putString("role", value).apply()
+
+    var roleLabel: String
+        get() = p().getString("role_label", "") ?: ""
+        set(value) = p().edit().putString("role_label", value).apply()
+
     /** 是否跳过登录（仅本地文件功能） */
     var skipLogin: Boolean
         get() = p().getBoolean("skip_login", false)
@@ -51,12 +60,32 @@ object Prefs {
     val loggedIn: Boolean
         get() = token.isNotBlank() || username.isNotBlank()
 
-    fun saveSession(token: String, username: String, email: String, isAdmin: Boolean) {
+    /** 是否访客身份（非工会人员，软件注册默认） */
+    val isGuest: Boolean
+        get() = role == "guest"
+
+    /**
+     * 功能权限：只有登录用户才能改名/删除/新建/打包/解压/粘贴/提取安装包。
+     * 未登录（含「暂不登录」）只能浏览、打开、复制、查看详情。
+     */
+    val canWrite: Boolean
+        get() = loggedIn
+
+    fun saveSession(
+        token: String,
+        username: String,
+        email: String,
+        isAdmin: Boolean,
+        role: String = "",
+        roleLabel: String = ""
+    ) {
         p().edit()
             .putString("token", token)
             .putString("username", username)
             .putString("email", email)
             .putBoolean("is_admin", isAdmin)
+            .putString("role", role)
+            .putString("role_label", roleLabel)
             .putBoolean("skip_login", false)
             .apply()
     }
@@ -67,6 +96,8 @@ object Prefs {
             .remove("username")
             .remove("email")
             .remove("is_admin")
+            .remove("role")
+            .remove("role_label")
             .apply()
     }
 }

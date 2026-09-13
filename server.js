@@ -1201,6 +1201,24 @@ function requireCaptcha(req, res, next) {
     });
 }
 
+// App 专用：安卓客户端（STC 文件管理器）无法渲染 SVG 图形验证码，
+// 允许携带 app_client 标记跳过图形验证，改由「邮箱验证码 + 严格限流」等价防护：
+//   ① 注册/发码都必须先拿到邮箱里的 6 位码（真实邮箱成本高）；
+//   ② requireRateLimit 对 IP 限流；
+//   ③ 写请求的 Origin 校验仍然生效 —— 浏览器端伪造该标记会被 Origin 检查拦掉。
+// 注意：网页端（带 Origin 的浏览器请求）一律走原 requireCaptcha，行为不变。
+const APP_CLIENT_ID = 'stc-filemanager';
+function isAppClient(req) {
+    return !!(req.body && req.body.app_client === APP_CLIENT_ID);
+}
+function requireCaptchaApp(req, res, next) {
+    if (isAppClient(req)) {
+        console.log('[CAPTCHA] App 客户端跳过图形验证:', getClientIP(req));
+        return next();
+    }
+    return requireCaptcha(req, res, next);
+}
+
 // 注意：/api/login 自 2026-09-13 起不再挂人机验证（图形验证码），两种登录方式一致：
 // - 邮箱验证码登录：发码接口 /api/send-code 已强制人机验证 + 限流（1 分钟 3 次），
 //   邮箱里那串 6 位码本身就是第二因素；前端也才能做到「填满 6 位 → 自动核验登录」。
@@ -2522,6 +2540,72 @@ function isSafePath(filePath, allowedDir) {
     return resolvedPath.startsWith(resolvedAllowedDir);
 }
 
+// ==================== 角色体系（2026-09-13 新增） ====================
+// role 字段取值：
+//   'guest'  —— 访客：非工会人员自助注册（网站注册页 / 软件内注册）默认身份
+//   'member' —— 成员：工会人员（加入申请审批通过建号，或管理员手动升级）
+// 历史用户没有 role 字段，一律按 member 处理，避免老账号被降级。
+// 管理员身份仍由 is_admin / is_super_admin 决定，与 role 独立。
+const ROLE_GUEST = 'guest';
+const ROLE_MEMBER = 'member';
+
+function normalizeRole(role) {
+    return role === ROLE_GUEST ? ROLE_GUEST : ROLE_MEMBER;
+}
+
+/** 返回用于展示/判断的角色：'superadmin' | 'admin' | 'guest' | 'member' */
+function getUserRole(user) {
+    if (!user) return ROLE_GUEST;
+    if (user.is_super_admin) return 'superadmin';
+    if (user.is_admin) return 'admin';
+    return normalizeRole(user.role);
+}
+
+function roleLabel(role) {
+    switch (role) {
+        case 'superadmin': return '超级管理员';
+        case 'admin': return '管理员';
+        case ROLE_GUEST: return '访客';
+        default: return '成员';
+    }
+}
+
+// ==================== 封禁体系（支持到期时间） ====================
+// is_banned = true 时生效；banned_until > 0 为限时封禁，0/空为永久封禁。
+// 到期后自动失效，无需管理员手动解封。
+function getBanState(user) {
+    if (!user || !user.is_banned) return { banned: false };
+    const until = Number(user.banned_until) || 0;
+    if (until > 0 && Date.now() >= until) {
+        // 已到期：逻辑上已解封（登录时会顺手清掉字段并落库）
+        return { banned: false, expired: true, until };
+    }
+    return {
+        banned: true,
+        permanent: until <= 0,
+        until: until > 0 ? until : 0,
+        remainMs: until > 0 ? until - Date.now() : Infinity,
+        reason: user.banned_reason || ''
+    };
+}
+
+function banMessage(state) {
+    if (!state || !state.banned) return '账号已被封禁，请联系管理员';
+    const suffix = state.reason ? `（原因：${state.reason}）` : '';
+    if (state.permanent) return `账号已被永久封禁，请联系管理员${suffix}`;
+    const until = new Date(state.until).toISOString().replace('T', ' ').slice(0, 16);
+    const hours = Math.max(1, Math.ceil(state.remainMs / 3600000));
+    return `账号已被封禁，将于 ${until} 解封（约 ${hours} 小时后），请稍后再试${suffix}`;
+}
+
+/** 后台/前端展示用的封禁描述 */
+function banDescription(user) {
+    const state = getBanState(user);
+    if (!state.banned) return '正常';
+    if (state.permanent) return '永久封禁';
+    return '封禁至 ' + new Date(state.until).toISOString().replace('T', ' ').slice(0, 16);
+}
+
 // 统一的用户获取函数（支持 session 和 authUser 两种方式）
 // 核心策略：token 已经验证了用户身份和权限，直接使用 authUser 作为用户对象
 async function getCurrentUser(req) {
@@ -2539,6 +2623,14 @@ async function getCurrentUser(req) {
         // 先尝试从数据库查找完整用户信息
         let user = db.data.users.find(u => u.id === req.authUser.id);
         if (user) {
+            // 封禁即时生效：被封禁的账号立刻失去所有需要鉴权的接口访问权，
+            // 不必等 24 小时 token 过期（原实现只在登录时校验 is_banned，是漏洞）。
+            const ban = getBanState(user);
+            if (ban.banned) {
+                req.bannedUser = user;
+                req.banState = ban;
+                return null;
+            }
             // 仅在 session 缺失时同步，避免每次请求都触发 Set-Cookie
             if (!req.session.userId) {
                 req.session.userId = user.id;
@@ -2558,17 +2650,39 @@ async function getCurrentUser(req) {
     // 如果没有 authUser，尝试用 session
     if (req.session.userId) {
         let user = db.data.users.find(u => u.id === req.session.userId);
-        if (user) return user;
+        if (user) {
+            const ban = getBanState(user);
+            if (ban.banned) {
+                req.bannedUser = user;
+                req.banState = ban;
+                return null;
+            }
+            return user;
+        }
         return null;
     }
     
     return null;
 }
 
+/** 鉴权失败时的统一响应：区分"未登录"与"已被封禁"，让前端能给出准确提示 */
+function authFailure(res, req) {
+    if (req && req.banState && req.banState.banned) {
+        return res.status(403).json({
+            error: banMessage(req.banState),
+            message: banMessage(req.banState),
+            banned: true,
+            bannedUntil: req.banState.until || null,
+            banReason: req.banState.reason || ''
+        });
+    }
+    return res.status(403).json({ error: '请先登录', message: '请先登录' });
+}
+
 const requireLogin = async (req, res, next) => {
     const user = await getCurrentUser(req);
     if (!user) {
-        return res.status(403).json({ error: '请先登录' });
+        return authFailure(res, req);
     }
     req.currentUser = user;
     next();
@@ -2577,7 +2691,7 @@ const requireLogin = async (req, res, next) => {
 const requireAdmin = async (req, res, next) => {
     const user = await getCurrentUser(req);
     if (!user) {
-        return res.status(403).json({ error: '请先登录' });
+        return authFailure(res, req);
     }
     if (!user.is_admin && !user.is_super_admin) {
         return res.status(403).json({ error: '权限不足' });
@@ -2589,7 +2703,7 @@ const requireAdmin = async (req, res, next) => {
 const requireSuperAdmin = async (req, res, next) => {
     const user = await getCurrentUser(req);
     if (!user) {
-        return res.status(403).json({ error: '请先登录' });
+        return authFailure(res, req);
     }
     if (!user.is_super_admin) {
         return res.status(403).json({ error: '权限不足' });
@@ -2895,8 +3009,23 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
         return res.status(400).json({ success: false, message: '用户名或密码错误' });
     }
     
-    if (user.is_banned) {
-        return res.status(400).json({ success: false, message: '账号已被封禁，请联系管理员' });
+    // 封禁校验（支持限时封禁：到达解封时间自动放行并清除标记）
+    const banState = getBanState(user);
+    if (banState.banned) {
+        return res.status(400).json({
+            success: false,
+            message: banMessage(banState),
+            banned: true,
+            bannedUntil: banState.until || null,
+            banReason: banState.reason || ''
+        });
+    }
+    if (banState.expired) {
+        user.is_banned = false;
+        user.banned_until = 0;
+        user.banned_reason = '';
+        await db.write();
+        console.log(`[BAN] 用户 ${user.username} 封禁已到期，自动解封`);
     }
 
     // 检查临时锁定状态（5分钟锁定）
@@ -2977,7 +3106,16 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
         success: true, 
         message: '登录成功', 
         ...(exposeToken ? { token: token } : {}),
-        user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin } 
+        user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            is_admin: user.is_admin,
+            is_super_admin: user.is_super_admin,
+            role: getUserRole(user),
+            role_label: roleLabel(getUserRole(user)),
+            is_guest: getUserRole(user) === ROLE_GUEST
+        } 
     });
 });
 
@@ -3050,7 +3188,7 @@ app.use('/api/', (req, res, next) => {
     next();
 });
 
-app.post('/api/register', requireRateLimit('register'), requireCSRF, requireCaptcha, async (req, res) => {
+app.post('/api/register', requireRateLimit('register'), requireCSRF, requireCaptchaApp, async (req, res) => {
     const { username, email, password, invite_code, verify_code } = req.body;
     
     if (!username || !email || !password || !verify_code) {
@@ -3098,6 +3236,10 @@ app.post('/api/register', requireRateLimit('register'), requireCSRF, requireCapt
     }
     
     const hash = bcrypt.hashSync(password, 10);
+    // 自助注册一律为「访客」：访客用于非工会人员（含软件内注册），
+    // 登录后功能与成员一致，区别只在于管理员可对访客做限时封禁。
+    // 工会身份由「加入申请」审批通过时授予 role='member'，或管理员后台手动调整。
+    const isApp = isAppClient(req);
     db.data.users.push({
         id: Date.now(),
         username: username,
@@ -3106,6 +3248,10 @@ app.post('/api/register', requireRateLimit('register'), requireCSRF, requireCapt
         is_admin: false,
         is_super_admin: false,
         is_banned: false,
+        banned_until: 0,
+        banned_reason: '',
+        role: ROLE_GUEST,
+        register_source: isApp ? 'app' : 'web',
         login_attempts: 0,
         created_at: new Date().toISOString()
     });
@@ -3901,7 +4047,17 @@ app.get('/api/user', async (req, res) => {
     if (!user) {
         return res.status(401).json({ error: '未登录' });
     }
-    res.json({ id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin });
+    const role = getUserRole(user);
+    res.json({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        is_admin: user.is_admin,
+        is_super_admin: user.is_super_admin,
+        role: role,
+        role_label: roleLabel(role),
+        is_guest: role === ROLE_GUEST
+    });
 });
 
 // 修改密码
@@ -3953,7 +4109,7 @@ app.put('/api/user/password', requireLogin, requireRateLimit('password'), requir
     }
 });
 
-app.post('/api/send-code', requireRateLimit('verifyCode'), requireCSRF, requireCaptcha, async (req, res) => {
+app.post('/api/send-code', requireRateLimit('verifyCode'), requireCSRF, requireCaptchaApp, async (req, res) => {
     const { email, type } = req.body;
     
     if (!validateEmail(email)) {
@@ -4990,6 +5146,11 @@ app.get('/api/join/approve/:token', async (req, res) => {
         is_admin: false,
         is_super_admin: false,
         is_banned: false,
+        banned_until: 0,
+        banned_reason: '',
+        // 加入申请审批通过 ⇒ 工会成员身份（区别于自助注册的「访客」）
+        role: ROLE_MEMBER,
+        register_source: 'join-application',
         login_attempts: 0,
         created_at: new Date().toISOString(),
         join_from: 'join-application'
@@ -5148,6 +5309,12 @@ function canModifyUser(currentUser, targetUser, action) {
                 return { allowed: false, reason: '只有超级管理员可以设置超级管理员' };
             }
             break;
+        case 'set_role':
+            // 访客/成员属于普通用户身份，管理员即可调整（目标为管理员时禁止，避免误改）
+            if (targetUser.is_admin || targetUser.is_super_admin) {
+                return { allowed: false, reason: '不能调整管理员的身份角色' };
+            }
+            break;
         case 'reset_password':
             if (!currentUser.is_super_admin && targetUser.is_super_admin) {
                 return { allowed: false, reason: '普通管理员不能重置超级管理员密码' };
@@ -5166,17 +5333,32 @@ function canModifyUser(currentUser, targetUser, action) {
 app.get('/api/members', requireAdmin, async (req, res) => {
     // 封禁状态需要即时准确：读取前强制刷新一次（避免多实例下显示旧状态）
     try { await db.readFresh(); } catch (e) { /* 忽略 */ }
-    const members = db.data.users.map(u => ({
-        id: u.id,
-        username: u.username,
-        email: u.email,
-        is_admin: u.is_admin,
-        is_super_admin: u.is_super_admin,
-        is_banned: u.is_banned,
-        created_at: u.created_at,
-        last_login_ip: u.lastLoginIp || '无',
-        lastLoginTime: u.lastLoginTime || null
-    }));
+    const members = db.data.users.map(u => {
+        const role = getUserRole(u);
+        const ban = getBanState(u);
+        return {
+            id: u.id,
+            username: u.username,
+            email: u.email,
+            is_admin: u.is_admin,
+            is_super_admin: u.is_super_admin,
+            // is_banned 按「实际生效」返回：限时封禁到期后自动显示为正常
+            is_banned: ban.banned,
+            ban_state: ban.banned ? (ban.permanent ? 'permanent' : 'timed') : (ban.expired ? 'expired' : 'none'),
+            banned_until: ban.banned && !ban.permanent ? ban.until : 0,
+            banned_until_text: ban.banned && !ban.permanent
+                ? new Date(ban.until).toISOString().replace('T', ' ').slice(0, 16)
+                : '',
+            banned_reason: u.banned_reason || '',
+            role: role,
+            role_label: roleLabel(role),
+            is_guest: role === ROLE_GUEST,
+            register_source: u.register_source || '',
+            created_at: u.created_at,
+            last_login_ip: u.lastLoginIp || '无',
+            lastLoginTime: u.lastLoginTime || null
+        };
+    });
     res.json({ success: true, data: members });
 });
 
@@ -5223,10 +5405,27 @@ app.post('/api/members/:id/ban', requireAdmin, requireRateLimit('admin'), requir
         return res.status(403).json({ success: false, message: result.reason });
     }
     
+    // 封禁时长：days > 0 为限时封禁，0/不传为永久封禁
+    const rawDays = req.body && req.body.days !== undefined ? Number(req.body.days) : 0;
+    const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(Math.floor(rawDays), 3650) : 0;
+    const reason = (req.body && typeof req.body.reason === 'string') ? req.body.reason.trim().slice(0, 200) : '';
+
     user.is_banned = true;
+    user.banned_until = days > 0 ? Date.now() + days * 86400000 : 0;
+    user.banned_reason = reason;
+    user.banned_at = new Date().toISOString();
+    user.banned_by = currentUser.username;
     await db.write();
-    
-    res.json({ success: true, message: '用户已封禁' });
+
+    const untilText = days > 0
+        ? new Date(user.banned_until).toISOString().replace('T', ' ').slice(0, 16)
+        : '';
+    console.log(`[BAN] ${currentUser.username} 封禁 ${user.username}`, days > 0 ? `${days} 天（至 ${untilText}）` : '永久');
+    res.json({
+        success: true,
+        message: days > 0 ? `用户已封禁 ${days} 天（${untilText} 自动解封）` : '用户已永久封禁',
+        banned_until: user.banned_until
+    });
 });
 
 app.post('/api/members/:id/unban', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
@@ -5243,9 +5442,38 @@ app.post('/api/members/:id/unban', requireAdmin, requireRateLimit('admin'), requ
     }
     
     user.is_banned = false;
+    user.banned_until = 0;
+    user.banned_reason = '';
+    user.unbanned_at = new Date().toISOString();
+    user.unbanned_by = currentUser.username;
     await db.write();
-    
+
+    console.log(`[BAN] ${currentUser.username} 解封 ${user.username}`);
     res.json({ success: true, message: '用户已解封' });
+});
+
+// 设置用户角色：'guest'（访客）/ 'member'（成员）
+app.post('/api/members/:id/role', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
+    const currentUser = req.currentUser;
+    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+
+    if (!user) {
+        return res.status(404).json({ success: false, message: '用户不存在' });
+    }
+
+    const result = canModifyUser(currentUser, user, 'set_role');
+    if (!result.allowed) {
+        return res.status(403).json({ success: false, message: result.reason });
+    }
+
+    const role = normalizeRole(req.body && req.body.role);
+    user.role = role;
+    user.role_updated_at = new Date().toISOString();
+    user.role_updated_by = currentUser.username;
+    await db.write();
+
+    console.log(`[ROLE] ${currentUser.username} 将 ${user.username} 设为 ${roleLabel(role)}`);
+    res.json({ success: true, message: `已设置为${roleLabel(role)}`, role: role, role_label: roleLabel(role) });
 });
 
 app.post('/api/members/:id/set_admin', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
@@ -5365,6 +5593,11 @@ app.post('/api/console/create_user', requireAdmin, requireRateLimit('admin'), re
         is_admin: !!isAdmin,
         is_super_admin: false,
         is_banned: false,
+        banned_until: 0,
+        banned_reason: '',
+        // 管理员后台手动创建的账号默认成员身份
+        role: ROLE_MEMBER,
+        register_source: 'admin',
         login_attempts: 0,
         created_at: new Date().toISOString()
     };

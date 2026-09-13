@@ -30,11 +30,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import top.stcwork.filemanager.data.Prefs
 import top.stcwork.filemanager.ui.AppsScreen
+import top.stcwork.filemanager.ui.EditorScreen
 import top.stcwork.filemanager.ui.FilesScreen
 import top.stcwork.filemanager.ui.LoginScreen
 import top.stcwork.filemanager.ui.Perm
 import top.stcwork.filemanager.ui.ProfileScreen
 import top.stcwork.filemanager.ui.STCTheme
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,6 +63,8 @@ fun RootScreen() {
     var skipped by remember { mutableStateOf(Prefs.skipLogin) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var hasAccess by remember { mutableStateOf(Perm.hasStorageAccess(context)) }
+    // 文本编辑器：非空时全屏打开，盖住底部导航
+    var editing by remember { mutableStateOf<File?>(null) }
 
     val settingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -103,13 +107,24 @@ fun RootScreen() {
         return
     }
 
+    val editingTarget = editing
+    if (editingTarget != null) {
+        EditorScreen(
+            file = editingTarget,
+            onClose = { editing = null },
+            snackbar = snackbar
+        )
+        return
+    }
+
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
             when (tab) {
                 0 -> FilesScreen(
                     hasAccess = hasAccess,
                     onRequestAccess = requestAccess,
-                    snackbar = snackbar
+                    snackbar = snackbar,
+                    onOpenText = { editing = it }
                 )
                 1 -> AppsScreen(
                     snackbar = snackbar,
@@ -130,23 +145,24 @@ fun RootScreen() {
 
         SnackbarHost(snackbar) { Snackbar(it) }
 
+        // 按需求「软件内不要图标」：底部导航仅保留文字
         NavigationBar {
             NavigationBarItem(
                 selected = tab == 0,
                 onClick = { tab = 0 },
-                icon = { Text("\uD83D\uDCC1", fontSize = 16.sp) },
+                icon = {},
                 label = { Text("文件") }
             )
             NavigationBarItem(
                 selected = tab == 1,
                 onClick = { tab = 1 },
-                icon = { Text("\uD83D\uDCE6", fontSize = 16.sp) },
+                icon = {},
                 label = { Text("应用") }
             )
             NavigationBarItem(
                 selected = tab == 2,
                 onClick = { tab = 2 },
-                icon = { Text("\uD83D\uDC64", fontSize = 16.sp) },
+                icon = {},
                 label = { Text("我的") }
             )
         }

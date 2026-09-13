@@ -64,6 +64,7 @@ fun AppsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val canWrite = top.stcwork.filemanager.data.Prefs.canWrite
 
     var includeSystem by remember { mutableStateOf(false) }
     var apps by remember { mutableStateOf<List<Apks.Entry>>(emptyList()) }
@@ -97,6 +98,10 @@ fun AppsScreen(
 
     fun export(list: List<Apks.Entry>) {
         if (list.isEmpty()) return
+        if (!canWrite) {
+            scope.launch { snackbar.showSnackbar("未登录：只能查看，提取安装包请先登录") }
+            return
+        }
         val total = list.sumOf { it.bytes }
         busy = BusyState("正在提取安装包", 0, total, "")
         scope.launch {
@@ -125,10 +130,8 @@ fun AppsScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("\uD83D\uDD12", fontSize = 40.sp)
-            Spacer(Modifier.height(12.dp))
             Text("需要文件访问权限", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             Text(
                 "提取安装包需要把 APK 写入存储，请先授予「所有文件访问」权限。",
                 style = MaterialTheme.typography.bodySmall,
@@ -160,7 +163,7 @@ fun AppsScreen(
                 IconButton(onClick = {
                     searchOpen = !searchOpen
                     if (!searchOpen) query = ""
-                }) { Text("\uD83D\uDD0D", fontSize = 16.sp) }
+                }) { Text("搜索", fontSize = 13.sp) }
                 Box {
                     IconButton(onClick = { menuOpen = true }) { Text("⋮", fontSize = 20.sp) }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -172,10 +175,12 @@ fun AppsScreen(
                             text = { Text("重新扫描") },
                             onClick = { menuOpen = false; load() }
                         )
-                        DropdownMenuItem(
-                            text = { Text("导出全部用户应用") },
-                            onClick = { menuOpen = false; confirmAll = true }
-                        )
+                        if (canWrite) {
+                            DropdownMenuItem(
+                                text = { Text("导出全部用户应用") },
+                                onClick = { menuOpen = false; confirmAll = true }
+                            )
+                        }
                     }
                 }
             }
@@ -211,6 +216,7 @@ fun AppsScreen(
     detail?.let { app ->
         AppDetailDialog(
             app = app,
+            canExport = canWrite,
             onCopy = { text ->
                 scope.launch { snackbar.showSnackbar("已复制：$text") }
             },
@@ -282,6 +288,7 @@ private fun AppRow(app: Apks.Entry, onClick: () -> Unit) {
 @Composable
 private fun AppDetailDialog(
     app: Apks.Entry,
+    canExport: Boolean,
     onCopy: (String) -> Unit,
     onExport: () -> Unit,
     onDismiss: () -> Unit
@@ -322,7 +329,11 @@ private fun AppDetailDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onExport) { Text("提取安装包") } },
+        confirmButton = {
+            TextButton(onClick = onExport, enabled = canExport) {
+                Text(if (canExport) "提取安装包" else "提取安装包（需登录）")
+            }
+        },
         dismissButton = {
             TextButton(onClick = { onCopy(app.packageName) }) { Text("复制包名") }
         }

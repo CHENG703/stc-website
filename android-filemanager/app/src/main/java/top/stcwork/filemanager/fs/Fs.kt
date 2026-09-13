@@ -202,6 +202,117 @@ object Fs {
         return if (dest.mkdirs()) Result.success(dest) else Result.failure(IOException("创建失败（可能无权限）"))
     }
 
+    /**
+     * 新建文件。文件名（含后缀）完全由用户填写，后缀不做限制，
+     * 例如 note.txt / data.nbt / script.py / server.json。
+     */
+    fun createFile(parent: File, name: String): Result<File> {
+        val clean = name.trim().replace("/", "_").replace("\\", "_")
+        if (clean.isBlank()) return Result.failure(IOException("文件名不能为空"))
+        if (clean == "." || clean == "..") return Result.failure(IOException("文件名不合法"))
+        val dest = File(parent, clean)
+        if (dest.exists()) return Result.failure(IOException("已存在同名项"))
+        return try {
+            dest.parentFile?.let { if (!it.exists()) it.mkdirs() }
+            if (dest.createNewFile()) Result.success(dest)
+            else Result.failure(IOException("创建失败（可能无权限）"))
+        } catch (e: Exception) {
+            Result.failure(IOException(e.message ?: "创建失败"))
+        }
+    }
+
+    // ---------------- 文本读写（编辑器用） ----------------
+
+    /** 编辑器单文件上限：超过就不建议在手机上改，避免 OOM */
+    const val TEXT_EDIT_LIMIT = 5L * 1024 * 1024
+
+    /** 常见可编辑文本后缀（含用户点名的 nbt / txt / py） */
+    private val TEXT_EXTS = setOf(
+        "txt", "text", "md", "markdown", "log", "json", "json5", "xml", "yml", "yaml",
+        "ini", "conf", "cfg", "properties", "toml", "env", "csv", "tsv",
+        "py", "pyw", "js", "mjs", "cjs", "ts", "tsx", "jsx",
+        "java", "kt", "kts", "groovy", "gradle", "scala", "go", "rs", "rb", "php", "lua", "pl",
+        "c", "h", "cpp", "hpp", "cc", "cs", "m", "mm", "swift", "dart", "r",
+        "sh", "bash", "zsh", "ps1", "bat", "cmd", "fish",
+        "html", "htm", "xhtml", "css", "scss", "less", "sass", "vue", "svg",
+        "sql", "db", "sqlite", "gitignore", "dockerfile", "makefile",
+        // Minecraft 相关：nbt 是二进制，但一般体积小；提供文本方式编辑
+        "nbt", "snbt", "mcmeta", "mcfunction", "mcstructure", "lang", "properties"
+    )
+
+    fun isTextExt(name: String): Boolean {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        if (ext.isEmpty()) return false
+        return TEXT_EXTS.contains(ext)
+    }
+
+    data class TextFile(
+        val text: String,
+        /** 疑似二进制（含 NUL 字节）；仍可按文本打开，但保存可能损坏文件 */
+        val binarySuspect: Boolean,
+        val size: Long,
+        val truncated: Boolean = false
+    )
+
+    /**
+     * 读取文本。UTF-8 优先，失败退回 GBK（国内常见的 nbt/txt 编码）。
+     * 含 NUL 字节视为二进制嫌疑，由调用方决定是否继续。
+     */
+    fun readText(file: File, limit: Long = TEXT_EDIT_LIMIT): Result<TextFile> {
+        return try {
+            if (!file.exists()) return Result.failure(IOException("文件不存在"))
+            if (!file.canRead()) return Result.failure(IOException("没有读取权限"))
+            val size = file.length()
+            if (size > limit) {
+                return Result.failure(IOException("文件过大（${Fmt.size(size)}），超过编辑器上限 ${Fmt.size(limit)}"))
+            }
+            val bytes = file.readBytes()
+            val binarySuspect = bytes.any { it == 0.toByte() }
+            var text = decodeUtf8(bytes)
+            if (text == null) {
+                text = runCatching { String(bytes, charset("GBK")) }.getOrNull()
+            }
+            if (text == null) return Result.failure(IOException("无法解析为文本（可能是二进制文件）"))
+            Result.success(TextFile(text, binarySuspect, size))
+        } catch (e: Exception) {
+            Result.failure(IOException(e.message ?: "读取失败"))
+        }
+    }
+
+    /** 严格 UTF-8 解码：遇到非法字节序列返回 null，交给调用方换编码 */
+    private fun decodeUtf8(bytes: ByteArray): String? {
+        return try {
+            val decoder = Charsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+            decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** 保存文本（UTF-8）。原文件权限/时间戳尽量保留。 */
+    fun writeText(file: File, text: String): Result<Unit> {
+        return try {
+            val existed = file.exists()
+            file.parentFile?.let { if (!it.exists()) it.mkdirs() }
+            // 先写临时文件再替换，避免写一半断电把原内容毁掉
+            val tmp = File(file.parentFile, file.name + ".stctmp")
+            tmp.writeBytes(text.toByteArray(Charsets.UTF_8))
+            if (existed && file.exists() && !file.delete()) {
+                tmp.delete()
+                return Result.failure(IOException("无法覆盖原文件（可能无权限）"))
+            }
+            if (!tmp.renameTo(file)) {
+                tmp.delete()
+                return Result.failure(IOException("保存失败（可能无权限）"))
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(IOException(e.message ?: "保存失败"))
+        }
+    }
+
     // ---------------- 详细信息 ----------------
 
     data class Details(val title: String, val rows: List<Pair<String, String>>)
@@ -223,7 +334,6 @@ object Fs {
         rows += "可读" to if (file.canRead()) "是" else "否"
         rows += "可写" to if (file.canWrite()) "是" else "否"
         rows += "隐藏" to if (file.name.startsWith(".")) "是" else "否"
-        if (file.name.startsWith(".")) rows += "隐藏" to "是"
         if (file.isFile && file.extension.isNotEmpty()) rows += "扩展名" to file.extension.lowercase()
         return Details(file.name, rows)
     }

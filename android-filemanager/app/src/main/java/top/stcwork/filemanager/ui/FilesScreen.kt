@@ -3,7 +3,6 @@ package top.stcwork.filemanager.ui
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,14 +14,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -48,7 +42,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -58,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import top.stcwork.filemanager.data.Prefs
 import top.stcwork.filemanager.fs.Apks
 import top.stcwork.filemanager.fs.FileClipboard
 import top.stcwork.filemanager.fs.Fs
@@ -73,7 +67,7 @@ enum class SortMode(val label: String) {
 }
 
 private enum class FileAction {
-    COPY, CUT, RENAME, ZIP, UNZIP, DELETE, DETAILS, INSTALL, OPEN_WITH, SHARE
+    COPY, CUT, RENAME, ZIP, UNZIP, DELETE, DETAILS, INSTALL, OPEN_WITH, SHARE, OPEN_TEXT
 }
 
 private val ZIP_EXTS = setOf("zip", "jar", "apks", "xapk")
@@ -83,10 +77,14 @@ private val ZIP_EXTS = setOf("zip", "jar", "apks", "xapk")
 fun FilesScreen(
     hasAccess: Boolean,
     onRequestAccess: () -> Unit,
-    snackbar: SnackbarHostState
+    snackbar: SnackbarHostState,
+    onOpenText: (File) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // 权限：未登录只能浏览 / 打开 / 复制 / 查看详情（用户要求）
+    val canWrite = Prefs.canWrite
 
     var currentDir by remember { mutableStateOf(Fs.storageRoot) }
     var entries by remember { mutableStateOf<List<File>>(emptyList()) }
@@ -98,8 +96,10 @@ fun FilesScreen(
     var details by remember { mutableStateOf<Fs.Details?>(null) }
     var renaming by remember { mutableStateOf<File?>(null) }
     var newFolder by remember { mutableStateOf(false) }
+    var newFile by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<List<File>>(emptyList()) }
     var sortMenu by remember { mutableStateOf(false) }
+    var fabMenu by remember { mutableStateOf(false) }
     var overflow by remember { mutableStateOf(false) }
     var lastExport by remember { mutableStateOf("") }
     var clipboardTick by remember { mutableIntStateOf(0) }
@@ -114,6 +114,13 @@ fun FilesScreen(
 
     fun bumpClipboard() {
         clipboardTick++
+    }
+
+    /** 未登录时的统一拦截提示 */
+    fun requireWrite(): Boolean {
+        if (canWrite) return true
+        toast("未登录：只能查看和复制，请先登录")
+        return false
     }
 
     fun refresh() {
@@ -150,6 +157,7 @@ fun FilesScreen(
 
     /** 通用耗时任务：跑在 IO 线程并展示进度 */
     fun runTask(title: String, total: Long, block: (Fs.Progress) -> List<String>) {
+        if (!requireWrite()) return
         busy = BusyState(title, 0, total, "")
         scope.launch {
             val lastTitle = title
@@ -165,6 +173,7 @@ fun FilesScreen(
     }
 
     fun pasteHere() {
+        if (!requireWrite()) return
         val src = FileClipboard.sources
         if (src.isEmpty()) return
         val cut = FileClipboard.isCut
@@ -205,6 +214,7 @@ fun FilesScreen(
 
     fun deleteFiles(files: List<File>) {
         if (files.isEmpty()) return
+        if (!requireWrite()) return
         busy = BusyState("正在删除", 0, 0, "")
         scope.launch {
             val errors = withContext(Dispatchers.IO) { Fs.deleteAll(files) }
@@ -225,6 +235,7 @@ fun FilesScreen(
     }
 
     fun installApk(file: File) {
+        if (!requireWrite()) return
         if (!Perm.canInstall(context)) {
             toast("请先允许「安装未知应用」，授权后重试")
             Perm.startUnknownSourcesSettings(context)
@@ -271,23 +282,32 @@ fun FilesScreen(
     fun handleAction(action: FileAction, target: File) {
         when (action) {
             FileAction.COPY -> {
+                // 复制只改内存里的剪贴板，不落盘，未登录也允许
                 FileClipboard.set(listOf(target), false)
                 bumpClipboard()
                 toast("已复制：${target.name}")
             }
             FileAction.CUT -> {
+                if (!requireWrite()) return
                 FileClipboard.set(listOf(target), true)
                 bumpClipboard()
                 toast("已剪切：${target.name}")
             }
-            FileAction.RENAME -> renaming = target
+            FileAction.RENAME -> {
+                if (!requireWrite()) return
+                renaming = target
+            }
             FileAction.ZIP -> zipFiles(listOf(target))
             FileAction.UNZIP -> unzipFile(target)
-            FileAction.DELETE -> pendingDelete = listOf(target)
+            FileAction.DELETE -> {
+                if (!requireWrite()) return
+                pendingDelete = listOf(target)
+            }
             FileAction.DETAILS -> loadDetails(target)
             FileAction.INSTALL -> installApk(target)
             FileAction.OPEN_WITH -> openWith(target)
             FileAction.SHARE -> shareFile(target)
+            FileAction.OPEN_TEXT -> onOpenText(target)
         }
     }
 
@@ -300,10 +320,8 @@ fun FilesScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("\uD83D\uDD12", fontSize = 40.sp)
-            Spacer(Modifier.height(12.dp))
             Text("需要文件访问权限", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             Text(
                 "Android 11 及以上需要「所有文件访问」权限才能管理整机文件。\n点击下方按钮，在系统设置中打开「允许管理所有文件」。",
                 style = MaterialTheme.typography.bodySmall,
@@ -367,10 +385,16 @@ fun FilesScreen(
                     Box {
                         IconButton(onClick = { overflow = true }) { Text("⋮", fontSize = 20.sp) }
                         DropdownMenu(expanded = overflow, onDismissRequest = { overflow = false }) {
-                            DropdownMenuItem(
-                                text = { Text("新建文件夹") },
-                                onClick = { overflow = false; newFolder = true }
-                            )
+                            if (canWrite) {
+                                DropdownMenuItem(
+                                    text = { Text("新建文件夹") },
+                                    onClick = { overflow = false; newFolder = true }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("新建文件（后缀自填）") },
+                                    onClick = { overflow = false; newFile = true }
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text(if (showHidden) "隐藏隐藏文件" else "显示隐藏文件") },
                                 onClick = { overflow = false; showHidden = !showHidden }
@@ -417,6 +441,20 @@ fun FilesScreen(
             )
         }
 
+        if (!canWrite) {
+            // 只读提示：未登录时明确告知权限边界
+            Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+                Text(
+                    "未登录 · 只能查看和复制，登录后可新建、粘贴、删除、打包、解压、提取安装包",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+            }
+        }
+
         if (loading) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
         }
@@ -447,6 +485,7 @@ fun FilesScreen(
                         file = file,
                         selected = selected,
                         selectionMode = selection.isNotEmpty(),
+                        canWrite = canWrite,
                         onClick = {
                             when {
                                 selection.isNotEmpty() -> {
@@ -460,7 +499,8 @@ fun FilesScreen(
                                     currentDir = file
                                     selection = emptySet()
                                 }
-                                file.extension.lowercase() == "apk" -> installApk(file)
+                                file.extension.lowercase(Locale.US) == "apk" -> installApk(file)
+                                Fs.isTextExt(file.name) -> onOpenText(file)
                                 else -> loadDetails(file)
                             }
                         },
@@ -490,12 +530,30 @@ fun FilesScreen(
                     ExtendedFloatingActionButton(
                         onClick = { pasteHere() },
                         text = { Text(if (clipIsCut) "移动到此处 ($clipCount)" else "粘贴 ($clipCount)") },
-                        icon = { Text("\uD83D\uDCCB") }
+                        icon = {}
                     )
                     Spacer(Modifier.height(10.dp))
                 }
-                FloatingActionButton(onClick = { newFolder = true }) {
-                    Text("＋", fontSize = 24.sp)
+                if (canWrite) {
+                    Box {
+                        FloatingActionButton(onClick = { fabMenu = true }) {
+                            Text("新建", fontSize = 13.sp)
+                        }
+                        DropdownMenu(expanded = fabMenu, onDismissRequest = { fabMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("新建文件夹") },
+                                onClick = { fabMenu = false; newFolder = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("新建文件（后缀自填）") },
+                                onClick = { fabMenu = false; newFile = true }
+                            )
+                        }
+                    }
+                } else {
+                    FloatingActionButton(onClick = { toast("未登录：只能查看和复制，请先登录") }) {
+                        Text("只读", fontSize = 13.sp)
+                    }
                 }
             }
         }
@@ -514,19 +572,21 @@ fun FilesScreen(
                         selection = emptySet()
                         toast("已复制 ${selectedFiles.size} 项")
                     }
-                    BarAction("剪切") {
-                        FileClipboard.set(selectedFiles, true)
-                        bumpClipboard()
-                        selection = emptySet()
-                        toast("已剪切 ${selectedFiles.size} 项")
-                    }
-                    BarAction("打包") {
-                        val files = selectedFiles
-                        selection = emptySet()
-                        zipFiles(files)
-                    }
-                    BarAction("删除") {
-                        pendingDelete = selectedFiles
+                    if (canWrite) {
+                        BarAction("剪切") {
+                            FileClipboard.set(selectedFiles, true)
+                            bumpClipboard()
+                            selection = emptySet()
+                            toast("已剪切 ${selectedFiles.size} 项")
+                        }
+                        BarAction("打包") {
+                            val files = selectedFiles
+                            selection = emptySet()
+                            zipFiles(files)
+                        }
+                        BarAction("删除") {
+                            pendingDelete = selectedFiles
+                        }
                     }
                     BarAction("详情") {
                         if (selectedFiles.size == 1) loadDetails(selectedFiles.first())
@@ -604,6 +664,30 @@ fun FilesScreen(
             onDismiss = { newFolder = false }
         )
     }
+
+    if (newFile) {
+        InputDialog(
+            title = "新建文件",
+            label = "文件名（后缀自己填，如 note.txt / data.nbt / run.py）",
+            initial = "",
+            onConfirm = { name ->
+                newFile = false
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { Fs.createFile(currentDir, name) }
+                    result.fold(
+                        onSuccess = { created ->
+                            toast("已创建 ${created.name}")
+                            refresh()
+                            // 文本类文件建好顺手打开编辑器，少点一次
+                            if (Fs.isTextExt(created.name)) onOpenText(created)
+                        },
+                        onFailure = { toast(it.message ?: "创建失败") }
+                    )
+                }
+            },
+            onDismiss = { newFile = false }
+        )
+    }
 }
 
 private fun copyToClipboard(context: android.content.Context, text: String) {
@@ -630,8 +714,6 @@ private fun ShortcutRow(label: String, path: String, onClick: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("\uD83D\uDCCC", fontSize = 18.sp)
-        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
             Text(
@@ -655,15 +737,18 @@ private fun FileRow(
     file: File,
     selected: Boolean,
     selectionMode: Boolean,
+    canWrite: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onAction: (FileAction) -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
 
+    // 按需求「软件内不要图标」：不再渲染图标，改用扩展名文字标签
+    val typeLabel = Fmt.extLabel(file)
     val subtitle = when {
-        file.isDirectory -> "${Fs.childCount(file)} 项 · ${Fmt.time(file.lastModified())}"
-        else -> "${Fmt.size(file.length())} · ${Fmt.time(file.lastModified())}"
+        file.isDirectory -> "$typeLabel · ${Fs.childCount(file)} 项 · ${Fmt.time(file.lastModified())}"
+        else -> "$typeLabel · ${Fmt.size(file.length())} · ${Fmt.time(file.lastModified())}"
     }
 
     Box {
@@ -678,16 +763,6 @@ private fun FileRow(
                 Checkbox(checked = selected, onCheckedChange = null)
                 Spacer(Modifier.width(6.dp))
             }
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(Fmt.iconFor(file), fontSize = 19.sp)
-            }
-            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     file.name,
@@ -711,24 +786,32 @@ private fun FileRow(
 
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("复制") }, onClick = { menu = false; onAction(FileAction.COPY) })
-            DropdownMenuItem(text = { Text("剪切") }, onClick = { menu = false; onAction(FileAction.CUT) })
-            DropdownMenuItem(text = { Text("重命名") }, onClick = { menu = false; onAction(FileAction.RENAME) })
-            DropdownMenuItem(text = { Text("详细信息") }, onClick = { menu = false; onAction(FileAction.DETAILS) })
-            DropdownMenuItem(
-                text = { Text(if (file.isDirectory) "打包为 ZIP" else "压缩为 ZIP") },
-                onClick = { menu = false; onAction(FileAction.ZIP) }
-            )
-            if (!file.isDirectory && file.extension.lowercase(Locale.US) in ZIP_EXTS) {
+            if (!file.isDirectory) {
                 DropdownMenuItem(
-                    text = { Text("解压到此处") },
-                    onClick = { menu = false; onAction(FileAction.UNZIP) }
+                    text = { Text(if (Fs.isTextExt(file.name)) "编辑文本" else "以文本方式打开") },
+                    onClick = { menu = false; onAction(FileAction.OPEN_TEXT) }
                 )
             }
-            if (!file.isDirectory && file.extension.lowercase(Locale.US) == "apk") {
+            DropdownMenuItem(text = { Text("详细信息") }, onClick = { menu = false; onAction(FileAction.DETAILS) })
+            if (canWrite) {
+                DropdownMenuItem(text = { Text("剪切") }, onClick = { menu = false; onAction(FileAction.CUT) })
+                DropdownMenuItem(text = { Text("重命名") }, onClick = { menu = false; onAction(FileAction.RENAME) })
                 DropdownMenuItem(
-                    text = { Text("安装") },
-                    onClick = { menu = false; onAction(FileAction.INSTALL) }
+                    text = { Text(if (file.isDirectory) "打包为 ZIP" else "压缩为 ZIP") },
+                    onClick = { menu = false; onAction(FileAction.ZIP) }
                 )
+                if (!file.isDirectory && file.extension.lowercase(Locale.US) in ZIP_EXTS) {
+                    DropdownMenuItem(
+                        text = { Text("解压到此处") },
+                        onClick = { menu = false; onAction(FileAction.UNZIP) }
+                    )
+                }
+                if (!file.isDirectory && file.extension.lowercase(Locale.US) == "apk") {
+                    DropdownMenuItem(
+                        text = { Text("安装") },
+                        onClick = { menu = false; onAction(FileAction.INSTALL) }
+                    )
+                }
             }
             if (!file.isDirectory) {
                 DropdownMenuItem(
@@ -740,10 +823,12 @@ private fun FileRow(
                     onClick = { menu = false; onAction(FileAction.SHARE) }
                 )
             }
-            DropdownMenuItem(
-                text = { Text("删除", color = MaterialTheme.colorScheme.error) },
-                onClick = { menu = false; onAction(FileAction.DELETE) }
-            )
+            if (canWrite) {
+                DropdownMenuItem(
+                    text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                    onClick = { menu = false; onAction(FileAction.DELETE) }
+                )
+            }
         }
     }
 }

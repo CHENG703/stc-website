@@ -1335,7 +1335,7 @@ async function logout() {
 }
 
 // 显示成员操作模态框
-function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin) {
+function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin, role) {
     CMDLog.log(`打开用户 ${username} 的操作菜单`, 'info');
     
     // 移除已存在的模态框
@@ -1360,7 +1360,21 @@ function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin) {
             if (isBanned) {
                 actionsContainer.innerHTML += '<button style="' + btnStyle + 'background:#10b981;" onclick="toggleBan(' + userId + ', false)">解除封禁</button>';
             } else {
-                actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="toggleBan(' + userId + ', true)">封禁</button>';
+                // 封禁时长：填 0 或不填 = 永久封禁，填天数 = 限时封禁（到期自动解封）
+                actionsContainer.innerHTML +=
+                    '<div style="border:1px solid #ddd;border-radius:5px;padding:10px;display:flex;flex-direction:column;gap:8px;">' +
+                    '<div style="font-size:12px;color:#666;">封禁时长（天，0 或留空 = 永久）</div>' +
+                    '<input id="ban-days" type="number" min="0" step="1" value="7" style="padding:8px;border:1px solid #ccc;border-radius:4px;">' +
+                    '<input id="ban-reason" type="text" placeholder="封禁原因（可选）" maxlength="200" style="padding:8px;border:1px solid #ccc;border-radius:4px;">' +
+                    '<button style="' + btnStyle + '" onclick="toggleBan(' + userId + ', true)">封禁</button>' +
+                    '</div>';
+            }
+
+            if (!isAdmin) {
+                // 访客 / 成员 身份切换（仅对普通用户可见）
+                var isGuest = (role === 'guest');
+                actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="setMemberRole(' + userId + ', \'' + (isGuest ? 'member' : 'guest') + '\')">' +
+                    (isGuest ? '设为成员（工会）' : '设为访客') + '</button>';
             }
 
             if (isAdmin) {
@@ -1385,15 +1399,34 @@ function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin) {
 
 // 切换封禁状态
 async function toggleBan(userId, ban) {
-    CMDLog.log(`正在${ban ? '封禁' : '解除封禁'}用户ID: ${userId}`, 'info');
+    var days = 0, reason = '';
+    if (ban) {
+        // 从操作弹窗里的输入框读取封禁时长与原因
+        var daysEl = document.getElementById('ban-days');
+        var reasonEl = document.getElementById('ban-reason');
+        var raw = daysEl ? String(daysEl.value || '').trim() : '';
+        days = raw === '' ? 0 : Number(raw);
+        if (!Number.isFinite(days) || days < 0) {
+            showMessage('封禁天数请填 0 或正整数', 'error');
+            return;
+        }
+        reason = reasonEl ? String(reasonEl.value || '').trim() : '';
+        var confirmMsg = days > 0
+            ? `确定封禁该用户 ${days} 天？（到期自动解封）`
+            : '确定永久封禁该用户？（不会自动解封）';
+        if (!confirm(confirmMsg)) return;
+    }
+    CMDLog.log(`正在${ban ? '封禁' : '解除封禁'}用户ID: ${userId}${ban && days > 0 ? '（' + days + ' 天）' : ''}`, 'info');
     try {
         var url = '/api/members/' + userId + (ban ? '/ban' : '/unban');
         var response = await fetchWithAuth(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json' },
+            body: ban ? JSON.stringify({ days: days, reason: reason }) : JSON.stringify({})
         });
         if (response.ok) {
-            showMessage(ban ? '用户已被封禁' : '用户已解除封禁', 'success');
+            var okData = await response.json().catch(() => ({}));
+            showMessage(okData.message || (ban ? '用户已被封禁' : '用户已解除封禁'), 'success');
             CMDLog.log(`用户ID ${userId} 已${ban ? '封禁' : '解除封禁'}`, 'info');
             loadMembers();
             document.querySelector('.modal-overlay')?.remove();
@@ -1406,6 +1439,34 @@ async function toggleBan(userId, ban) {
     } catch (error) {
         showMessage('操作失败: ' + (error.message || '网络错误'), 'error');
         CMDLog.log(`封禁操作失败: ${error.message}`, 'error');
+    }
+}
+
+// 设置用户角色：'guest'（访客）/ 'member'（成员）
+async function setMemberRole(userId, role) {
+    var label = role === 'guest' ? '访客' : '成员';
+    if (!confirm('确定将该用户设置为「' + label + '」？')) return;
+    CMDLog.log(`正在将用户ID ${userId} 设为${label}`, 'info');
+    try {
+        var response = await fetchWithAuth('/api/members/' + userId + '/role', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: role })
+        });
+        var data = await response.json().catch(() => ({}));
+        if (response.ok) {
+            showMessage(data.message || ('已设置为' + label), 'success');
+            CMDLog.log(`用户ID ${userId} 已设为${label}`, 'info');
+            loadMembers();
+            document.querySelector('.modal-overlay')?.remove();
+        } else {
+            var errMsg = data.message || data.error || ('操作失败（HTTP ' + response.status + '）');
+            showMessage(errMsg, 'error');
+            CMDLog.log(`设置角色失败: ${errMsg}`, 'error');
+        }
+    } catch (error) {
+        showMessage('操作失败: ' + (error.message || '网络错误'), 'error');
+        CMDLog.log(`设置角色失败: ${error.message}`, 'error');
     }
 }
 
@@ -1564,10 +1625,22 @@ async function loadMembers() {
 
         container.innerHTML = '<table class="admin-table"><thead><tr><th>用户名</th><th>邮箱</th><th>角色</th><th>状态</th><th>最后登录IP</th><th>操作</th></tr></thead><tbody>' +
             members.map(function(m) {
-                var role = m.is_super_admin ? '超级管理员' : (m.is_admin ? '管理员' : '普通用户');
-                var status = m.is_banned ? '已封禁' : '正常';
+                var role = m.role_label || (m.is_super_admin ? '超级管理员' : (m.is_admin ? '管理员' : '成员'));
+                // 访客标签：标注来源，方便区分"软件注册"和"网页注册"
+                if (m.is_guest && m.register_source) {
+                    role += ' <span style="color:#888;font-size:11px;">(' + (m.register_source === 'app' ? '软件注册' : m.register_source === 'web' ? '网页注册' : escapeHtml(m.register_source)) + ')</span>';
+                }
+                var status;
+                if (m.is_banned) {
+                    status = m.banned_until_text
+                        ? '<span style="color:#dc3545;">封禁至 ' + escapeHtml(m.banned_until_text) + '</span>'
+                        : '<span style="color:#dc3545;">永久封禁</span>';
+                    if (m.banned_reason) status += '<br><span style="color:#888;font-size:11px;">' + escapeHtml(m.banned_reason) + '</span>';
+                } else {
+                    status = '<span style="color:#10b981;">正常</span>';
+                }
                 var escName = escapeHtml(m.username);
-                var actionBtn = '<button class="btn btn-sm" onclick="showMemberActions(' + m.id + ', \'' + jsStrForAttr(m.username) + '\', ' + m.is_banned + ', ' + m.is_admin + ', ' + (m.is_super_admin || false) + ')">操作</button>';
+                var actionBtn = '<button class="btn btn-sm" onclick="showMemberActions(' + m.id + ', \'' + jsStrForAttr(m.username) + '\', ' + !!m.is_banned + ', ' + !!m.is_admin + ', ' + !!(m.is_super_admin || false) + ', \'' + jsStrForAttr(m.role || 'member') + '\')">操作</button>';
                 return '<tr>' +
                     '<td>' + escName + '</td>' +
                     '<td>' + escapeHtml(m.email) + '</td>' +

@@ -21,7 +21,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -38,16 +40,17 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.stcwork.filemanager.data.Api
 import top.stcwork.filemanager.data.Prefs
 
 /**
- * 用 STC 网站账号登录。
- * 走的是网站真实接口：GET /api/csrf-token → POST /api/login（带 CSRF + nonce）。
+ * 用 STC 网站账号登录 / 注册。
+ * 走的是网站真实接口：GET /api/csrf-token → POST /api/login 或 /api/register（带 CSRF + nonce）。
+ * 软件内注册的账号一律是「访客」身份（服务端强制），可被管理员在网站后台限时封禁。
  */
 @Composable
 fun LoginScreen(
@@ -55,20 +58,50 @@ fun LoginScreen(
     onSkip: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    var registerMode by rememberSaveable { mutableStateOf(false) }
     var username by rememberSaveable { mutableStateOf(Prefs.username) }
+    var email by rememberSaveable { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
     var baseUrl by rememberSaveable { mutableStateOf(Prefs.baseUrl) }
     var showAdvanced by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
+    var sending by remember { mutableStateOf(false) }
+    var countdown by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf("") }
+    var notice by remember { mutableStateOf("") }
+
+    // 验证码倒计时
+    LaunchedEffect(countdown) {
+        if (countdown > 0) {
+            delay(1000)
+            countdown -= 1
+        }
+    }
+
+    fun resolvedUrl(): String = baseUrl.trim().ifBlank { Prefs.DEFAULT_BASE_URL }
+
+    fun applyLogin(result: Api.LoginResult, url: String, fallbackName: String) {
+        Prefs.baseUrl = url
+        Prefs.saveSession(
+            token = result.token,
+            username = result.username.ifBlank { fallbackName },
+            email = result.email.ifBlank { email },
+            isAdmin = result.isAdmin,
+            role = result.role,
+            roleLabel = result.roleLabel
+        )
+        onSuccess()
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // 整体灰色主题：沿用灰阶渐变背景
             .background(
                 Brush.verticalGradient(
-                    listOf(Color(0xFF0B1020), Color(0xFF141B33), Color(0xFF0B1020))
+                    listOf(Color(0xFF161616), Color(0xFF232323), Color(0xFF161616))
                 )
             )
             .padding(24.dp),
@@ -80,14 +113,13 @@ fun LoginScreen(
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("\uD83D\uDDC2\uFE0F", fontSize = 44.sp)
-            Spacer(Modifier.height(8.dp))
             Text("STC 文件管理器", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text(
-                "使用 STC 网站账号登录",
+                if (registerMode) "注册后为「访客」身份，登录即可使用全部功能" else "使用 STC 网站账号登录",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(20.dp))
 
@@ -96,7 +128,7 @@ fun LoginScreen(
                     OutlinedTextField(
                         value = username,
                         onValueChange = { username = it },
-                        label = { Text("用户名 / 邮箱") },
+                        label = { Text("用户名") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Text,
@@ -104,6 +136,20 @@ fun LoginScreen(
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    if (registerMode) {
+                        OutlinedTextField(
+                            value = email,
+                            onValueChange = { email = it },
+                            label = { Text("邮箱（用于接收验证码）") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Email,
+                                imeAction = ImeAction.Next
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
 
                     OutlinedTextField(
                         value = password,
@@ -117,7 +163,7 @@ fun LoginScreen(
                         },
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Password,
-                            imeAction = ImeAction.Done
+                            imeAction = if (registerMode) ImeAction.Next else ImeAction.Done
                         ),
                         trailingIcon = {
                             TextButton(onClick = { passwordVisible = !passwordVisible }) {
@@ -126,6 +172,55 @@ fun LoginScreen(
                         },
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    if (registerMode) {
+                        Column {
+                            OutlinedTextField(
+                                value = code,
+                                onValueChange = { code = it },
+                                label = { Text("邮箱验证码（6 位字母数字）") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(
+                                    // 服务端验证码是 0-9a-z 转大写，不是纯数字
+                                    keyboardType = KeyboardType.Text,
+                                    imeAction = ImeAction.Done
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            TextButton(
+                                onClick = {
+                                    val url = resolvedUrl()
+                                    sending = true
+                                    error = ""
+                                    notice = ""
+                                    scope.launch {
+                                        val r = withContext(Dispatchers.IO) {
+                                            runCatching { Api.sendCode(url, email.trim()) }
+                                                .getOrElse { Api.SendCodeResult(false, "网络异常：${it.message ?: "无法连接服务器"}") }
+                                        }
+                                        sending = false
+                                        if (r.success) {
+                                            countdown = 60
+                                            notice = r.message.ifBlank { "验证码已发送到邮箱" }
+                                        } else {
+                                            error = r.message
+                                        }
+                                    }
+                                },
+                                enabled = !sending && countdown == 0 && email.contains("@") && username.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    when {
+                                        sending -> "发送中…"
+                                        countdown > 0 -> "${countdown} 秒后可重发"
+                                        else -> "获取邮箱验证码"
+                                    }
+                                )
+                            }
+                        }
+                    }
 
                     if (showAdvanced) {
                         OutlinedTextField(
@@ -145,6 +240,14 @@ fun LoginScreen(
                         Text(if (showAdvanced) "收起服务器设置" else "服务器：$baseUrl")
                     }
 
+                    if (notice.isNotBlank()) {
+                        Text(
+                            notice,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
                     if (error.isNotBlank()) {
                         Text(
                             error,
@@ -157,34 +260,31 @@ fun LoginScreen(
                         onClick = {
                             loading = true
                             error = ""
+                            notice = ""
                             scope.launch {
-                                val url = baseUrl.trim().ifBlank { Prefs.DEFAULT_BASE_URL }
+                                val url = resolvedUrl()
                                 val name = username.trim()
                                 val result = withContext(Dispatchers.IO) {
-                                    runCatching { Api.login(url, name, password) }
-                                        .getOrElse {
-                                            Api.LoginResult(
-                                                false,
-                                                "网络异常：${it.message ?: "无法连接服务器"}"
-                                            )
+                                    runCatching {
+                                        if (registerMode) {
+                                            Api.register(url, name, email.trim(), password, code.trim())
+                                        } else {
+                                            Api.login(url, name, password)
                                         }
+                                    }.getOrElse {
+                                        Api.LoginResult(false, "网络异常：${it.message ?: "无法连接服务器"}")
+                                    }
                                 }
                                 loading = false
                                 if (result.success) {
-                                    Prefs.baseUrl = url
-                                    Prefs.saveSession(
-                                        token = result.token,
-                                        username = result.username.ifBlank { name },
-                                        email = result.email,
-                                        isAdmin = result.isAdmin
-                                    )
-                                    onSuccess()
+                                    applyLogin(result, url, name)
                                 } else {
                                     error = result.message
                                 }
                             }
                         },
-                        enabled = !loading && username.isNotBlank() && password.isNotBlank(),
+                        enabled = !loading && username.isNotBlank() && password.isNotBlank() &&
+                            (!registerMode || (email.contains("@") && code.isNotBlank())),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp)
@@ -192,8 +292,20 @@ fun LoginScreen(
                         if (loading) {
                             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                         } else {
-                            Text("登录")
+                            Text(if (registerMode) "注册并登录" else "登录")
                         }
+                    }
+
+                    TextButton(
+                        onClick = {
+                            registerMode = !registerMode
+                            error = ""
+                            notice = ""
+                            code = ""
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (registerMode) "已有账号？返回登录" else "没有账号？注册（访客）")
                     }
                 }
             }
@@ -201,7 +313,8 @@ fun LoginScreen(
             Spacer(Modifier.height(12.dp))
             TextButton(onClick = onSkip) { Text("暂不登录，仅使用本地文件功能") }
             Text(
-                "登录只用于在「我的」中显示账号信息，文件管理功能不依赖登录。\n密码仅在本次登录时发送到服务器，不会被保存在本机。",
+                "未登录：只能查看和复制文件；登录后才能新建、粘贴、删除、打包、解压、提取安装包。\n" +
+                    "密码仅在本次登录时发送到服务器，不会被保存在本机。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center

@@ -25,6 +25,14 @@ object Api {
     private const val TIMEOUT_CONNECT = 15_000
     private const val TIMEOUT_READ = 25_000
 
+    /**
+     * 声明自己是 App 客户端。
+     * 服务端据此跳过 SVG 图形验证码（安卓端无法渲染 SVG），
+     * 改由邮箱验证码 + IP 限流兜底；网页端不受影响。
+     * 见 server.js 的 requireCaptchaApp / APP_CLIENT_ID。
+     */
+    private const val APP_CLIENT = "stc-filemanager"
+
     private val cookies = ConcurrentHashMap<String, String>()
 
     data class Response(val code: Int, val body: String)
@@ -35,8 +43,15 @@ object Api {
         val username: String = "",
         val email: String = "",
         val token: String = "",
-        val isAdmin: Boolean = false
+        val isAdmin: Boolean = false,
+        val role: String = "",
+        val roleLabel: String = "",
+        /** 账号被封禁（服务端拒绝登录） */
+        val banned: Boolean = false
     )
+
+    /** 邮箱验证码发送结果 */
+    data class SendCodeResult(val success: Boolean, val message: String)
 
     private fun nonce(): String = UUID.randomUUID().toString().replace("-", "")
 
@@ -134,6 +149,7 @@ object Api {
             .put("username", username)
             .put("password", password)
             .put("loginType", "password")
+            .put("app_client", APP_CLIENT)
             .toString()
 
         val resp = request(baseUrl, "/api/login", "POST", payload, csrf, nonce())
@@ -142,14 +158,85 @@ object Api {
 
         val ok = json.optBoolean("success")
         val user = json.optJSONObject("user")
+        val role = user?.optString("role").orEmpty()
         return LoginResult(
             success = ok,
             message = json.optString("message").ifBlank { if (ok) "登录成功" else "登录失败" },
             username = user?.optString("username").orEmpty(),
             email = user?.optString("email").orEmpty(),
             token = json.optString("token").orEmpty(),
-            isAdmin = user?.optBoolean("is_admin") ?: false
+            isAdmin = user?.optBoolean("is_admin") ?: false,
+            role = role,
+            roleLabel = user?.optString("role_label").orEmpty().ifBlank { roleLabelOf(role) },
+            banned = json.optBoolean("banned")
         )
+    }
+
+    fun roleLabelOf(role: String): String = when (role) {
+        "guest" -> "访客"
+        "member" -> "成员"
+        "admin" -> "管理员"
+        "superadmin" -> "超级管理员"
+        else -> "成员"
+    }
+
+    /**
+     * 注册新账号（访客身份）。
+     * 服务端 /api/register 会强制 role='guest'、register_source='app'，
+     * 与「工会成员」区分开；随后由管理员在网站后台升级或封禁。
+     */
+    fun register(
+        baseUrl: String,
+        username: String,
+        email: String,
+        password: String,
+        verifyCode: String
+    ): LoginResult {
+        val csrf = fetchCsrf(baseUrl)
+        if (csrf.isBlank()) {
+            return LoginResult(false, "无法获取安全令牌，请检查网络或服务器地址")
+        }
+        val payload = JSONObject()
+            .put("username", username)
+            .put("email", email)
+            .put("password", password)
+            .put("verify_code", verifyCode)
+            .put("app_client", APP_CLIENT)
+            .toString()
+
+        val resp = request(baseUrl, "/api/register", "POST", payload, csrf, nonce())
+        val json = runCatching { JSONObject(resp.body) }.getOrNull()
+            ?: return LoginResult(false, "服务器返回异常（HTTP ${resp.code}）")
+
+        val ok = json.optBoolean("success")
+        val msg = json.optString("message").ifBlank { if (ok) "注册成功" else "注册失败" }
+        if (!ok) return LoginResult(false, msg)
+
+        // 注册成功后直接登录，省去用户再输一遍密码
+        val login = login(baseUrl, username, password)
+        return if (login.success) login.copy(message = "注册成功，已自动登录") else login.copy(message = "注册成功，请返回登录")
+    }
+
+    /** 发送邮箱验证码（App 通道，跳过图形验证码） */
+    fun sendCode(baseUrl: String, email: String): SendCodeResult {
+        return try {
+            val csrf = fetchCsrf(baseUrl)
+            if (csrf.isBlank()) return SendCodeResult(false, "无法获取安全令牌，请检查网络")
+            val payload = JSONObject()
+                .put("email", email)
+                .put("type", "register")
+                .put("app_client", APP_CLIENT)
+                .toString()
+            val resp = request(baseUrl, "/api/send-code", "POST", payload, csrf, nonce())
+            val json = runCatching { JSONObject(resp.body) }.getOrNull()
+            SendCodeResult(
+                success = json?.optBoolean("success") ?: false,
+                message = json?.optString("message").orEmpty()
+                    .ifBlank { if (resp.code in 200..299) "验证码已发送" else "发送失败（HTTP ${resp.code}）" }
+            )
+        } catch (e: Exception) {
+            SendCodeResult(false, "发送失败：" + (e.message ?: "网络错误"))
+        }
     }
 
     /** 退出登录（尽力而为，失败不影响本地清空） */

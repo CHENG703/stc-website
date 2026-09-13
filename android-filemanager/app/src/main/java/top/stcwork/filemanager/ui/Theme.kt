@@ -7,35 +7,57 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
+// 主题：整体灰阶（无彩色）。用户明确要求「整体颜色是灰色」，
+// 因此 primary/secondary 均为中性灰，不使用任何品牌色/紫蓝色。
+private val Gray = Color(0xFF8C8C8C)
+private val Graphite = Color(0xFF4A4A4A)
+
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF8AB4FF),
-    onPrimary = Color(0xFF0A1A38),
-    primaryContainer = Color(0xFF1B2A4A),
-    onPrimaryContainer = Color(0xFFD6E3FF),
-    secondary = Color(0xFFA8C7FA),
-    onSecondary = Color(0xFF0A1A38),
-    background = Color(0xFF0B1020),
-    onBackground = Color(0xFFE6EAF2),
-    surface = Color(0xFF111729),
-    onSurface = Color(0xFFE6EAF2),
-    surfaceVariant = Color(0xFF1A2136),
-    onSurfaceVariant = Color(0xFFB9C2D6),
-    outline = Color(0xFF3A4459),
-    error = Color(0xFFFFB4AB),
-    onError = Color(0xFF3B0907)
+    primary = Color(0xFFD0D0D0),
+    onPrimary = Color(0xFF1C1C1C),
+    primaryContainer = Color(0xFF3A3A3A),
+    onPrimaryContainer = Color(0xFFE8E8E8),
+    secondary = Color(0xFF9E9E9E),
+    onSecondary = Color(0xFF1C1C1C),
+    secondaryContainer = Color(0xFF333333),
+    onSecondaryContainer = Color(0xFFDCDCDC),
+    tertiary = Color(0xFFB0B0B0),
+    onTertiary = Color(0xFF1C1C1C),
+    background = Color(0xFF121212),
+    onBackground = Color(0xFFE4E4E4),
+    surface = Color(0xFF1C1C1C),
+    onSurface = Color(0xFFE4E4E4),
+    surfaceVariant = Color(0xFF2A2A2A),
+    onSurfaceVariant = Color(0xFFB5B5B5),
+    surfaceContainerHighest = Color(0xFF2E2E2E),
+    outline = Color(0xFF4D4D4D),
+    outlineVariant = Color(0xFF383838),
+    error = Color(0xFFD9A0A0),
+    onError = Color(0xFF2A1414)
 )
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF2A5BD7),
+    primary = Graphite,
     onPrimary = Color(0xFFFFFFFF),
-    background = Color(0xFFF6F7FB),
-    onBackground = Color(0xFF14161C),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF14161C),
-    surfaceVariant = Color(0xFFE7EAF2),
-    onSurfaceVariant = Color(0xFF4A5265),
-    outline = Color(0xFFC3CAD9),
-    error = Color(0xFFB3261E)
+    primaryContainer = Color(0xFFDEDEDE),
+    onPrimaryContainer = Color(0xFF1A1A1A),
+    secondary = Color(0xFF6E6E6E),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFE4E4E4),
+    onSecondaryContainer = Color(0xFF232323),
+    tertiary = Gray,
+    onTertiary = Color(0xFFFFFFFF),
+    background = Color(0xFFF2F2F2),
+    onBackground = Color(0xFF1A1A1A),
+    surface = Color(0xFFFAFAFA),
+    onSurface = Color(0xFF1A1A1A),
+    surfaceVariant = Color(0xFFE6E6E6),
+    onSurfaceVariant = Color(0xFF5A5A5A),
+    surfaceContainerHighest = Color(0xFFEDEDED),
+    outline = Color(0xFFBDBDBD),
+    outlineVariant = Color(0xFFDCDCDC),
+    error = Color(0xFF8C3A3A),
+    onError = Color(0xFFFFFFFF)
 )
 
 @Composable

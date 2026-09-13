@@ -73,9 +73,13 @@ fun ProfileScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        if (Prefs.isAdmin) {
+                        // 身份：访客 / 成员 / 管理员（由网站下发）
+                        val roleText = Prefs.roleLabel.ifBlank {
+                            if (Prefs.loggedIn) "成员" else ""
+                        }
+                        if (roleText.isNotBlank()) {
                             Text(
-                                "管理员",
+                                "身份：$roleText" + if (Prefs.isGuest) "（非工会）" else "",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -92,6 +96,16 @@ fun ProfileScreen(
                     Text("登录状态", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
                         if (Prefs.loggedIn) "已登录（会话 token 已保存在本机）" else "未登录 / 已跳过登录",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text("可用功能", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (Prefs.canWrite) {
+                            "全部功能：新建、复制粘贴、重命名、删除、打包、解压、提取安装包"
+                        } else {
+                            "仅查看与复制。登录后可新建文件/文件夹、粘贴、重命名、删除、打包、解压、提取安装包"
+                        },
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -122,7 +136,12 @@ fun ProfileScreen(
                     Text("关于", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("STC 文件管理器 v$version", style = MaterialTheme.typography.bodySmall)
                     Text(
-                        "功能：文件浏览、复制粘贴、ZIP 打包与解压、详细信息、提取已安装应用的安装包。上传下载接口暂未开放。",
+                        "功能：文件浏览、新建文件夹/文件（后缀自填）、文本编辑器（txt/py/nbt/json 等）、复制粘贴、ZIP 打包与解压、详细信息、提取已安装应用的安装包。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "账号：软件内注册的账号为「访客」身份，可被管理员在网站后台限时封禁；封禁期间无法登录使用。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
