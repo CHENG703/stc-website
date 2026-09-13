@@ -1892,6 +1892,52 @@ const sessionConfig = {
     }
 };
 
+// ---------- 登录态 cookie（httpOnly）+ token 生成 ----------
+// 背景（安全审计风险 1）：token 原本由前端存 localStorage，任何 XSS 都能直接读走外传，24 小时内可完全冒充用户。
+// 现值：登录/Logto 回调由服务端把 token 写进 httpOnly cookie，前端 JS 接触不到 token（拿不走）；
+//      请求认证顺序 = 「Authorization / x-auth-token 头」优先，其次读 cookie。
+// 兼容：跨域调用方（GitHub Pages 镜像、脚本客户端）仍可从响应体拿 token —— 仅当请求来源不是本站时才返回，
+//      避免本站 XSS 通过伪造登录响应体拿到 token。
+const AUTH_COOKIE_NAME = 'stc_auth_token';
+const AUTH_COOKIE_MAX_AGE = 24 * 60 * 60 * 1000; // 与 token 内 ts 的 24h 有效期一致
+// 跨域镜像需要 none（第三方 cookie 政策可能拦截，属浏览器限制，服务端无解）；不用镜像可设 AUTH_COOKIE_SAMESITE=lax
+const AUTH_COOKIE_SAMESITE = process.env.AUTH_COOKIE_SAMESITE || SESSION_COOKIE_SAMESITE;
+
+function setAuthCookie(res, token) {
+    res.cookie(AUTH_COOKIE_NAME, token, {
+        httpOnly: true,
+        secure: IS_VERCEL || isProduction,
+        sameSite: AUTH_COOKIE_SAMESITE,
+        maxAge: AUTH_COOKIE_MAX_AGE,
+        path: '/'
+    });
+}
+
+function clearAuthCookie(res) {
+    res.clearCookie(AUTH_COOKIE_NAME, { path: '/' });
+}
+
+// 本次请求是否允许从响应体拿 token：同源（主站自己的页面）不给，跨域白名单来源 / 无 Origin 的脚本客户端给
+function shouldExposeTokenInBody(req) {
+    return !sameOriginAsSite(req && req.headers && req.headers.origin, req);
+}
+
+// HMAC-SHA256 签名的登录 token（模块级函数：注册在认证中间件之前的路由，例如 Logto 回调，也要能生成）
+function generateAuthTokenFor(user) {
+    const tokenData = {
+        userId: user.id,
+        username: user.username,
+        email: user.email || '',
+        isAdmin: user.is_admin,
+        isSuperAdmin: user.is_super_admin,
+        ts: Date.now()
+    };
+    tokenData.sig = crypto.createHmac('sha256', TOKEN_SECRET)
+        .update(JSON.stringify(tokenData))
+        .digest('base64url');
+    return Buffer.from(JSON.stringify(tokenData)).toString('base64');
+}
+
 if (IS_VERCEL) {
     // Vercel 环境：完全依赖 token 认证（Authorization header）
     // 不使用 CookieStore，避免 session 数据分片 cookie 累积导致 494 REQUEST_HEADER_TOO_LARGE
@@ -2015,17 +2061,14 @@ app.get('/api/auth/logto/check', async (req, res) => {
                     await db.write();
                 }
                 
-                // 生成 token
-                const token = Buffer.from(JSON.stringify({
-                    userId: user.id,
-                    username: user.username,
-                    email: user.email || '',
-                    isAdmin: user.is_admin,
-                    isSuperAdmin: user.is_super_admin,
-                    ts: Date.now()
-                })).toString('base64');
+                // 生成 token：必须带 HMAC 签名（旧代码这里漏了 sig 字段，认证中间件会直接拒绝，
+                // 等于 Logto 登录产出的 token 一直是废的），并顺手写进 httpOnly cookie。
+                const token = generateAuthTokenFor(user);
+                setAuthCookie(res, token);
                 
-                res.json({ authenticated: true, token: token, username: user.username });
+                const logtoPayload = { authenticated: true, username: user.username };
+                if (shouldExposeTokenInBody(req)) logtoPayload.token = token;
+                res.json(logtoPayload);
             } catch (e) {
                 console.error('[LOGTO] 检查认证失败:', e);
                 res.json({ authenticated: false, error: 'logto_check_error' });
@@ -2039,10 +2082,16 @@ app.get('/api/auth/logto/check', async (req, res) => {
 
 app.use((req, res, next) => {
     const authHeader = req.headers.authorization || req.headers['x-auth-token'];
+    // 无 Authorization 头时回退到 httpOnly cookie（主站前端不再保存 token）
+    const cookieToken = (req.cookies && req.cookies[AUTH_COOKIE_NAME]) || '';
     let authUser = null;
     
-    if (authHeader) {
-        const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+    const rawToken = authHeader
+        ? (authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader)
+        : cookieToken;
+
+    if (rawToken) {
+        const token = rawToken;
         try {
             const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
             // 安全修复：token 必须携带由 TOKEN_SECRET 生成的 HMAC-SHA256 签名。
@@ -2069,6 +2118,8 @@ app.use((req, res, next) => {
             };
         } catch (e) {
             console.warn('[AUTH] token 验证失败:', e.message);
+            // 仅当这次认证来源是 cookie 时清掉，避免浏览器一直带着失效 cookie 反复重试
+            if (!authHeader && cookieToken) clearAuthCookie(res);
         }
     }
     
@@ -2083,21 +2134,8 @@ app.use((req, res, next) => {
         req.session.isSuperAdmin = authUser.is_super_admin;
     }
     
-    // 生成 token 的辅助函数（HMAC-SHA256 签名，防伪造）
-    req.generateAuthToken = (user) => {
-        const tokenData = {
-            userId: user.id,
-            username: user.username,
-            email: user.email || '',
-            isAdmin: user.is_admin,
-            isSuperAdmin: user.is_super_admin,
-            ts: Date.now()
-        };
-        tokenData.sig = crypto.createHmac('sha256', TOKEN_SECRET)
-            .update(JSON.stringify(tokenData))
-            .digest('base64url');
-        return Buffer.from(JSON.stringify(tokenData)).toString('base64');
-    };
+    // 生成 token 的辅助函数（HMAC-SHA256 签名，防伪造；实现见模块级 generateAuthTokenFor）
+    req.generateAuthToken = generateAuthTokenFor;
     
     next();
 });
@@ -2821,13 +2859,16 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
     user.lastLoginTime = new Date().toISOString();
     await db.write();
     
-    // 始终生成并返回 token（前端存储到 localStorage）
-    const token = req.generateAuthToken(user);
-    console.log('[LOGIN] 生成 token 给用户:', user.username, 'IS_VERCEL:', IS_VERCEL);
+    // 登录态走 httpOnly cookie（前端不再接触 token）；
+    // 仅跨域/脚本调用方额外从响应体拿 token（见 shouldExposeTokenInBody）
+    const token = generateAuthTokenFor(user);
+    setAuthCookie(res, token);
+    const exposeToken = shouldExposeTokenInBody(req);
+    console.log('[LOGIN] 已下发登录 cookie:', user.username, 'IS_VERCEL:', IS_VERCEL, 'exposeToken:', exposeToken);
     res.json({ 
         success: true, 
         message: '登录成功', 
-        token: token,
+        ...(exposeToken ? { token: token } : {}),
         user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, is_super_admin: user.is_super_admin } 
     });
 });
@@ -2976,6 +3017,7 @@ app.post('/api/logout', requireCSRF, (req, res) => {
         sessCookies.forEach(name => {
             res.clearCookie(name, { path: '/' });
         });
+        clearAuthCookie(res); // 清掉 httpOnly 登录态 cookie
         res.json({ success: true, message: '登出成功' });
     });
 });
@@ -5733,6 +5775,8 @@ app.get('/api/admin/db-status', requireSuperAdmin, (req, res) => {
             corsAllowedSuffixes: CORS_ALLOWED_SUFFIXES,
             trustCfConnectingIp: process.env.TRUST_CF_CONNECTING_IP === '1',
             sessionCookieSameSite: SESSION_COOKIE_SAMESITE,
+            authCookieSameSite: AUTH_COOKIE_SAMESITE,
+            authCookieHttpOnly: true,
             originCheckDisabled: process.env.DISABLE_ORIGIN_CHECK === '1'
         },
         data: db.getStatus()

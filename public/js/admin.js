@@ -1292,11 +1292,9 @@ async function fetchWithAuth(url, options = {}) {
     options.headers = options.headers || {};
     options.headers['Accept'] = 'application/json';
 
-    // 从 localStorage 读取 token（Vercel 环境）
-    const token = localStorage.getItem('stc_auth_token');
-    if (token) {
-        options.headers['Authorization'] = 'Bearer ' + token;
-    }
+    // 登录态已改为服务端 httpOnly cookie（options.credentials='include' 自动携带），前端不再持有 token；
+    // 顺手清掉旧版本留在 localStorage 里的 token，避免被 XSS 捡走
+    try { localStorage.removeItem('stc_auth_token'); } catch (e) {}
 
     // 写请求：每次都拿新的一次性 CSRF token + 生成唯一 nonce
     const method = (options.method || 'GET').toUpperCase();
@@ -1327,7 +1325,7 @@ async function fetchWithAuth(url, options = {}) {
 
 // 登出
 async function logout() {
-    localStorage.removeItem('stc_auth_token');
+    // 登录态 cookie 由服务端在 /api/logout 里清除
     const response = await fetchWithAuth('/api/logout', { method: 'POST' });
     if (response.ok) {
         showMessage('登出成功');

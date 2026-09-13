@@ -1430,9 +1430,10 @@
         const genModal = document.getElementById('gen-modal');
 
         // ==================== 工具函数 ====================
+        // 登录态已改为服务端 httpOnly cookie（请求带 credentials:'include' 即会自动携带），前端不再持有 token
         function authHeaders() {
-            const token = localStorage.getItem('stc_auth_token');
-            return token ? { 'Authorization': 'Bearer ' + token } : {};
+            try { localStorage.removeItem('stc_auth_token'); } catch (e) {}
+            return {};
         }
 
         async function getCSRFToken() {

@@ -1132,8 +1132,8 @@
             opts.credentials = 'include';
             opts.headers = Object.assign({}, options.headers || {});
 
-            const authToken = localStorage.getItem('stc_auth_token');
-            if (authToken) opts.headers['Authorization'] = 'Bearer ' + authToken;
+            // 登录态已改为服务端 httpOnly cookie（opts.credentials='include' 自动携带），前端不再持有 token
+            try { localStorage.removeItem('stc_auth_token'); } catch (e) {}
 
             // 写请求必须携带 CSRF token 与一次性 nonce，否则服务端直接 403
             if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {

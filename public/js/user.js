@@ -26,12 +26,9 @@ async function fetchWithAuth(url, options = {}) {
     // 确保发送cookies以维持session
     options.credentials = 'include';
     
-    // Vercel 环境: 从 localStorage 读取 token 添加到 header
-    const token = localStorage.getItem('stc_auth_token');
-    if (token) {
-        options.headers = options.headers || {};
-        options.headers['Authorization'] = 'Bearer ' + token;
-    }
+    // 登录态已改为服务端 httpOnly cookie（fetch 自动携带），前端不再持有 token；
+    // 顺手清掉旧版本留在 localStorage 里的 token，避免被 XSS 捡走
+    try { localStorage.removeItem('stc_auth_token'); } catch (e) {}
     
     // 写请求需要一次性 CSRF token + 请求 nonce，否则服务端直接 403
     const method = (options.method || 'GET').toUpperCase();

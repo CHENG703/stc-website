@@ -1358,11 +1358,7 @@
                 }
 
                 if (data.success) {
-                    // 存储 token 到 localStorage
-                    if (data.token) {
-                        localStorage.setItem('stc_auth_token', data.token);
-                        console.log('[LOGIN] token 已存储到 localStorage');
-                    }
+                    // 登录态由服务端写入 httpOnly cookie（前端不接触 token，XSS 也偷不走）
                     showSuccess('登录成功！正在跳转...');
                     if (isCode) {
                         // 参考视频的确认动效：一叠牌发光 → 绿色印章 +「验证成功」
@@ -1371,7 +1367,8 @@
                         setTimeout(() => { window.location.href = '/home'; }, 900);
                     } else {
                         setLoginStep(3); // 正在校验身份令牌
-                        if (data.token) setLoginStep(4); // 登录成功，正在跳转
+                        // 登录态走 httpOnly cookie，响应体不再回 token，直接看 success 即可
+                        if (data.success) setLoginStep(4); // 登录成功，正在跳转
                         setTimeout(() => { window.location.href = '/home'; }, 600);
                     }
                     return; // 成功后保持按钮禁用，等跳转

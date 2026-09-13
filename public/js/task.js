@@ -32,12 +32,9 @@ async function fetchWithAuth(url, options = {}) {
     // 确保发送cookies以维持session
     options.credentials = 'include';
     
-    // Vercel 环境: 从 localStorage 读取 token 添加到 header
-    const token = localStorage.getItem('stc_auth_token');
-    if (token) {
-        options.headers = options.headers || {};
-        options.headers['Authorization'] = 'Bearer ' + token;
-    }
+    // 登录态已改为服务端 httpOnly cookie（fetch 自动携带），前端不再持有 token；
+    // 顺手清掉旧版本留在 localStorage 里的 token，避免被 XSS 捡走
+    try { localStorage.removeItem('stc_auth_token'); } catch (e) {}
     
     const response = await fetch(url, options);
     
@@ -87,7 +84,6 @@ async function secureFetch(url, options = {}) {
         return fetchWithAuth(url, options);
     }
 
-    const authToken = localStorage.getItem('stc_auth_token');
     let csrf = null;
     try {
         csrf = await fetchCsrfToken();
@@ -99,7 +95,6 @@ async function secureFetch(url, options = {}) {
     options.headers = Object.assign({}, options.headers || {});
     if (csrf) options.headers['X-CSRF-Token'] = csrf;
     options.headers['X-Request-Nonce'] = genNonce();
-    if (authToken) options.headers['Authorization'] = 'Bearer ' + authToken;
 
     return fetchWithAuth(url, options);
 }
@@ -356,13 +351,8 @@ async function updateTaskStatus(taskId, newStatus) {
 // 下载任务附件（带登录态，失败时给出明确提示）
 async function downloadTaskFile(taskId, fileName) {
     try {
-        const token = localStorage.getItem('stc_auth_token');
-        const headers = {};
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-
         const resp = await fetch(`/api/tasks/${taskId}/download`, {
-            credentials: 'include',
-            headers: headers
+            credentials: 'include'
         });
 
         if (!resp.ok) {

@@ -241,12 +241,9 @@ async function fetchWithAuth(url, options = {}) {
     // 确保发送cookies以维持session
     options.credentials = 'include';
     
-    // Vercel 环境: 从 localStorage 读取 token 添加到 header
-    const token = localStorage.getItem('stc_auth_token');
-    if (token) {
-        options.headers = options.headers || {};
-        options.headers['Authorization'] = 'Bearer ' + token;
-    }
+    // 登录态已改为服务端 httpOnly cookie（fetch 自动携带），前端不再持有 token；
+    // 顺手清掉旧版本留在 localStorage 里的 token，避免被 XSS 捡走
+    try { localStorage.removeItem('stc_auth_token'); } catch (e) {}
     
     // 对于写请求（POST、PUT、DELETE、PATCH）：
     // 1. 每次都获取新的一次性 CSRF token（防重放，服务器端单次使用后删除）
@@ -424,8 +421,7 @@ async function logout() {
         const response = await fetchWithAuth('/api/logout', {
             method: 'POST'
         });
-        // 无论成功与否，都清除本地 token
-        localStorage.removeItem('stc_auth_token');
+        // 登录态 cookie 由服务端在 /api/logout 里清除
         if (response.ok) {
             showMessage('登出成功');
             setTimeout(() => {
@@ -435,8 +431,7 @@ async function logout() {
             showMessage('登出失败', 'error');
         }
     } catch (error) {
-        // 清除本地 token，即使请求失败
-        localStorage.removeItem('stc_auth_token');
+        // 即使请求失败，也不再保留任何本地登录态
         if (error.message !== 'AccessDenied' && error.message !== 'Unauthorized') {
             showMessage('登出失败', 'error');
         } else {
@@ -1221,10 +1216,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 如果未登录，尝试检查 Logto 认证
     if (!user) {
         try {
-            const response = await fetch('/api/auth/logto/check');
+            const response = await fetch('/api/auth/logto/check', { credentials: 'include' });
             const data = await response.json();
-            if (data.authenticated && data.token) {
-                localStorage.setItem('stc_auth_token', data.token);
+            // 服务端已把登录态写进 httpOnly cookie，这里只需确认是否登录成功
+            if (data.authenticated) {
                 console.log('[LOGTO] 通过 Logto 登录成功:', data.username);
                 // 重新检查登录状态
                 user = await checkLoginStatus();
