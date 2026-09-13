@@ -33,6 +33,7 @@ import top.stcwork.filemanager.ui.AppsScreen
 import top.stcwork.filemanager.ui.EditorScreen
 import top.stcwork.filemanager.ui.FilesScreen
 import top.stcwork.filemanager.ui.LoginScreen
+import top.stcwork.filemanager.ui.PcScreen
 import top.stcwork.filemanager.ui.Perm
 import top.stcwork.filemanager.ui.ProfileScreen
 import top.stcwork.filemanager.ui.STCTheme
@@ -131,6 +132,11 @@ fun RootScreen() {
                     hasAccess = hasAccess,
                     onRequestAccess = requestAccess
                 )
+                2 -> PcScreen(
+                    snackbar = snackbar,
+                    hasAccess = hasAccess,
+                    onRequestAccess = requestAccess
+                )
                 else -> ProfileScreen(
                     onLogout = {
                         Prefs.clearSession()
@@ -162,6 +168,12 @@ fun RootScreen() {
             NavigationBarItem(
                 selected = tab == 2,
                 onClick = { tab = 2 },
+                icon = {},
+                label = { Text("电脑") }
+            )
+            NavigationBarItem(
+                selected = tab == 3,
+                onClick = { tab = 3 },
                 icon = {},
                 label = { Text("我的") }
             )

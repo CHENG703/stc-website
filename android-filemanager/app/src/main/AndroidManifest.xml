@@ -35,7 +35,7 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.STCFileManager"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="true"><!-- 电脑端互传走局域网 http://192.168.x.x:8765，需要允许明文；网站仍然是 https -->
 
         <activity
             android:name=".MainActivity"

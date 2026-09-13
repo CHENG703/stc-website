@@ -71,6 +71,24 @@ object Prefs {
     val canWrite: Boolean
         get() = loggedIn
 
+    /** 电脑端互传：电脑端地址（形如 http://192.168.1.5:8765） */
+    var pcUrl: String
+        get() = p().getString("pc_url", "") ?: ""
+        set(value) = p().edit().putString("pc_url", value.trim().trimEnd('/')).apply()
+
+    /** 电脑端互传：配对成功后拿到的令牌 */
+    var pcToken: String
+        get() = p().getString("pc_token", "") ?: ""
+        set(value) = p().edit().putString("pc_token", value).apply()
+
+    /** 「电脑」页是否已配对 */
+    val pcPaired: Boolean
+        get() = pcToken.isNotBlank() && pcUrl.isNotBlank()
+
+    fun clearPcPair() {
+        p().edit().remove("pc_token").apply()
+    }
+
     fun saveSession(
         token: String,
         username: String,
