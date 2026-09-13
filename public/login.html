@@ -405,36 +405,6 @@
             color: rgba(255, 255, 255, 0.8);
         }
 
-        .code-wrapper {
-            display: flex;
-            gap: 10px;
-        }
-
-        .code-wrapper .form-input {
-            flex: 1;
-        }
-
-        .send-btn {
-            padding: 14px 18px;
-            background: rgba(102, 126, 234, 0.3);
-            border: 1px solid rgba(102, 126, 234, 0.5);
-            border-radius: 12px;
-            color: #667eea;
-            font-size: 14px;
-            cursor: pointer;
-            transition: all 0.3s;
-            white-space: nowrap;
-        }
-
-        .send-btn:hover {
-            background: rgba(102, 126, 234, 0.5);
-        }
-
-        .send-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
         /* 图形验证码（登录人机验证） */
         .captcha-row {
             display: flex;
@@ -661,9 +631,7 @@
             -webkit-backdrop-filter: blur(8px);
         }
 
-        /* ===== OTP Deck：验证码登录栏（一手牌展开 → 失败抖动） ===== */
-        .otp-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-        .otp-row .form-label { margin: 0; }
+        /* ===== OTP Deck：输码（一手牌展开 → 收拢核验 → 印章 / 失败抖动） ===== */
         .otp-deck {
             --slot: 48px; --gap: 8px;
             position: relative; width: 100%; height: 84px; margin: 6px 0 4px;
@@ -678,7 +646,8 @@
             font-size: 28px; font-weight: 700; color: var(--text-primary, #f1f5f9);
             font-family: 'JetBrains Mono','SF Mono','Menlo','Consolas',monospace;
             cursor: text; transform-origin: 50% 320%; user-select: none;
-            transition: background .2s ease, border-color .2s ease, box-shadow .2s ease, color .2s ease;
+            transition: background .2s ease, border-color .2s ease, box-shadow .2s ease, color .2s ease,
+                        transform .36s cubic-bezier(.2,.7,.2,1);
             backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
         }
         .otp-slot[data-i="0"] { transform: translate(calc(-2.5 * (var(--slot) + var(--gap))), 0); }
@@ -709,6 +678,48 @@
         }
         .otp-hint { margin-top: 6px; font-size: 12px; color: rgba(241,245,249,0.55); display: flex; gap: 8px; align-items: center; }
         .otp-hint kbd { font-family: inherit; font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); }
+
+        /* ===== 验证码登录：两步（① 邮箱 + 人机验证 → ② 输码自动登录） ===== */
+        .step-tip { font-size: 12px; color: rgba(241,245,249,0.5); margin-top: 8px; line-height: 1.6; }
+        .step-back {
+            display: inline-flex; align-items: center; gap: 6px;
+            background: transparent; border: 0; padding: 0; margin-bottom: 14px;
+            color: rgba(241,245,249,0.6); font-size: 13px; cursor: pointer; transition: color .3s;
+        }
+        .step-back:hover { color: #fff; }
+        .otp-head { margin-bottom: 16px; }
+        .otp-title { font-size: 20px; font-weight: 700; color: #fff; }
+        .otp-sub { margin-top: 6px; font-size: 13px; color: rgba(241,245,249,0.6); line-height: 1.6; word-break: break-all; }
+        .otp-sub b { color: #4a9eff; font-weight: 600; }
+        .otp-resend { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 13px; color: rgba(241,245,249,0.55); }
+        .link-btn { background: transparent; border: 0; padding: 0; color: #4a9eff; font-size: 13px; cursor: pointer; }
+        .link-btn:hover:not(:disabled) { text-decoration: underline; }
+        .link-btn:disabled { color: rgba(241,245,249,0.35); cursor: not-allowed; }
+        .step-in { animation: step-in .32s cubic-bezier(.2,.7,.2,1) both; }
+        @keyframes step-in {
+            from { opacity: 0; transform: translateX(14px); }
+            to   { opacity: 1; transform: none; }
+        }
+
+        /* 验证中：六张牌收拢成一叠 + 蓝色发光脉冲（参考视频的「Checking your code」） */
+        .otp-deck.is-checking .otp-slot {
+            transform: translate(0, 0);
+            background: rgba(74,158,255,0.10);
+            border-color: rgba(74,158,255,0.5);
+            animation: otp-glow 1.1s ease-in-out infinite;
+        }
+        @keyframes otp-glow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(74,158,255,0); }
+            50%      { box-shadow: 0 0 22px 4px rgba(74,158,255,0.35); }
+        }
+        /* 验证成功：绿色印章 */
+        .otp-deck.is-verified .otp-slot {
+            transform: translate(0, 0);
+            background: rgba(16,185,129,0.14);
+            border-color: rgba(16,185,129,0.65);
+            color: #34d399;
+            box-shadow: 0 0 22px rgba(16,185,129,0.35);
+        }
         @media (max-width: 480px) {
             .otp-deck { --slot: 40px; --gap: 6px; height: 72px; }
             .otp-slot { font-size: 20px; border-radius: 12px; }
@@ -755,17 +766,22 @@
                     </div>
                 </div>
 
-                <!-- 验证码登录 -->
+                <!-- 验证码登录：第 1 步（邮箱） -->
                 <div id="code-login" class="hidden">
-                    <div class="form-group">
-                        <label class="form-label" data-lang="login.email">邮箱</label>
-                        <input type="email" class="form-input" id="login-email" name="email" placeholder="请输入注册的邮箱" data-lang-placeholder="login.email">
+                    <div id="code-step-1">
+                        <div class="form-group">
+                            <label class="form-label" data-lang="login.email">邮箱</label>
+                            <input type="email" class="form-input" id="login-email" name="email" placeholder="请输入注册的邮箱" data-lang-placeholder="login.email">
+                        </div>
+                        <div class="step-tip" id="code-step1-tip">填好邮箱和人机验证码后点「发送验证码」，验证码会发到你的邮箱（5 分钟内有效）。</div>
                     </div>
 
-                    <div class="form-group">
-                        <div class="otp-row">
-                            <span class="form-label" data-lang="login.code">验证码</span>
-                            <button type="button" class="send-btn" id="send-login-code">发送验证码</button>
+                    <!-- 验证码登录：第 2 步（输码 → 自动登录） -->
+                    <div id="code-step-2" class="hidden">
+                        <button type="button" class="step-back" id="code-back">← 更换邮箱</button>
+                        <div class="otp-head">
+                            <div class="otp-title" id="otp-title">输入验证码</div>
+                            <div class="otp-sub"><span id="otp-sub-text">验证码已发送至</span> <b id="otp-email"></b></div>
                         </div>
                         <div class="otp-deck" id="otp-deck" data-length="6" aria-label="一次性验证码">
                             <span class="otp-slot" data-i="0"><span class="otp-slot__digit"></span></span>
@@ -780,15 +796,19 @@
                                    maxlength="6" aria-label="一次性验证码">
                         </div>
                         <div class="otp-hint">
-                            <span>支持直接粘贴 · 输完按 <kbd>Enter</kbd> 登录</span>
+                            <span>支持直接粘贴 · 输满 6 位自动登录</span>
+                        </div>
+                        <div class="otp-resend">
+                            <span>没收到？</span>
+                            <button type="button" class="link-btn" id="resend-code">重新发送</button>
                         </div>
                         <!-- 兼容现有提交逻辑：deck 把数字写到这个隐藏字段 -->
                         <input type="hidden" id="login-code" name="code" value="">
                     </div>
                 </div>
 
-                <!-- 人机验证（图形验证码） -->
-                <div class="form-group">
+                <!-- 人机验证（图形验证码）：密码登录、验证码登录第 1 步使用 -->
+                <div class="form-group" id="captcha-group">
                     <label class="form-label">人机验证</label>
                     <div class="captcha-row">
                         <input type="text" class="form-input" id="captcha-input" maxlength="6" placeholder="请输入图中字符" autocomplete="off">
@@ -796,6 +816,9 @@
                     </div>
                     <div class="captcha-tip">看不清？点击图片可刷新</div>
                 </div>
+
+                <!-- 验证码登录第 1 步的主按钮（发送验证码） -->
+                <button type="button" class="login-btn hidden" id="send-login-code" data-lang="login.sendCode">发送验证码</button>
 
                 <button type="submit" class="login-btn" id="login-btn">登 录</button>
 
@@ -1089,6 +1112,64 @@
             }, 5000);
         }
 
+        // ===== 验证码登录分两步：1 = 邮箱 + 人机验证，2 = 输入验证码（输满自动登录） =====
+        let codeStep = 1;
+        let codeSent = false;
+        const STEP1_TIP = '填好邮箱和人机验证码后点「发送验证码」，验证码会发到你的邮箱（5 分钟内有效）。';
+
+        // 按「当前 tab + 当前步骤」决定各控件的显隐
+        function updateAuthChrome() {
+            const isCode = currentLoginType === 'code';
+            const onStep2 = isCode && codeStep === 2;
+            document.getElementById('captcha-group').classList.toggle('hidden', onStep2);
+            document.getElementById('send-login-code').classList.toggle('hidden', !(isCode && codeStep === 1));
+            document.getElementById('login-btn').classList.toggle('hidden', isCode && codeStep === 1);
+        }
+
+        // 切换到验证码登录的第 n 步
+        function showCodeStep(n) {
+            codeStep = n;
+            const step1 = document.getElementById('code-step-1');
+            const step2 = document.getElementById('code-step-2');
+            step1.classList.toggle('hidden', n !== 1);
+            step2.classList.toggle('hidden', n !== 2);
+            const el = n === 1 ? step1 : step2;
+            el.classList.remove('step-in');
+            void el.offsetWidth; // 强制重排，让入场动画能重播
+            el.classList.add('step-in');
+            updateAuthChrome();
+            if (n === 2 && typeof window.otpDeckFocus === 'function') {
+                setTimeout(() => window.otpDeckFocus(), 60);
+            }
+        }
+
+        // 输码这一步的标题 / 副标题
+        function setOtpHead(title, subText, email) {
+            document.getElementById('otp-title').textContent = title;
+            document.getElementById('otp-sub-text').textContent = subText;
+            document.getElementById('otp-email').textContent = email || '';
+        }
+
+        // 核验失败后把输码这一步复位
+        function resetOtpStep() {
+            setOtpHead('输入验证码', '验证码已发送至', document.getElementById('login-email').value.trim());
+            if (typeof window.otpDeckReset === 'function') window.otpDeckReset();
+        }
+
+        // 回到第 1 步（换邮箱 / 重发都要重新过人机验证——图形码是单次有效的）
+        function backToStep1(tip) {
+            hideMessages();
+            codeSent = false;
+            clearInterval(codeTimer);
+            const rb = document.getElementById('resend-code');
+            if (rb) { rb.disabled = false; rb.textContent = '重新发送'; }
+            document.getElementById('code-step1-tip').textContent = tip || STEP1_TIP;
+            showCodeStep(1);
+            resetCaptcha();
+            const emailInput = document.getElementById('login-email');
+            try { emailInput.focus({ preventScroll: true }); } catch (_) { emailInput.focus(); }
+        }
+
         // 切换登录方式
         function switchLoginTab(type) {
             currentLoginType = type;
@@ -1097,16 +1178,20 @@
             document.getElementById('password-login').classList.toggle('hidden', type !== 'password');
             document.getElementById('code-login').classList.toggle('hidden', type !== 'code');
             hideMessages();
-            // 切到验证码登录时聚焦 OTP deck
-            if (type === 'code' && typeof window.otpDeckFocus === 'function') {
-                setTimeout(() => window.otpDeckFocus(), 50);
+            if (type === 'code') {
+                // 已经发过码就直接回到输码那一步，不必重复发送
+                showCodeStep(codeSent ? 2 : 1);
+            } else {
+                codeStep = 1;
+                updateAuthChrome();
             }
         }
 
-        // 发送登录验证码
+        // 发送登录验证码：成功后跳到第 2 步（输码）
         document.getElementById('send-login-code').addEventListener('click', async function() {
             const email = document.getElementById('login-email').value.trim();
             const btn = this;
+            const btnLabel = btn.textContent || '发送验证码';
 
             if (!email) {
                 showError('请先输入邮箱地址');
@@ -1125,6 +1210,7 @@
                 return;
             }
 
+            hideMessages();
             btn.disabled = true;
             btn.textContent = '发送中...';
 
@@ -1148,32 +1234,49 @@
                 }
                 const data = await response.json();
                 if (data.success) {
+                    codeSent = true;
+                    document.getElementById('code-step1-tip').textContent = STEP1_TIP;
+                    setOtpHead('输入验证码', '验证码已发送至', email);
+                    startResendCountdown(60);
+                    resetCaptcha();     // 图形验证码已被这次请求消耗，换一张备用
+                    showCodeStep(2);    // ← 跳到「输入验证码」那一步
                     showSuccess('验证码已发送到您的邮箱');
-                    let countdown = 60;
-                    btn.textContent = countdown + 's';
-                    codeTimer = setInterval(() => {
-                        countdown--;
-                        if (countdown <= 0) {
-                            clearInterval(codeTimer);
-                            btn.disabled = false;
-                            btn.textContent = '发送验证码';
-                        } else {
-                            btn.textContent = countdown + 's';
-                        }
-                    }, 1000);
                 } else {
                     // 图形验证码单次有效：失败后需清空并换一张
                     showError(data.message || '发送验证码失败');
                     resetCaptcha();
-                    btn.disabled = false;
-                    btn.textContent = '发送验证码';
                 }
             } catch (error) {
                 showError('网络错误: ' + error.message);
+            } finally {
                 btn.disabled = false;
-                btn.textContent = '发送验证码';
+                btn.textContent = btnLabel;
             }
         });
+
+        // 「重新发送」倒计时（对齐服务端 60 秒冷却）
+        function startResendCountdown(sec) {
+            const btn = document.getElementById('resend-code');
+            if (!btn) return;
+            let n = sec;
+            clearInterval(codeTimer);
+            btn.disabled = true;
+            btn.textContent = '重新发送 (' + n + 's)';
+            codeTimer = setInterval(() => {
+                n--;
+                if (n <= 0) {
+                    clearInterval(codeTimer);
+                    btn.disabled = false;
+                    btn.textContent = '重新发送';
+                } else {
+                    btn.textContent = '重新发送 (' + n + 's)';
+                }
+            }, 1000);
+        }
+
+        // 换邮箱 / 重新发送：都回到第 1 步重新过人机验证
+        document.getElementById('code-back').addEventListener('click', () => backToStep1(STEP1_TIP));
+        document.getElementById('resend-code').addEventListener('click', () => backToStep1('人机验证码已使用，请重新输入后再发送。'));
 
         // 登录步骤控制
         function showLoginSteps() {
@@ -1195,56 +1298,38 @@
             });
         }
 
-        // 登录表单提交
-        document.getElementById('login-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
+        // 提交登录（密码登录 / 邮箱验证码登录共用）
+        async function submitLogin(payload) {
             const btn = document.getElementById('login-btn');
+            const isCode = payload.loginType === 'code';
+
             hideMessages();
             hideLoginSteps();
-
-            // 先做本地字段校验，字段没填不弹滑块
-            let payload;
-            if (currentLoginType === 'password') {
-                // 密码登录
-                const username = document.getElementById('username').value.trim();
-                const password = document.getElementById('password').value;
-                const remember = document.getElementById('remember').checked;
-
-                if (!username || !password) {
-                    showError('请填写用户名和密码');
-                    return;
-                }
-
-                payload = { loginType: 'password', username, password, remember };
-            } else {
-                // 验证码登录
-                const email = document.getElementById('login-email').value.trim();
-                const code = document.getElementById('login-code').value.trim();
-
-                if (!email || !code) {
-                    showError('请填写邮箱和验证码');
-                    return;
-                }
-
-                payload = { loginType: 'code', email, code };
-            }
-
-            // 人机验证（图形验证码）
-            const captcha = getCaptchaValue();
-            if (!captcha) {
-                showError('请输入人机验证码');
-                return;
-            }
-            payload.captcha = captcha;
-
             btn.disabled = true;
             btn.textContent = '登录中...';
-
-            try {
+            // 验证码登录的进度由 deck 自己的动效表达，不再叠一遍四步提示
+            if (!isCode) {
                 showLoginSteps();
                 setLoginStep(1); // 正在连接服务器
                 setLoginStep(2); // 正在校验登录信息
+            }
 
+            // 失败统一收尾：提示 + 复位输入
+            const fail = (msg) => {
+                showError(msg);
+                hideLoginSteps();
+                btn.disabled = false;
+                btn.textContent = '登 录';
+                if (isCode) {
+                    resetOtpStep();
+                    try { if (typeof window.otpDeckShake === 'function') window.otpDeckShake(); } catch (_) {}
+                } else {
+                    // 图形验证码单次有效：登录失败后需换一张
+                    resetCaptcha();
+                }
+            };
+
+            try {
                 const csrf = await getCsrfToken();
                 const nonce = genNonce();
                 const response = await fetch('/api/login', {
@@ -1265,41 +1350,100 @@
                     btn.disabled = false;
                     btn.textContent = '登 录';
                     hideLoginSteps();
+                    if (isCode) resetOtpStep();
                     return;
                 }
 
                 if (data.success) {
-                    setLoginStep(3); // 正在校验身份令牌
                     // 存储 token 到 localStorage
                     if (data.token) {
                         localStorage.setItem('stc_auth_token', data.token);
                         console.log('[LOGIN] token 已存储到 localStorage');
                     }
-                    // 校验 token 是否写入成功
-                    if (data.token) {
-                        setLoginStep(4); // 登录成功，正在跳转
-                    }
                     showSuccess('登录成功！正在跳转...');
-                    setTimeout(() => {
-                        window.location.href = '/home';
-                    }, 600);
-                } else {
-                    // 图形验证码单次有效：登录失败后需换一张
-                    showError(data.message || '登录失败');
-                    resetCaptcha();
-                    btn.disabled = false;
-                    btn.textContent = '登 录';
-                    hideLoginSteps();
-                    // OTP 验证码登录栏：抖动 + 清空 deck 让用户重输
-                    try { if (typeof window.otpDeckShake === 'function' && currentLoginType === 'code') window.otpDeckShake(); } catch (_) {}
+                    if (isCode) {
+                        // 参考视频的确认动效：一叠牌发光 → 绿色印章 +「验证成功」
+                        setOtpHead('验证成功', '正在跳转…', '');
+                        if (typeof window.otpDeckSuccess === 'function') window.otpDeckSuccess();
+                        setTimeout(() => { window.location.href = '/home'; }, 900);
+                    } else {
+                        setLoginStep(3); // 正在校验身份令牌
+                        if (data.token) setLoginStep(4); // 登录成功，正在跳转
+                        setTimeout(() => { window.location.href = '/home'; }, 600);
+                    }
+                    return; // 成功后保持按钮禁用，等跳转
                 }
+
+                fail(data.message || '登录失败');
             } catch (error) {
-                showError('网络错误，请重试');
-                btn.disabled = false;
-                btn.textContent = '登 录';
-                hideLoginSteps();
+                fail('网络错误，请重试');
             }
+        }
+
+        // 邮箱验证码登录：发码时已做过人机验证，这里只校验邮箱验证码
+        let codeLoginBusy = false;
+        function submitCodeLogin() {
+            if (codeLoginBusy) return;
+            const email = document.getElementById('login-email').value.trim();
+            const code = (document.getElementById('login-code').value || '').trim();
+
+            if (!email) {
+                showError('请先输入邮箱');
+                showCodeStep(1);
+                return;
+            }
+            if (code.length < 6) {
+                showError('请输入完整的 6 位验证码');
+                return;
+            }
+
+            codeLoginBusy = true;
+            // 输码 → 核验中的过渡（对应参考视频的 Checking your code）
+            setOtpHead('正在验证验证码', '正在确认，请稍候…', '');
+            if (typeof window.otpDeckChecking === 'function') window.otpDeckChecking();
+            Promise.resolve(submitLogin({ loginType: 'code', email, code }))
+                .then(() => { codeLoginBusy = false; })
+                .catch(() => { codeLoginBusy = false; });
+        }
+
+        // deck 输满 6 位 → 等扇形展开动画播完再自动提交
+        window.onOtpComplete = function() {
+            setTimeout(submitCodeLogin, 680);
+        };
+
+        // 登录表单提交
+        document.getElementById('login-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+
+            // 验证码登录：第 1 步回车 = 发送验证码，第 2 步回车 = 核验登录
+            if (currentLoginType === 'code') {
+                if (codeStep === 1) document.getElementById('send-login-code').click();
+                else submitCodeLogin();
+                return;
+            }
+
+            // 密码登录
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            const remember = document.getElementById('remember').checked;
+
+            if (!username || !password) {
+                showError('请填写用户名和密码');
+                return;
+            }
+
+            // 人机验证（图形验证码）
+            const captcha = getCaptchaValue();
+            if (!captcha) {
+                showError('请输入人机验证码');
+                return;
+            }
+
+            submitLogin({ loginType: 'password', username, password, remember, captcha });
         });
+
+        // 初始化控件显隐（默认是密码登录 tab）
+        updateAuthChrome();
 
         // 显示网站锁定弹窗
         function showSiteLockedModal(lockBy, lockReason) {
@@ -1417,30 +1561,46 @@
             }, 480);
         }
 
-        real.addEventListener('input', () => {
+        // 核验中：六张牌收拢成一叠 + 蓝色发光脉冲（对应参考视频的 Checking your code）
+        function checkingDeck(){
+            cancelAll();
+            deck.classList.remove('is-verified');
+            deck.classList.add('is-checking');
+        }
+
+        // 核验通过：绿色印章
+        function verifyDeck(){
+            cancelAll();
+            deck.classList.remove('is-checking');
+            deck.classList.add('is-verified');
+        }
+
+        // 统一入口：清状态 → 回写数字 → 输满则扇形展开并通知外层自动登录
+        function sync(v){
             cancelAll();
             deck.classList.remove('is-checking', 'is-verified');
-            slots.forEach(s => s.classList.remove('is-verified', 'is-checking'));
-            if (paint(real.value)) {
+            if (paint(v)) {
                 spread();
+                if (typeof window.onOtpComplete === 'function') window.onOtpComplete();
             }
-        });
+        }
+
+        real.addEventListener('input', () => sync(real.value));
         real.addEventListener('paste', (e) => {
             e.preventDefault();
             const t = ((e.clipboardData || window.clipboardData).getData('text')) || '';
-            cancelAll();
-            deck.classList.remove('is-checking', 'is-verified');
-            slots.forEach(s => s.classList.remove('is-verified', 'is-checking'));
-            if (paint(t)) spread();
+            sync(t);
         });
         real.addEventListener('keydown', (e) => {
             if (e.key === 'Backspace' && !real.value) { e.preventDefault(); paint(''); }
         });
         slots.forEach(s => s.addEventListener('click', () => { try { real.focus({ preventScroll: true }); } catch(_) { real.focus(); } }));
 
-        // 暴露给登录失败 / 切到验证码 tab 时的回调
+        // 暴露给登录流程 / 切到验证码 tab 时的回调
         window.otpDeckReset = resetDeck;
         window.otpDeckShake = shakeDeck;
+        window.otpDeckChecking = checkingDeck;
+        window.otpDeckSuccess = verifyDeck;
         window.otpDeckFocus = function(){
             resetDeck();
             try { real.focus({ preventScroll: true }); } catch(_) { real.focus(); }

@@ -1042,6 +1042,15 @@ function requireCaptcha(req, res, next) {
     });
 }
 
+// 登录用人机验证：密码登录必须带图形验证码；
+// 邮箱验证码登录不再重复要求——发码接口 /api/send-code 已强制人机验证 + 限流（1分钟3次），
+// 且邮箱里那串 6 位码本身就是第二因素（登录限流 1分钟5次，暴力猜解不可行）。
+// 这样前端才能做到「填满 6 位格子 → 自动核验登录」。
+function requireCaptchaForLogin(req, res, next) {
+    if (req.body && req.body.loginType === 'code') return next();
+    return requireCaptcha(req, res, next);
+}
+
 // ---------- 通用 Rate Limit（KV 存储，支持多实例） ----------
 /**
  * 通用限流函数
@@ -2550,7 +2559,7 @@ app.get('/api/auth-test', async (req, res) => {
     });
 });
 
-app.post('/api/login', requireRateLimit('login'), requireCSRF, requireCaptcha, async (req, res) => {
+app.post('/api/login', requireRateLimit('login'), requireCSRF, requireCaptchaForLogin, async (req, res) => {
     const { username, password, code, loginType } = req.body;
     
     if (!username && loginType !== 'code') {

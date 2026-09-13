@@ -78,6 +78,7 @@ const LANGUAGES = {
             // 登录页
             login: {
                 title: '登录',
+                subtitle: '登录到 STC 任务平台',
                 passwordLogin: '密码登录',
                 codeLogin: '验证码登录',
                 username: '用户名/邮箱',
@@ -208,6 +209,7 @@ const LANGUAGES = {
             },
             login: {
                 title: '登入',
+                subtitle: '登入 STC 任務平台',
                 passwordLogin: '密碼登入',
                 codeLogin: '驗證碼登入',
                 username: '用戶名/郵箱',
@@ -336,6 +338,7 @@ const LANGUAGES = {
             },
             login: {
                 title: 'Login',
+                subtitle: 'Sign in to STC Task Platform',
                 passwordLogin: 'Password Login',
                 codeLogin: 'Code Login',
                 username: 'Username/Email',
@@ -464,6 +467,7 @@ const LANGUAGES = {
             },
             login: {
                 title: 'Вход',
+                subtitle: 'Вход в STC Task Platform',
                 passwordLogin: 'По паролю',
                 codeLogin: 'По коду',
                 username: 'Имя/Email',
@@ -592,6 +596,7 @@ const LANGUAGES = {
             },
             login: {
                 title: 'Connexion',
+                subtitle: 'Connexion à STC Task Platform',
                 passwordLogin: 'Par mot de passe',
                 codeLogin: 'Par code',
                 username: 'Nom/Email',
@@ -719,6 +724,7 @@ const LANGUAGES = {
             },
             login: {
                 title: 'Anmelden',
+                subtitle: 'Anmeldung bei STC Task Platform',
                 passwordLogin: 'Passwort-Anmeldung',
                 codeLogin: 'Code-Anmeldung',
                 username: 'Benutzername/Email',
