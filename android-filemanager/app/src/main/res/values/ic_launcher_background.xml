@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动图标（自适应）底色：取素材四边平均色，圆形/圆角遮罩切角处不会突兀 -->
+    <color name="ic_launcher_background">#B8AEA9</color>
+</resources>

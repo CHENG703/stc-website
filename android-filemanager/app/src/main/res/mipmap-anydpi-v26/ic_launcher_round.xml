@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标的圆形变体：系统在不同机型上会自行套用圆形/方圆角遮罩，
+     这里与 ic_launcher.xml 保持一致即可（真正被裁成圆的兜底图是 mipmap-*/ic_launcher_round.png） -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

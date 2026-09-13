@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8+ 自适应启动图标：底色 + 前景（前景图见 mipmap-*/ic_launcher_foreground.png，
+     画面居中 88%，保证被圆形/圆角遮罩裁切时主体不被切掉） -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>
