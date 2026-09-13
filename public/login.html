@@ -740,13 +740,13 @@
             <div id="success-message" class="success-message"></div>
 
             <div class="login-tabs">
-                <button type="button" class="login-tab active" id="tab-password" onclick="switchLoginTab('password')" data-lang="login.passwordLogin">密码登录</button>
-                <button type="button" class="login-tab" id="tab-code" onclick="switchLoginTab('code')" data-lang="login.codeLogin">验证码登录</button>
+                <button type="button" class="login-tab" id="tab-password" onclick="switchLoginTab('password')" data-lang="login.passwordLogin">密码登录</button>
+                <button type="button" class="login-tab active" id="tab-code" onclick="switchLoginTab('code')" data-lang="login.codeLogin">验证码登录</button>
             </div>
 
             <form id="login-form">
-                <!-- 密码登录 -->
-                <div id="password-login">
+                <!-- 密码登录（默认隐藏：优先验证码登录） -->
+                <div id="password-login" class="hidden">
                     <div class="form-group">
                         <label class="form-label" data-lang="login.username">用户名或邮箱</label>
                         <input type="text" class="form-input" id="username" name="username" placeholder="请输入用户名或邮箱" data-lang-placeholder="login.username">
@@ -767,7 +767,7 @@
                 </div>
 
                 <!-- 验证码登录：第 1 步（邮箱） -->
-                <div id="code-login" class="hidden">
+                <div id="code-login">
                     <div id="code-step-1">
                         <div class="form-group">
                             <label class="form-label" data-lang="login.email">邮箱</label>
@@ -807,8 +807,8 @@
                     </div>
                 </div>
 
-                <!-- 人机验证（图形验证码）：只在验证码登录第 1 步（发码）使用，默认隐藏 -->
-                <div class="form-group hidden" id="captcha-group">
+                <!-- 人机验证（图形验证码）：只在验证码登录第 1 步（发码）使用 -->
+                <div class="form-group" id="captcha-group">
                     <label class="form-label">人机验证</label>
                     <div class="captcha-row">
                         <input type="text" class="form-input" id="captcha-input" maxlength="6" placeholder="请输入图中字符" autocomplete="off">
@@ -818,9 +818,9 @@
                 </div>
 
                 <!-- 验证码登录第 1 步的主按钮（发送验证码） -->
-                <button type="button" class="login-btn hidden" id="send-login-code" data-lang="login.sendCode">发送验证码</button>
+                <button type="button" class="login-btn" id="send-login-code" data-lang="login.sendCode">发送验证码</button>
 
-                <button type="submit" class="login-btn" id="login-btn">登 录</button>
+                <button type="submit" class="login-btn hidden" id="login-btn">登 录</button>
 
                 <!-- 登录步骤提示 -->
                 <div id="login-steps" class="login-steps hidden">
@@ -862,7 +862,7 @@
     </div>
 
     <script>
-        let currentLoginType = 'password';
+        let currentLoginType = 'code'; // 默认优先「验证码登录」
         let codeTimer = null;
         let _csrfToken = null;
 
@@ -1095,8 +1095,7 @@
             refreshCaptcha();
         }
 
-        // 首屏默认是密码登录 tab，不拉图形验证码；
-        // 切到「验证码登录第 1 步」时由 updateAuthChrome() → ensureCaptcha() 按需加载
+        // 图形验证码按需加载：只有当界面停在「验证码登录第 1 步」时才拉（见 updateAuthChrome() → ensureCaptcha()）
 
         // 检查URL参数
         const urlParams = new URLSearchParams(window.location.search);
@@ -1441,8 +1440,8 @@
             submitLogin({ loginType: 'password', username, password, remember });
         });
 
-        // 初始化控件显隐（默认是密码登录 tab）
-        updateAuthChrome();
+        // 初始化：默认进「验证码登录」第 1 步（同时会按需加载图形验证码）
+        switchLoginTab('code');
 
         // 显示网站锁定弹窗
         function showSiteLockedModal(lockBy, lockReason) {
