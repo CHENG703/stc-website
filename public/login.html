@@ -660,6 +660,59 @@
             backdrop-filter: blur(8px);
             -webkit-backdrop-filter: blur(8px);
         }
+
+        /* ===== OTP Deck：验证码登录栏（一手牌展开 → 失败抖动） ===== */
+        .otp-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .otp-row .form-label { margin: 0; }
+        .otp-deck {
+            --slot: 56px; --gap: 10px;
+            position: relative; width: 100%; height: 210px; margin: 6px 0 4px;
+            display: block;
+        }
+        .otp-slot {
+            position: absolute; left: 50%; top: 0; margin-left: calc(var(--slot) / -2);
+            width: var(--slot); height: var(--slot); border-radius: 14px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.14);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 28px; font-weight: 700; color: var(--text-primary, #f1f5f9);
+            font-family: 'JetBrains Mono','SF Mono','Menlo','Consolas',monospace;
+            cursor: text; transform-origin: 50% 320%; user-select: none;
+            transition: background .2s ease, border-color .2s ease, box-shadow .2s ease, color .2s ease;
+            backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        }
+        .otp-slot[data-i="0"] { transform: translate(calc(-2.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-slot[data-i="1"] { transform: translate(calc(-1.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-slot[data-i="2"] { transform: translate(calc(-0.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-slot[data-i="3"] { transform: translate(calc( 0.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-slot[data-i="4"] { transform: translate(calc( 1.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-slot[data-i="5"] { transform: translate(calc( 2.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-slot.is-filled { background: rgba(74,158,255,0.12); border-color: rgba(74,158,255,0.45); }
+        .otp-slot.is-focused { border-color: #4a9eff; box-shadow: 0 0 0 3px rgba(74,158,255,0.22), 0 0 20px rgba(74,158,255,0.35); }
+        .otp-slot.is-error { border-color: #ff6b6b !important; box-shadow: 0 0 0 3px rgba(255,107,107,0.25); animation: otp-flash .6s ease; }
+        @keyframes otp-flash {
+            0%, 100% { background: rgba(255,107,107,0.05); }
+            50%      { background: rgba(255,107,107,0.20); }
+        }
+        .otp-deck.is-shake { animation: otp-shake-deck .42s ease; }
+        @keyframes otp-shake-deck {
+            10%, 90% { transform: translateX(-4px); }
+            20%, 80% { transform: translateX( 4px); }
+            30%, 50%, 70% { transform: translateX(-7px); }
+            40%, 60% { transform: translateX( 7px); }
+        }
+        .otp-deck-input {
+            position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+            opacity: 0; background: transparent; border: 0; outline: 0;
+            caret-color: transparent; color: transparent; font-size: 16px;
+            z-index: 2; cursor: text; letter-spacing: 0;
+        }
+        .otp-hint { margin-top: 6px; font-size: 12px; color: rgba(241,245,249,0.55); display: flex; gap: 8px; align-items: center; }
+        .otp-hint kbd { font-family: inherit; font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); }
+        @media (max-width: 480px) {
+            .otp-deck { --slot: 44px; --gap: 8px; height: 180px; }
+            .otp-slot { font-size: 22px; border-radius: 12px; }
+        }
     </style>
 </head>
 <body>
@@ -710,11 +763,27 @@
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label" data-lang="login.code">验证码</label>
-                        <div class="code-wrapper">
-                            <input type="text" class="form-input" id="login-code" name="code" placeholder="请输入验证码">
+                        <div class="otp-row">
+                            <span class="form-label" data-lang="login.code">验证码</span>
                             <button type="button" class="send-btn" id="send-login-code">发送验证码</button>
                         </div>
+                        <div class="otp-deck" id="otp-deck" data-length="6" aria-label="一次性验证码">
+                            <span class="otp-slot" data-i="0"><span class="otp-slot__digit"></span></span>
+                            <span class="otp-slot" data-i="1"><span class="otp-slot__digit"></span></span>
+                            <span class="otp-slot" data-i="2"><span class="otp-slot__digit"></span></span>
+                            <span class="otp-slot" data-i="3"><span class="otp-slot__digit"></span></span>
+                            <span class="otp-slot" data-i="4"><span class="otp-slot__digit"></span></span>
+                            <span class="otp-slot" data-i="5"><span class="otp-slot__digit"></span></span>
+                            <input type="text" class="otp-deck-input" id="otp-input"
+                                   inputmode="numeric" autocomplete="one-time-code"
+                                   autocapitalize="off" autocorrect="off" spellcheck="false"
+                                   maxlength="6" aria-label="一次性验证码">
+                        </div>
+                        <div class="otp-hint">
+                            <span>支持直接粘贴 · 输完按 <kbd>Enter</kbd> 登录</span>
+                        </div>
+                        <!-- 兼容现有提交逻辑：deck 把数字写到这个隐藏字段 -->
+                        <input type="hidden" id="login-code" name="code" value="">
                     </div>
                 </div>
 
@@ -1028,6 +1097,10 @@
             document.getElementById('password-login').classList.toggle('hidden', type !== 'password');
             document.getElementById('code-login').classList.toggle('hidden', type !== 'code');
             hideMessages();
+            // 切到验证码登录时聚焦 OTP deck
+            if (type === 'code' && typeof window.otpDeckFocus === 'function') {
+                setTimeout(() => window.otpDeckFocus(), 50);
+            }
         }
 
         // 发送登录验证码
@@ -1217,6 +1290,8 @@
                     btn.disabled = false;
                     btn.textContent = '登 录';
                     hideLoginSteps();
+                    // OTP 验证码登录栏：抖动 + 清空 deck 让用户重输
+                    try { if (typeof window.otpDeckShake === 'function' && currentLoginType === 'code') window.otpDeckShake(); } catch (_) {}
                 }
             } catch (error) {
                 showError('网络错误，请重试');
@@ -1274,6 +1349,105 @@
     <script src="js/animations.js"></script>
     <!-- 登录页背景音乐（自动循环播放，左下角可静音） -->
     <script src="js/login-bgm.js?v=2"></script>
+
+    <script>
+    // ============ OTP Deck：验证码登录栏的「一手牌」输入组件 ============
+    (function(){
+        const deck = document.getElementById('otp-deck');
+        if (!deck) return;
+        const N = parseInt(deck.dataset.length || '6', 10);
+        const slots = Array.from(deck.querySelectorAll('.otp-slot'));
+        const real  = document.getElementById('otp-input');
+        const hidden = document.getElementById('login-code');
+
+        function paint(v){
+            v = (v || '').replace(/\s/g, '').slice(0, N);
+            real.value = v;
+            hidden.value = v;
+            slots.forEach((s, i) => {
+                const ch = v[i] || '';
+                const d = s.firstElementChild;
+                if (d) d.textContent = ch;
+                s.classList.toggle('is-filled', !!ch);
+            });
+            const fi = Math.min(v.length, N - 1);
+            slots.forEach((s, i) => s.classList.toggle('is-focused', i === fi && v.length < N));
+            return v.length === N;
+        }
+
+        function cancelAll(){
+            slots.forEach(s => { try { s.getAnimations().forEach(a => a.cancel()); } catch(_){} });
+        }
+
+        // 「一手牌」：所有 slot 共享一个旋转支点（transform-origin 50% 320%），
+        // 全部填完时把每张牌从自己的横排位置旋到中心并倾斜，形成扇形。
+        function spread(){
+            const range = 34, step = N > 1 ? range / (N - 1) : 0, start = -range / 2;
+            slots.forEach((s, i) => {
+                const from = getComputedStyle(s).transform;
+                s.animate(
+                    [{ transform: from }, { transform: `translate(0px, 0px) rotate(${(start + step * i).toFixed(2)}deg)` }],
+                    { duration: 560, delay: i * 45, fill: 'forwards', easing: 'cubic-bezier(.2,.7,.2,1)' }
+                );
+            });
+        }
+
+        function resetDeck(){
+            cancelAll();
+            deck.classList.remove('is-shake', 'is-checking', 'is-verified');
+            slots.forEach(s => s.classList.remove('is-verified', 'is-checking', 'is-error', 'is-shake'));
+            paint('');
+        }
+
+        // 登录失败时调用：整叠横向抖动 + 每个槽位闪红 + 清空让用户重输
+        function shakeDeck(){
+            cancelAll();
+            deck.classList.remove('is-checking', 'is-verified');
+            deck.classList.add('is-shake');
+            slots.forEach(s => {
+                s.classList.remove('is-verified', 'is-checking');
+                s.classList.add('is-error');
+                setTimeout(() => s.classList.remove('is-error'), 600);
+            });
+            setTimeout(() => {
+                deck.classList.remove('is-shake');
+                paint('');
+                try { real.focus({ preventScroll: true }); } catch(_) { real.focus(); }
+            }, 480);
+        }
+
+        real.addEventListener('input', () => {
+            cancelAll();
+            deck.classList.remove('is-checking', 'is-verified');
+            slots.forEach(s => s.classList.remove('is-verified', 'is-checking'));
+            if (paint(real.value)) {
+                spread();
+            }
+        });
+        real.addEventListener('paste', (e) => {
+            e.preventDefault();
+            const t = ((e.clipboardData || window.clipboardData).getData('text')) || '';
+            cancelAll();
+            deck.classList.remove('is-checking', 'is-verified');
+            slots.forEach(s => s.classList.remove('is-verified', 'is-checking'));
+            if (paint(t)) spread();
+        });
+        real.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' && !real.value) { e.preventDefault(); paint(''); }
+        });
+        slots.forEach(s => s.addEventListener('click', () => { try { real.focus({ preventScroll: true }); } catch(_) { real.focus(); } }));
+
+        // 暴露给登录失败 / 切到验证码 tab 时的回调
+        window.otpDeckReset = resetDeck;
+        window.otpDeckShake = shakeDeck;
+        window.otpDeckFocus = function(){
+            resetDeck();
+            try { real.focus({ preventScroll: true }); } catch(_) { real.focus(); }
+        };
+
+        paint('');
+    })();
+    </script>
 
 </body>
 </html>
