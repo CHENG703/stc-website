@@ -34,6 +34,7 @@ import top.stcwork.filemanager.data.Prefs
 @Composable
 fun ProfileScreen(
     onLogout: () -> Unit,
+    onLogin: () -> Unit,
     onRequestAccess: () -> Unit,
     hasAccess: Boolean
 ) {
@@ -85,6 +86,13 @@ fun ProfileScreen(
                             )
                         }
                     }
+                }
+            }
+
+            // 未登录（含「暂不登录」）时必须能从「我的」直接进入登录页，否则点了跳过登录就再也登录不了
+            if (!Prefs.loggedIn) {
+                Button(onClick = onLogin, modifier = Modifier.fillMaxWidth()) {
+                    Text("登录 / 切换账号")
                 }
             }
 

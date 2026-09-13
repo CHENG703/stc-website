@@ -143,6 +143,12 @@ fun RootScreen() {
                         loggedIn = false
                         tab = 0
                     },
+                    // 从「我的」点登录：清掉「跳过登录」标记，回到登录页
+                    onLogin = {
+                        Prefs.skipLogin = false
+                        loggedIn = false
+                        skipped = false
+                    },
                     onRequestAccess = requestAccess,
                     hasAccess = hasAccess
                 )
