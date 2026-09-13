@@ -50,6 +50,17 @@ fun LetterAvatar(text: String, size: Int = 40) {
     }
 }
 
+/** 复制文本到系统剪贴板（失败静默，避免打断操作） */
+fun copyToClipboard(context: android.content.Context, text: String) {
+    try {
+        val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("STC", text))
+    } catch (e: Exception) {
+        // 忽略
+    }
+}
+
 @Composable
 fun SectionHeader(title: String) {
     Text(

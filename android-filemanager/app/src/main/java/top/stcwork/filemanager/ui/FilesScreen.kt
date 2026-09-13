@@ -67,7 +67,7 @@ enum class SortMode(val label: String) {
 }
 
 private enum class FileAction {
-    COPY, CUT, RENAME, ZIP, UNZIP, DELETE, DETAILS, INSTALL, OPEN_WITH, SHARE, OPEN_TEXT
+    COPY, CUT, RENAME, ZIP, UNZIP, DELETE, DETAILS, INSTALL, OPEN_WITH, SHARE, OPEN_TEXT, COPY_PATH
 }
 
 private val ZIP_EXTS = setOf("zip", "jar", "apks", "xapk")
@@ -308,6 +308,12 @@ fun FilesScreen(
             FileAction.OPEN_WITH -> openWith(target)
             FileAction.SHARE -> shareFile(target)
             FileAction.OPEN_TEXT -> onOpenText(target)
+            FileAction.COPY_PATH -> {
+                // 只读内存里的字符串，不落盘，未登录也允许
+                lastExport = target.absolutePath
+                copyToClipboard(context, target.absolutePath)
+                toast("已复制路径：${target.absolutePath}")
+            }
         }
     }
 
@@ -346,7 +352,16 @@ fun FilesScreen(
         if (selection.isEmpty()) {
             TopAppBar(
                 title = {
-                    Column {
+                    // 长按顶部路径：复制当前目录
+                    Column(
+                        Modifier.combinedClickableCompat(
+                            onClick = { },
+                            onLongClick = {
+                                copyToClipboard(context, currentDir.absolutePath)
+                                toast("已复制路径：${currentDir.absolutePath}")
+                            }
+                        )
+                    ) {
                         Text(
                             currentDir.name.ifBlank { "内部存储" },
                             style = MaterialTheme.typography.titleMedium,
@@ -504,13 +519,14 @@ fun FilesScreen(
                                 else -> loadDetails(file)
                             }
                         },
-                        onLongClick = {
+                        onToggleSelect = {
                             selection = if (selected) {
                                 selection - file.absolutePath
                             } else {
                                 selection + file.absolutePath
                             }
                         },
+                        onMultiSelect = { selection = setOf(file.absolutePath) },
                         onAction = { action -> handleAction(action, file) }
                     )
                     HorizontalDivider(
@@ -690,16 +706,6 @@ fun FilesScreen(
     }
 }
 
-private fun copyToClipboard(context: android.content.Context, text: String) {
-    try {
-        val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-            as android.content.ClipboardManager
-        cm.setPrimaryClip(android.content.ClipData.newPlainText("STC", text))
-    } catch (e: Exception) {
-        // 忽略
-    }
-}
-
 @Composable
 private fun BarAction(label: String, onClick: () -> Unit) {
     TextButton(onClick = onClick) { Text(label, style = MaterialTheme.typography.labelLarge) }
@@ -728,8 +734,10 @@ private fun ShortcutRow(label: String, path: String, onClick: () -> Unit) {
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-private fun Modifier.combinedClickableCompat(onClick: () -> Unit): Modifier =
-    this.combinedClickable(onClick = onClick)
+private fun Modifier.combinedClickableCompat(
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
+): Modifier = this.combinedClickable(onClick = onClick, onLongClick = onLongClick)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -739,7 +747,8 @@ private fun FileRow(
     selectionMode: Boolean,
     canWrite: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    onToggleSelect: () -> Unit,
+    onMultiSelect: () -> Unit,
     onAction: (FileAction) -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
@@ -755,7 +764,11 @@ private fun FileRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                .combinedClickable(
+                    onClick = onClick,
+                    // 长按：多选模式下切换勾选，平时直接弹出这一项的操作菜单
+                    onLongClick = { if (selectionMode) onToggleSelect() else menu = true }
+                )
                 .padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -793,6 +806,7 @@ private fun FileRow(
                 )
             }
             DropdownMenuItem(text = { Text("详细信息") }, onClick = { menu = false; onAction(FileAction.DETAILS) })
+            DropdownMenuItem(text = { Text("复制路径") }, onClick = { menu = false; onAction(FileAction.COPY_PATH) })
             if (canWrite) {
                 DropdownMenuItem(text = { Text("剪切") }, onClick = { menu = false; onAction(FileAction.CUT) })
                 DropdownMenuItem(text = { Text("重命名") }, onClick = { menu = false; onAction(FileAction.RENAME) })
@@ -829,6 +843,10 @@ private fun FileRow(
                     onClick = { menu = false; onAction(FileAction.DELETE) }
                 )
             }
+            DropdownMenuItem(
+                text = { Text("多选") },
+                onClick = { menu = false; onMultiSelect() }
+            )
         }
     }
 }

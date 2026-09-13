@@ -7,7 +7,9 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,7 +60,9 @@ import java.util.Locale
 /**
  * 「电脑」页：局域网直连电脑端（pc-client），浏览电脑文件、上传手机文件、下载电脑文件。
  * 电脑端面板上会显示「手机访问地址」和 6 位配对码，填进来配对一次即可长期使用。
+ * 文件长按弹出操作面板，顶部路径长按可复制。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PcScreen(
     snackbar: SnackbarHostState,
@@ -85,6 +89,8 @@ fun PcScreen(
     var newFolder by remember { mutableStateOf(false) }
     var showRoots by remember { mutableStateOf(false) }
     var confirmUnpair by remember { mutableStateOf(false) }
+    var actionTarget by remember { mutableStateOf<PcClient.Entry?>(null) }
+    var renaming by remember { mutableStateOf<PcClient.Entry?>(null) }
 
     fun toast(msg: String) {
         scope.launch { snackbar.showSnackbar(msg) }
@@ -170,6 +176,24 @@ fun PcScreen(
         }
     }
 
+    fun rename(entry: PcClient.Entry, newName: String) {
+        busy = BusyState("正在重命名", 0, 0, entry.name)
+        scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                PcClient.rename(Prefs.pcUrl, Prefs.pcToken, entry.path, newName)
+            }
+            busy = null
+            toast(if (r.ok) "已重命名为 $newName" else r.message)
+            load(path)
+        }
+    }
+
+    fun copyPath(text: String) {
+        if (text.isBlank()) { toast("还没进入任何目录"); return }
+        copyToClipboard(context, text)
+        toast("已复制路径：$text")
+    }
+
     // 手机 → 电脑：系统文件选择器（可多选），直接流式上传到当前浏览的文件夹
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -245,7 +269,11 @@ fun PcScreen(
                     path.ifBlank { "浏览电脑文件" } + (if (allowWrite) "" else "（电脑端只读）"),
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    // 长按顶部目录：复制当前路径
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(onClick = { }, onLongClick = { copyPath(path) })
                 )
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -286,7 +314,8 @@ fun PcScreen(
                                 entry = e,
                                 onOpen = { if (e.dir) load(e.path) else download(e) },
                                 onDownload = { download(e) },
-                                onDelete = { confirmDelete = e }
+                                onDelete = { confirmDelete = e },
+                                onLongPress = { actionTarget = e }
                             )
                         }
                     }
@@ -389,6 +418,37 @@ fun PcScreen(
             onDismiss = { confirmUnpair = false }
         )
     }
+
+    // 长按文件 / 文件夹弹出的操作面板
+    actionTarget?.let { e ->
+        val ops = ArrayList<Pair<String, () -> Unit>>()
+        if (e.dir) ops.add("进入文件夹" to { load(e.path) })
+        else ops.add("下载到手机" to { download(e) })
+        ops.add("复制路径" to { copyPath(e.path) })
+        if (allowWrite) {
+            ops.add("重命名" to { renaming = e })
+            ops.add("删除" to { confirmDelete = e })
+        }
+        OpsDialog(
+            title = (if (e.dir) "文件夹：" else "文件：") + e.name,
+            ops = ops,
+            dangerLabels = setOf("删除"),
+            onDismiss = { actionTarget = null }
+        )
+    }
+
+    renaming?.let { e ->
+        InputDialog(
+            title = "重命名电脑上的文件",
+            label = "新名称",
+            initial = e.name,
+            onConfirm = { newName ->
+                renaming = null
+                if (newName != e.name) rename(e, newName)
+            },
+            onDismiss = { renaming = null }
+        )
+    }
 }
 
 /** 未配对时：填地址 + 配对码 */
@@ -451,18 +511,20 @@ private fun PairView(
     }
 }
 
-/** 文件行：目录点击进入，文件点击下载，右侧可删除 */
+/** 文件行：点击进入/下载，长按弹出操作面板，右侧可快捷下载 / 删除 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EntryRow(
     entry: PcClient.Entry,
     onOpen: () -> Unit,
     onDownload: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onLongPress: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onOpen() }
+            .combinedClickable(onClick = { onOpen() }, onLongClick = { onLongPress() })
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

@@ -177,6 +177,11 @@ object PcClient {
         return post(base, token, "/api/mkdir", JSONObject().put("path", path), "新建文件夹")
     }
 
+    fun rename(base: String, token: String, path: String, name: String): Res<String> {
+        val body = JSONObject().put("path", path).put("name", name)
+        return post(base, token, "/api/rename", body, "重命名")
+    }
+
     fun delete(base: String, token: String, path: String): Res<String> {
         val body = JSONObject().put("paths", org.json.JSONArray().put(path))
         return post(base, token, "/api/delete", body, "删除")
