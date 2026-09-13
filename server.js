@@ -4045,6 +4045,15 @@ app.get('/api/user', async (req, res) => {
     const user = await getCurrentUser(req);
     console.log('[USER API] session.userId:', req.session.userId, 'authUser:', req.authUser?.username, 'found:', !!user, 'dbUsers:', db.data.users?.length || 0);
     if (!user) {
+        // 账号被封禁时 getCurrentUser() 会拒绝认证，但把封禁信息留在 req.banState/req.bannedUser 上。
+        // 这里必须走 authFailure → 403 + { banned:true, message, bannedUntil, banReason }：
+        // 安卓 App 靠轮询本接口判定"账号被封禁"，原来无脑回 401 {error:'未登录'} 只被当成
+        // "没登录"，于是封禁后 App 一直停在登录态、永远不自动退出（Web 端也拿不到封禁原因）。
+        // 顺带清掉 httpOnly 登录 cookie，避免客户端继续拿废 token 反复请求。
+        if (req.banState && req.banState.banned) {
+            clearAuthCookie(res);
+            return authFailure(res, req);
+        }
         return res.status(401).json({ error: '未登录' });
     }
     const role = getUserRole(user);

@@ -122,6 +122,18 @@ object Api {
             val body = stream?.use { s ->
                 BufferedReader(InputStreamReader(s, Charsets.UTF_8)).readText()
             } ?: ""
+
+            // 任何一次「带 token 的请求」被服务端判定为账号已封禁（403 + banned:true），
+            // 立刻广播踢出，不必等下一次轮询：封禁必须在所有接口上即时生效。
+            // 不带 token 的请求（登录/注册/发码）不参与判断 —— 那是"登录被封禁账号"，
+            // 由登录页自己的错误提示处理，不该走退出流程。
+            if (code == 403 && !bearer.isNullOrBlank()) {
+                val err = runCatching { JSONObject(body) }.getOrNull()
+                if (err?.optBoolean("banned") == true) {
+                    Session.kick(err.optString("message").ifBlank { "账号已被封禁，请联系管理员" })
+                }
+            }
+
             return Response(code, body)
         } finally {
             conn.disconnect()
@@ -304,10 +316,10 @@ object Api {
                 Session.kick(msg.ifBlank { "账号已被封禁，请联系管理员" })
                 return SessionCheck(false, true, msg)
             }
-            // 会话失效（服务端 authFailure 回「请先登录」）→ 同样立刻退出登录。
-            // 注意：IP/设备封禁（403 + "您的IP已被封禁"）、CSRF/Origin 拒绝也都是 403，
-            // 含义不同，不能在这里踢人，否则会被误判成"登录失效"。
-            if (resp.code == 403 && msg.contains("请先登录")) {
+            // 会话失效（服务端 authFailure 回「请先登录」，或老的 401「未登录」）→ 同样立刻退出登录。
+            // 注意：IP/设备封禁（403 + "您的IP已被封禁"）、CSRF/Origin 拒绝、站点锁/DB 锁（503）
+            // 含义不同，不能在这里踢人，否则会被误判成"登录失效"，所以只按状态码+文案精确匹配。
+            if (resp.code == 401 || msg.contains("请先登录") || msg.contains("未登录")) {
                 Session.kick("登录状态已失效，请重新登录")
             }
             SessionCheck(false, false, msg)

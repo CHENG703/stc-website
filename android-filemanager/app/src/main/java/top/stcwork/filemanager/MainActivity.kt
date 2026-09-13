@@ -72,13 +72,13 @@ class MainActivity : ComponentActivity() {
         checkSessionNow()
     }
 
-    /** 可见期间每 60 秒校验一次；不可见就停掉，避免后台耗电 */
+    /** 可见期间每 30 秒校验一次；不可见就停掉，避免后台耗电 */
     override fun onStart() {
         super.onStart()
         sessionPoll?.cancel()
         sessionPoll = lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
-                delay(60_000)
+                delay(30_000)
                 val token = runCatching { Prefs.token }.getOrDefault("")
                 // 未登录（含被踢出后 / 只读模式）不校验：没有 token 时 403「请先登录」不能当成封禁
                 if (token.isBlank()) continue
