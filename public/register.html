@@ -29,15 +29,14 @@
             overflow: hidden;
         }
 
-        /* 背景图之上的一层静态柔光（原旋转光晕已移除，避免全屏重绘掉帧） */
+        /* 背景图之上：不再叠加紫/蓝柔光（用户要求不要紫色灯光），改成无色的极淡暗角 */
         body::before {
             content: '';
             position: fixed;
             inset: 0;
             z-index: 1;
             pointer-events: none;
-            background: radial-gradient(ellipse 70% 50% at 50% 0%, rgba(102, 126, 234, 0.16) 0%, transparent 60%),
-                        radial-gradient(ellipse 60% 50% at 100% 100%, rgba(118, 75, 162, 0.14) 0%, transparent 60%);
+            background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.20) 100%);
         }
 
         .register-container {

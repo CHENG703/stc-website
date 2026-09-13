@@ -3217,9 +3217,19 @@ body.light-theme .lang-option:hover {
     background: #05060a url('/bg-hero.jpg') center center / cover no-repeat;
 }
 
-/* 极光光斑减弱，避免盖住背景图 */
+/* 极光光斑关闭：背景图是静态暗调，紫/蓝光斑会和 logo 抢视觉，直接整体隐藏 */
 body.bg-image .aurora-blob {
-    opacity: 0.22;
+    display: none;
+}
+
+/* 背景图页面：关闭 body::after 的紫/蓝氛围光（用户要求不要紫色灯光），只保留背景图本身 */
+body.bg-image::after {
+    display: none;
+}
+
+/* 背景图页面：关闭 hero 标题后的紫/蓝光晕，标题直接压在背景图上 */
+body.bg-image .hero::before {
+    display: none;
 }
 
 /* 顶栏：半透明毛玻璃，滚动时不遮挡背景 */
