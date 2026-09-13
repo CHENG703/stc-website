@@ -807,8 +807,8 @@
                     </div>
                 </div>
 
-                <!-- 人机验证（图形验证码）：密码登录、验证码登录第 1 步使用 -->
-                <div class="form-group" id="captcha-group">
+                <!-- 人机验证（图形验证码）：只在验证码登录第 1 步（发码）使用，默认隐藏 -->
+                <div class="form-group hidden" id="captcha-group">
                     <label class="form-label">人机验证</label>
                     <div class="captcha-row">
                         <input type="text" class="form-input" id="captcha-input" maxlength="6" placeholder="请输入图中字符" autocomplete="off">
@@ -1072,6 +1072,12 @@
         initSlider();
 
         // ============ 图形验证码（人机验证） ============
+        // 只在「验证码登录第 1 步 → 发送验证码」用到，按需加载，密码登录不再白拉一张图
+        function ensureCaptcha() {
+            const img = document.getElementById('captcha-img');
+            if (img && !img.getAttribute('src')) refreshCaptcha();
+        }
+
         function refreshCaptcha() {
             const img = document.getElementById('captcha-img');
             if (img) img.src = '/api/captcha?t=' + Date.now();
@@ -1089,8 +1095,8 @@
             refreshCaptcha();
         }
 
-        // 页面加载即拉取一张验证码
-        refreshCaptcha();
+        // 首屏默认是密码登录 tab，不拉图形验证码；
+        // 切到「验证码登录第 1 步」时由 updateAuthChrome() → ensureCaptcha() 按需加载
 
         // 检查URL参数
         const urlParams = new URLSearchParams(window.location.search);
@@ -1120,10 +1126,11 @@
         // 按「当前 tab + 当前步骤」决定各控件的显隐
         function updateAuthChrome() {
             const isCode = currentLoginType === 'code';
-            const onStep2 = isCode && codeStep === 2;
-            document.getElementById('captcha-group').classList.toggle('hidden', onStep2);
-            document.getElementById('send-login-code').classList.toggle('hidden', !(isCode && codeStep === 1));
+            const needCaptcha = isCode && codeStep === 1; // 只有「验证码登录第 1 步（发码）」要人机验证
+            document.getElementById('captcha-group').classList.toggle('hidden', !needCaptcha);
+            document.getElementById('send-login-code').classList.toggle('hidden', !needCaptcha);
             document.getElementById('login-btn').classList.toggle('hidden', isCode && codeStep === 1);
+            if (needCaptcha && typeof ensureCaptcha === 'function') ensureCaptcha();
         }
 
         // 切换到验证码登录的第 n 步
@@ -1323,9 +1330,6 @@
                 if (isCode) {
                     resetOtpStep();
                     try { if (typeof window.otpDeckShake === 'function') window.otpDeckShake(); } catch (_) {}
-                } else {
-                    // 图形验证码单次有效：登录失败后需换一张
-                    resetCaptcha();
                 }
             };
 
@@ -1432,14 +1436,9 @@
                 return;
             }
 
-            // 人机验证（图形验证码）
-            const captcha = getCaptchaValue();
-            if (!captcha) {
-                showError('请输入人机验证码');
-                return;
-            }
-
-            submitLogin({ loginType: 'password', username, password, remember, captcha });
+            // 密码登录同样不再要求人机验证
+            // （防爆破：IP 限流 1 分钟 5 次 + 账号连续 3 次密码错误锁定 5 分钟）
+            submitLogin({ loginType: 'password', username, password, remember });
         });
 
         // 初始化控件显隐（默认是密码登录 tab）

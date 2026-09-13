@@ -1042,14 +1042,13 @@ function requireCaptcha(req, res, next) {
     });
 }
 
-// 登录用人机验证：密码登录必须带图形验证码；
-// 邮箱验证码登录不再重复要求——发码接口 /api/send-code 已强制人机验证 + 限流（1分钟3次），
-// 且邮箱里那串 6 位码本身就是第二因素（登录限流 1分钟5次，暴力猜解不可行）。
-// 这样前端才能做到「填满 6 位格子 → 自动核验登录」。
-function requireCaptchaForLogin(req, res, next) {
-    if (req.body && req.body.loginType === 'code') return next();
-    return requireCaptcha(req, res, next);
-}
+// 注意：/api/login 自 2026-09-13 起不再挂人机验证（图形验证码），两种登录方式一致：
+// - 邮箱验证码登录：发码接口 /api/send-code 已强制人机验证 + 限流（1 分钟 3 次），
+//   邮箱里那串 6 位码本身就是第二因素；前端也才能做到「填满 6 位 → 自动核验登录」。
+// - 密码登录：同样不要求图形验证码，防爆破改由两层兜底：
+//   ① IP 限流 requireRateLimit('login')（1 分钟 5 次）；
+//   ② 账号级失败锁定（连续 3 次密码错误 → 锁 5 分钟，见 /api/login 内 MAX_FAILED_ATTEMPTS）。
+// 图形验证码仍保留在发码 / 注册 / 邀请申请等接口上（仍走 requireCaptcha）。
 
 // ---------- 通用 Rate Limit（KV 存储，支持多实例） ----------
 /**
@@ -2559,7 +2558,7 @@ app.get('/api/auth-test', async (req, res) => {
     });
 });
 
-app.post('/api/login', requireRateLimit('login'), requireCSRF, requireCaptchaForLogin, async (req, res) => {
+app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) => {
     const { username, password, code, loginType } = req.body;
     
     if (!username && loginType !== 'code') {
@@ -3011,8 +3010,8 @@ function analyzeSlideTrail(points, target) {
 }
 
 // 滑块验证：前端把滑块拖到最右端后上报（携带拖动耗时/采样数 + 全程轨迹点做行为分析），
-// 通过则给当前会话写入一次性"solved"标记；后续 /api/login 等经 requireCaptcha 的
-// 接口会校验该标记（同样单次使用，验证一次即作废）
+// 通过则给当前会话写入一次性"solved"标记；后续发码 / 注册 / 邀请申请等经 requireCaptcha 的
+// 接口会校验该标记（同样单次使用，验证一次即作废；/api/login 已不要求人机验证）
 app.post('/api/captcha/slide', requireRateLimit('slide'), async (req, res) => {
     const sid = req.sessionID || (req.cookies && req.cookies['connect.sid']) || crypto.randomUUID();
     const elapsed = Number(req.body && req.body.elapsed);
