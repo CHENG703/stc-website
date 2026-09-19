@@ -1445,6 +1445,43 @@ function validatePassword(password) {
     return password.length >= 6;
 }
 
+// ---------- 同名账号重复检测 / 密码同步 ----------
+// 历史遗留：早期 ensureAdminUser 与 /api/login 的 env-fallback login 之间存在
+// 冷启动竞态，两个实例各 push 一次管理员账号；之后修改密码改在"用户当前会话绑定的
+// 记录"上，但下次按 username 登录命中的是数组里另一条记录，表现为"改密提示成功、
+// 但用新密码登不上"。这里只同步密码与最后登录时间，**不删数据**：保留原记录便于
+// 管理员在「成员管理」里手动删除多余条目（DELETE 接口已支持 UUID 字符串 id）。
+function findDuplicateUsernames() {
+    const map = new Map();
+    for (const u of (db.data && db.data.users) || []) {
+        if (!u || !u.username) continue;
+        const k = String(u.username);
+        if (!map.has(k)) map.set(k, []);
+        map.get(k).push(u);
+    }
+    const dups = [];
+    for (const [k, list] of map.entries()) {
+        if (list.length > 1) dups.push({ username: k, records: list });
+    }
+    return dups;
+}
+
+function syncPasswordAcrossDuplicates(primaryUser) {
+    if (!primaryUser || !primaryUser.username || !primaryUser.password) return 0;
+    const username = String(primaryUser.username);
+    let synced = 0;
+    for (const u of db.data.users) {
+        if (u === primaryUser) continue;
+        if (u.username !== username) continue;
+        u.password = primaryUser.password;
+        synced++;
+    }
+    if (synced > 0) {
+        console.log(`[PWD-SYNC] 用户 ${username} 共有 ${synced + 1} 条重复记录，密码已同步到所有条目`);
+    }
+    return synced;
+}
+
 // ---------- 客户端 IP 获取（限流 / IP 封禁 / 风控都依赖它，必须抗伪造） ----------
 // 取值来源与顺序：
 //   1) 仅当显式声明 TRUST_CF_CONNECTING_IP=1（确认本站前面挂着 Cloudflare）时，才采信 CF-Connecting-IP。
@@ -2839,6 +2876,23 @@ async function ensureAdminUser() {
 // 启动时初始化管理员
 ensureAdminUser().catch(err => console.error('[ADMIN] 初始化管理员失败:', err));
 
+// 启动时检测数据库中是否存在同名重复账号 —— 仅记录日志，不自动删除
+// （如有多条，登录按 username 找第一条，改密却可能命中另一条，导致"改密提示成功但新密码登不上"）
+setImmediate(() => {
+    try {
+        const dups = findDuplicateUsernames();
+        if (dups.length > 0) {
+            console.warn(`[STARTUP] 数据库中发现 ${dups.length} 个同名重复账号：`);
+            for (const { username, records } of dups) {
+                console.warn(`  - ${username}: ${records.length} 条，id=${records.map(u => u.id).join(', ')}`);
+            }
+            console.warn('  提示：可在「管理后台 → 成员管理」中删除多余条目（DELETE 接口已支持 UUID id）。');
+        }
+    } catch (e) {
+        console.warn('[STARTUP] 重复账号检测失败:', e.message);
+    }
+});
+
 // 调试端点（无需认证，用于诊断Vercel环境问题）
 app.get('/api/debug', async (req, res) => {
     try {
@@ -2861,10 +2915,15 @@ app.get('/api/debug', async (req, res) => {
             hasAdminUsername: hasAdminUsername,
             adminUsername: process.env.ADMIN_USERNAME || 'not-set',
             users: users.map(u => ({
+                id: u.id,
                 username: u.username,
+                email: u.email || '',
                 is_admin: u.is_admin,
                 is_super_admin: u.is_super_admin,
-                status: u.status
+                status: u.status || '',
+                // 密码哈希长度（仅用于辅助判断「这条记录是否有设置过密码」，不返回哈希本身）
+                has_password: !!u.password,
+                last_login: u.last_login || ''
             })),
             envVars: {
                 VERCEL: process.env.VERCEL,
@@ -4124,6 +4183,8 @@ app.put('/api/user/password', requireLogin, requireRateLimit('password'), requir
         }
 
         user.password = bcrypt.hashSync(newPassword, 10);
+        // 同步到同名重复账号（生产环境历史遗留），避免下次按 username 登录命中旧哈希
+        syncPasswordAcrossDuplicates(user);
         await db.write();
 
         console.log(`[USER-PWD] 用户 ${user.username} 通过${verifiedByCode ? '邮箱验证码' : '旧密码'}修改了密码`);
@@ -5484,6 +5545,7 @@ app.put('/api/members/:id/reset-password', requireAdmin, requireRateLimit('admin
             return res.status(400).json({ success: false, message: '密码长度至少6位' });
         }
         user.password = bcrypt.hashSync(newPassword, 10);
+        syncPasswordAcrossDuplicates(user);
         await db.write();
 
         res.json({ success: true, message: `密码已重置为 ${newPassword}` });
