@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <script src="/js/device-id.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>STC公会 - 欢迎来到我们的世界</title>
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+    <meta name="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <script>
+    // 若 24 小时内已成功解开谜题，直接进任务主页，不再显示介绍页
+    (function(){
+        try {
+            const ts = parseInt(localStorage.getItem('stcWishUnlockedAt'), 10);
+            if (ts && Date.now() - ts < 86400000) {
+                location.replace('/home');
+            }
+        } catch (e) {}
+    })();
+    </script>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; width: 100%; min-height: 100%; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            color: #f1f5f9;
+            background: #05060a;
+            overflow-x: hidden;
+        }
+
+        /* 背景图 + 极光 */
+        .page-bg {
+            position: fixed; inset: 0; z-index: 0; pointer-events: none;
+            background: #05060a url('/bg-hero.jpg') center center / cover no-repeat;
+        }
+        .page-bg::after {
+            content: ''; position: absolute; inset: 0;
+            background: linear-gradient(180deg, rgba(5,6,10,0.28) 0%, rgba(5,6,10,0.68) 100%);
+        }
+        .aurora-bg {
+            position: fixed; inset: 0; z-index: 0; pointer-events: none;
+            overflow: hidden;
+        }
+        .aurora-blob {
+            position: absolute; border-radius: 50%; filter: blur(90px); opacity: .22;
+            animation: aurora-float 16s ease-in-out infinite alternate;
+        }
+        .aurora-blob-1 { width: 70vw; height: 70vw; left: -20vw; top: -10vh; background: #4a9eff; animation-duration: 18s; }
+        .aurora-blob-2 { width: 60vw; height: 60vw; right: -15vw; bottom: -15vh; background: #10b981; animation-duration: 22s; }
+        @keyframes aurora-float { 0% { transform: translate(0,0) scale(1); } 100% { transform: translate(8vw,4vh) scale(1.08); } }
+
+        /* 顶层导航 */
+        .topbar {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+            display: flex; justify-content: flex-end; align-items: center;
+            padding: 18px 24px; gap: 12px;
+        }
+        .topbar a {
+            color: rgba(241,245,249,.75); text-decoration: none; font-size: 14px;
+            padding: 8px 16px; border-radius: 999px;
+            border: 1px solid rgba(255,255,255,.12);
+            background: rgba(255,255,255,.06);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            transition: all .25s ease;
+        }
+        .topbar a:hover { color: #fff; background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.22); }
+        .topbar a.primary { background: rgba(74,158,255,.18); border-color: rgba(74,158,255,.35); color: #9ed0ff; }
+        .topbar a.primary:hover { background: rgba(74,158,255,.28); }
+
+        /* 主舞台 */
+        .stage {
+            position: relative; z-index: 10; min-height: 100vh;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            padding: 100px 20px 80px; text-align: center;
+        }
+
+        /* 鸽子徽标：点击入口 */
+        .emblem-wrap {
+            position: relative; width: 180px; height: 180px; margin-bottom: 18px;
+            cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+        }
+        .emblem {
+            width: 100%; height: 100%; object-fit: contain;
+            mix-blend-mode: screen;
+            filter: drop-shadow(0 0 28px rgba(74,158,255,.55)) drop-shadow(0 0 60px rgba(74,158,255,.25));
+            animation: emblem-float 5s ease-in-out infinite, emblem-pulse 4s ease-in-out infinite;
+            transition: transform .2s ease;
+        }
+        .emblem-wrap:hover .emblem { transform: scale(1.06); }
+        .emblem-wrap.is-pulse .emblem { animation: emblem-click .42s ease; }
+        @keyframes emblem-float { 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-10px); } }
+        @keyframes emblem-pulse { 0%,100%{ filter: drop-shadow(0 0 24px rgba(74,158,255,.45)) drop-shadow(0 0 50px rgba(74,158,255,.2)); } 50%{ filter: drop-shadow(0 0 36px rgba(74,158,255,.65)) drop-shadow(0 0 80px rgba(74,158,255,.35)); } }
+        @keyframes emblem-click { 0%{ transform: scale(1); } 40%{ transform: scale(.92); } 60%{ transform: scale(1.12); } 100%{ transform: scale(1); } }
+
+        .brand-title {
+            font-size: clamp(40px, 9vw, 76px); font-weight: 800; letter-spacing: 6px;
+            background: linear-gradient(180deg, #fff 0%, #9ed0ff 55%, #4a9eff 100%);
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+            text-shadow: 0 0 40px rgba(74,158,255,.25), 0 2px 10px rgba(0,0,0,.3);
+            margin: 0 0 8px;
+        }
+        .brand-sub {
+            font-size: 16px; color: rgba(241,245,249,.55); letter-spacing: 2px; margin-bottom: 34px;
+        }
+
+        /* 介绍卡片 */
+        .intro-card {
+            max-width: 620px; width: 100%; margin: 0 auto; padding: 30px 32px;
+            background: rgba(255,255,255,.08);
+            backdrop-filter: blur(22px) saturate(150%); -webkit-backdrop-filter: blur(22px) saturate(150%);
+            border: 1px solid rgba(255,255,255,.16);
+            border-radius: 24px;
+            box-shadow: 0 25px 70px rgba(0,0,0,.45), inset 0 1px 1px rgba(255,255,255,.12);
+            text-align: left;
+        }
+        .intro-card p { margin: 0 0 14px; line-height: 1.8; color: rgba(241,245,249,.78); font-size: 15px; }
+        .intro-card p:last-child { margin-bottom: 0; }
+        .intro-tags { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+        .tag {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 12px; border-radius: 999px; font-size: 13px;
+            background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
+            color: rgba(241,245,249,.65);
+        }
+        .tag::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #4a9eff; box-shadow: 0 0 8px #4a9eff; }
+
+        /* 愿望弹窗 */
+        .wish-overlay {
+            position: fixed; inset: 0; z-index: 100;
+            display: none; align-items: center; justify-content: center;
+            background: rgba(5,6,10,.78);
+            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            opacity: 0; transition: opacity .35s ease;
+        }
+        .wish-overlay.is-open { display: flex; opacity: 1; }
+        .wish-panel {
+            position: relative; width: min(520px, 92vw); padding: 38px 34px;
+            background: rgba(255,255,255,.07);
+            backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%);
+            border: 1px solid rgba(255,255,255,.18);
+            border-radius: 26px;
+            box-shadow: 0 30px 90px rgba(0,0,0,.55);
+            text-align: center;
+            transform: translateY(30px) scale(.96); transition: transform .35s cubic-bezier(.2,.7,.2,1);
+        }
+        .wish-overlay.is-open .wish-panel { transform: translateY(0) scale(1); }
+        .wish-close {
+            position: absolute; top: 14px; right: 18px; color: rgba(241,245,249,.55);
+            background: transparent; border: 0; font-size: 28px; cursor: pointer; line-height: 1;
+        }
+        .wish-close:hover { color: #fff; }
+        .wish-title { font-size: 24px; font-weight: 700; margin: 0 0 26px; color: #fff; }
+
+        /* OTP Deck：4 格，适配中文 */
+        .otp-deck {
+            --slot: 64px; --gap: 12px;
+            position: relative; width: 100%; height: 90px; margin: 8px 0 6px;
+            display: block;
+        }
+        .otp-slot {
+            position: absolute; left: 50%; top: 0; margin-left: calc(var(--slot) / -2);
+            width: var(--slot); height: var(--slot); border-radius: 16px;
+            background: rgba(255,255,255,.06);
+            border: 1px solid rgba(255,255,255,.14);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 28px; font-weight: 700; color: #f1f5f9;
+            cursor: text; transform-origin: 50% 320%; user-select: none;
+            transition: border-color .25s, background .25s, box-shadow .25s, transform .36s cubic-bezier(.2,.7,.2,1);
+            backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        }
+        .otp-deck[data-length="4"] .otp-slot[data-i="0"] { transform: translate(calc(-1.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-deck[data-length="4"] .otp-slot[data-i="1"] { transform: translate(calc(-0.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-deck[data-length="4"] .otp-slot[data-i="2"] { transform: translate(calc( 0.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-deck[data-length="4"] .otp-slot[data-i="3"] { transform: translate(calc( 1.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-slot.is-filled { background: rgba(74,158,255,.12); border-color: rgba(74,158,255,.45); }
+        .otp-slot.is-focused { border-color: #4a9eff; box-shadow: 0 0 0 3px rgba(74,158,255,.22), 0 0 22px rgba(74,158,255,.35); }
+        .otp-slot.is-error { border-color: #ff6b6b !important; box-shadow: 0 0 0 3px rgba(255,107,107,.25); animation: otp-flash .6s ease; }
+        @keyframes otp-flash { 0%,100%{ background: rgba(255,107,107,.05); } 50%{ background: rgba(255,107,107,.20); } }
+        .otp-deck.is-shake { animation: otp-shake-deck .42s ease; }
+        @keyframes otp-shake-deck { 10%,90%{ transform: translateX(-4px); } 20%,80%{ transform: translateX(4px); } 30%,50%,70%{ transform: translateX(-7px); } 40%,60%{ transform: translateX(7px); } }
+        .otp-deck-input {
+            position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+            opacity: 0; background: transparent; border: 0; outline: 0;
+            caret-color: transparent; color: transparent; font-size: 16px;
+            z-index: 2; cursor: text; letter-spacing: 0;
+        }
+        .otp-deck.is-checking .otp-slot {
+            transform: translate(0, 0) !important;
+            background: rgba(74,158,255,.10); border-color: rgba(74,158,255,.5);
+            animation: otp-glow 1.1s ease-in-out infinite;
+        }
+        @keyframes otp-glow { 0%,100%{ box-shadow: 0 0 0 0 rgba(74,158,255,0); } 50%{ box-shadow: 0 0 22px 4px rgba(74,158,255,.35); } }
+        .otp-deck.is-verified .otp-slot {
+            transform: translate(0, 0) !important;
+            background: rgba(16,185,129,.14); border-color: rgba(16,185,129,.65);
+            color: #6ee7b7;
+            box-shadow: 0 0 22px rgba(16,185,129,.35);
+        }
+        .otp-hint { margin-top: 14px; font-size: 13px; color: rgba(241,245,249,.5); }
+
+        /* 愿望达成动画 */
+        .wish-animation {
+            position: fixed; inset: 0; z-index: 200; pointer-events: none;
+            display: none; align-items: center; justify-content: center;
+            overflow: hidden;
+        }
+        .wish-animation.is-active { display: flex; }
+        .wish-scene {
+            position: absolute; inset: 0;
+            background: radial-gradient(circle at 50% 55%, rgba(74,158,255,.15) 0%, rgba(5,6,10,.92) 55%, #05060a 100%);
+            opacity: 0; transition: opacity .8s ease;
+        }
+        .wish-animation.is-active .wish-scene { opacity: 1; }
+        .wish-rays {
+            position: absolute; inset: -30%; border-radius: 50%;
+            background: conic-gradient(from 0deg, transparent 0%, rgba(74,158,255,.10) 12%, transparent 24%, rgba(16,185,129,.08) 36%, transparent 48%, rgba(74,158,255,.10) 60%, transparent 72%, rgba(16,185,129,.08) 84%, transparent 100%);
+            animation: wish-rays-spin 18s linear infinite;
+            opacity: .6;
+        }
+        @keyframes wish-rays-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+        .wish-dove {
+            position: absolute; bottom: -80px; width: 52px; opacity: 0;
+            mix-blend-mode: screen; filter: drop-shadow(0 0 12px rgba(74,158,255,.6));
+        }
+        .wish-animation.is-active .wish-dove {
+            animation: dove-fly 5s ease-in forwards;
+        }
+        .wish-dove:nth-child(2) { left: 12%; width: 36px; animation-delay: .3s; }
+        .wish-dove:nth-child(3) { left: 28%; width: 44px; animation-delay: .7s; }
+        .wish-dove:nth-child(4) { left: 44%; width: 58px; animation-delay: .1s; }
+        .wish-dove:nth-child(5) { left: 60%; width: 40px; animation-delay: .9s; }
+        .wish-dove:nth-child(6) { left: 76%; width: 48px; animation-delay: .5s; }
+        .wish-dove:nth-child(7) { left: 88%; width: 34px; animation-delay: 1.1s; }
+        @keyframes dove-fly {
+            0% { transform: translateY(0) translateX(0) scale(.7); opacity: 0; }
+            10% { opacity: .85; }
+            100% { transform: translateY(-120vh) translateX(20px) scale(1); opacity: 0; }
+        }
+        .wish-text { position: relative; z-index: 2; text-align: center; }
+        .wish-text .line1 { font-size: 18px; color: rgba(241,245,249,.7); letter-spacing: 8px; margin-bottom: 16px; opacity: 0; transform: translateY(20px); }
+        .wish-text .line2 { font-size: clamp(52px, 14vw, 120px); font-weight: 900; letter-spacing: 10px; color: #fff; line-height: 1; margin: 0; }
+        .wish-text .line2 .char { display: inline-block; opacity: 0; transform: translateY(40px) scale(.9); filter: blur(6px); }
+        .wish-animation.is-active .wish-text .line1 { animation: wish-fade-in 1s ease .3s forwards; }
+        .wish-animation.is-active .wish-text .line2 .char:nth-child(1) { animation: wish-char-in .85s cubic-bezier(.2,.7,.2,1) .8s forwards; }
+        .wish-animation.is-active .wish-text .line2 .char:nth-child(2) { animation: wish-char-in .85s cubic-bezier(.2,.7,.2,1) 1.05s forwards; }
+        .wish-animation.is-active .wish-text .line2 .char:nth-child(3) { animation: wish-char-in .85s cubic-bezier(.2,.7,.2,1) 1.30s forwards; }
+        .wish-animation.is-active .wish-text .line2 .char:nth-child(4) { animation: wish-char-in .85s cubic-bezier(.2,.7,.2,1) 1.55s forwards; }
+        @keyframes wish-fade-in { to { opacity: 1; transform: translateY(0); } }
+        @keyframes wish-char-in {
+            to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); text-shadow: 0 0 40px rgba(74,158,255,.5), 0 0 80px rgba(16,185,129,.25); }
+        }
+
+        .copyright-watermark {
+            position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+            z-index: 10; font-size: 12px; color: rgba(241,245,249,.28); pointer-events: none; user-select: none;
+        }
+
+        @media (max-width: 560px) {
+            .topbar { padding: 14px 16px; }
+            .topbar a { font-size: 13px; padding: 7px 12px; }
+            .emblem-wrap { width: 150px; height: 150px; }
+            .intro-card { padding: 24px 22px; }
+            .otp-deck { --slot: 54px; --gap: 10px; height: 76px; }
+            .otp-slot { font-size: 24px; border-radius: 14px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page-bg" aria-hidden="true"></div>
+    <div class="aurora-bg" aria-hidden="true">
+        <div class="aurora-blob aurora-blob-1"></div>
+        <div class="aurora-blob aurora-blob-2"></div>
+    </div>
+
+    <div class="topbar">
+        <a href="/login">登录</a>
+        <a href="/register" class="primary">注册</a>
+    </div>
+
+    <main class="stage">
+        <div class="emblem-wrap" id="emblem" title="">
+            <img src="/dove-emblem.png" alt="和平鸽" class="emblem" id="emblem-img">
+        </div>
+        <h1 class="brand-title">STC公会</h1>
+        <p class="brand-sub">Simplicity · Trust · Craftsmanship</p>
+
+        <div class="intro-card">
+            <p>欢迎来到 <strong>STC公会</strong>。这里是一群热爱创造、乐于分享的伙伴聚集的地方。</p>
+            <p>我们发布任务、交流想法、互助协作，在代码与创意之间搭建桥梁。无论你是创作者、开发者，还是单纯喜欢折腾的家伙，都能在这里找到属于自己的位置。</p>
+            <div class="intro-tags">
+                <span class="tag">任务协作</span>
+                <span class="tag">经验分享</span>
+                <span class="tag">社区互助</span>
+                <span class="tag">共同成长</span>
+            </div>
+        </div>
+    </main>
+
+    <div class="wish-overlay" id="wish-overlay">
+        <div class="wish-panel">
+            <button class="wish-close" id="wish-close" aria-label="关闭">&times;</button>
+            <h2 class="wish-title">我们的愿望是</h2>
+            <div class="otp-deck" id="wish-deck" data-length="4" aria-label="输入愿望">
+                <span class="otp-slot" data-i="0"><span class="otp-slot__digit"></span></span>
+                <span class="otp-slot" data-i="1"><span class="otp-slot__digit"></span></span>
+                <span class="otp-slot" data-i="2"><span class="otp-slot__digit"></span></span>
+                <span class="otp-slot" data-i="3"><span class="otp-slot__digit"></span></span>
+                <input type="text" class="otp-deck-input" id="wish-input"
+                       inputmode="text" autocomplete="off" autocapitalize="off"
+                       autocorrect="off" spellcheck="false" maxlength="4" aria-label="输入世界和平">
+            </div>
+            <div class="otp-hint">支持直接粘贴 · 输满 4 字自动确认</div>
+        </div>
+    </div>
+
+    <div class="wish-animation" id="wish-animation">
+        <div class="wish-scene">
+            <div class="wish-rays"></div>
+            <img src="/dove-emblem.png" class="wish-dove" alt="">
+            <img src="/dove-emblem.png" class="wish-dove" alt="">
+            <img src="/dove-emblem.png" class="wish-dove" alt="">
+            <img src="/dove-emblem.png" class="wish-dove" alt="">
+            <img src="/dove-emblem.png" class="wish-dove" alt="">
+            <img src="/dove-emblem.png" class="wish-dove" alt="">
+            <div class="wish-text">
+                <div class="line1">我们的愿望</div>
+                <h2 class="line2"><span class="char">世</span><span class="char">界</span><span class="char">和</span><span class="char">平</span></h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="copyright-watermark">&copy; 2025-2026 STC 版权所有</div>
+
+    <script>
+    (function(){
+        // ===== 6 次连续点击鸽子徽标 =====
+        const emblem = document.getElementById('emblem');
+        const emblemImg = document.getElementById('emblem-img');
+        let clickCount = 0;
+        let clickTimer = null;
+        const CLICK_GAP_MS = 2500;
+
+        function openWish() {
+            const ov = document.getElementById('wish-overlay');
+            ov.classList.add('is-open');
+            window.wishDeckFocus && window.wishDeckFocus();
+        }
+
+        emblem.addEventListener('click', () => {
+            // 点击动效
+            emblemImg.classList.remove('is-pulse');
+            void emblemImg.offsetWidth;
+            emblemImg.classList.add('is-pulse');
+
+            if (clickTimer) clearTimeout(clickTimer);
+            clickCount++;
+            if (clickCount >= 6) {
+                clickCount = 0;
+                clickTimer = null;
+                openWish();
+            } else {
+                clickTimer = setTimeout(() => { clickCount = 0; clickTimer = null; }, CLICK_GAP_MS);
+            }
+        });
+
+        // ===== 愿望输入框（4 格 OTP Deck，中文友好） =====
+        const deck = document.getElementById('wish-deck');
+        const slots = Array.from(deck.querySelectorAll('.otp-slot'));
+        const real = document.getElementById('wish-input');
+        const WISH = '世界和平';
+        const N = 4;
+
+        function paint(v){
+            const chars = Array.from((v || '').replace(/\s/g, '')).slice(0, N);
+            real.value = chars.join('');
+            slots.forEach((s, i) => {
+                const ch = chars[i] || '';
+                const d = s.firstElementChild;
+                if (d) d.textContent = ch;
+                s.classList.toggle('is-filled', !!ch);
+            });
+            const fi = Math.min(chars.length, N - 1);
+            slots.forEach((s, i) => s.classList.toggle('is-focused', i === fi && chars.length < N));
+            return chars.length === N;
+        }
+
+        function cancelAll(){
+            slots.forEach(s => { try { s.getAnimations().forEach(a => a.cancel()); } catch(_){} });
+        }
+
+        function spread(){
+            const range = 30, step = N > 1 ? range / (N - 1) : 0, start = -range / 2;
+            slots.forEach((s, i) => {
+                const from = getComputedStyle(s).transform;
+                s.animate(
+                    [{ transform: from }, { transform: `translate(0px, 0px) rotate(${(start + step * i).toFixed(2)}deg)` }],
+                    { duration: 560, delay: i * 45, fill: 'forwards', easing: 'cubic-bezier(.2,.7,.2,1)' }
+                );
+            });
+        }
+
+        function resetDeck(){
+            cancelAll();
+            deck.classList.remove('is-shake', 'is-checking', 'is-verified');
+            slots.forEach(s => s.classList.remove('is-verified', 'is-checking', 'is-error', 'is-shake'));
+            paint('');
+        }
+
+        function shakeDeck(){
+            cancelAll();
+            deck.classList.remove('is-checking', 'is-verified');
+            deck.classList.add('is-shake');
+            slots.forEach(s => {
+                s.classList.remove('is-verified', 'is-checking');
+                s.classList.add('is-error');
+                setTimeout(() => s.classList.remove('is-error'), 600);
+            });
+            setTimeout(() => {
+                deck.classList.remove('is-shake');
+                paint('');
+                real.focus({ preventScroll: true });
+            }, 480);
+        }
+
+        function checkingDeck(){
+            cancelAll();
+            deck.classList.remove('is-verified');
+            deck.classList.add('is-checking');
+        }
+
+        function verifyDeck(){
+            cancelAll();
+            deck.classList.remove('is-checking');
+            deck.classList.add('is-verified');
+        }
+
+        function sync(v){
+            cancelAll();
+            deck.classList.remove('is-checking', 'is-verified');
+            if (paint(v)) {
+                spread();
+                onWishComplete();
+            }
+        }
+
+        let composing = false;
+        real.addEventListener('compositionstart', () => composing = true);
+        real.addEventListener('compositionend', (e) => { composing = false; sync(e.target.value); });
+        real.addEventListener('input', (e) => { if (!composing && !e.isComposing) sync(e.target.value); });
+        real.addEventListener('paste', (e) => {
+            e.preventDefault();
+            const t = ((e.clipboardData || window.clipboardData).getData('text')) || '';
+            sync(t);
+        });
+        real.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' && !real.value) { e.preventDefault(); paint(''); }
+        });
+        slots.forEach(s => s.addEventListener('click', () => real.focus({ preventScroll: true })));
+
+        function onWishComplete(){
+            const value = Array.from(real.value.replace(/\s/g, '')).join('');
+            checkingDeck();
+            setTimeout(() => {
+                if (value === WISH) {
+                    verifyDeck();
+                    setTimeout(startWishAnimation, 600);
+                } else {
+                    shakeDeck();
+                }
+            }, 600);
+        }
+
+        window.wishDeckFocus = function(){
+            resetDeck();
+            real.focus({ preventScroll: true });
+        };
+
+        // ===== 愿望达成动画 & 跳转 =====
+        function startWishAnimation(){
+            const anim = document.getElementById('wish-animation');
+            anim.classList.add('is-active');
+            try { localStorage.setItem('stcWishUnlockedAt', String(Date.now())); } catch(e){}
+            setTimeout(() => { location.href = '/home'; }, 4200);
+        }
+
+        // ===== 弹窗开关 =====
+        const overlay = document.getElementById('wish-overlay');
+        const closeBtn = document.getElementById('wish-close');
+        function closeWish(){
+            overlay.classList.remove('is-open');
+            resetDeck();
+            clickCount = 0;
+        }
+        closeBtn.addEventListener('click', closeWish);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeWish(); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && overlay.classList.contains('is-open')) closeWish(); });
+
+        paint('');
+    })();
+    </script>
+</body>
+</html>

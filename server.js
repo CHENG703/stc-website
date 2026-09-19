@@ -2831,7 +2831,7 @@ const requireSuperAdmin = async (req, res, next) => {
 };
 
 app.get('/', (req, res) => {
-    res.redirect('/home');
+    res.sendFile(path.join(__dirname, 'public', 'intro.html'));
 });
 
 app.get('/home', (req, res) => {
