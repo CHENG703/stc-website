@@ -427,13 +427,15 @@ class SimpleJSONDB {
         }
     }
 
-    // 写入 KV 前的一致性合并：拉取远端最新数据作为基底，仅用本地"脏集合"覆盖。
-    // 这样即使本实例内存较旧，也不会覆盖其他实例对其它集合的修改。
+    // 写入 KV 前的一致性合并：拉取远端最新数据作为基底，仅把本实例的修改合并进去。
+    // 注意两点（都是历史上真实造成"改密成功但旧密码仍能登录"的地方）：
+    //   ① 不做"刚合并过就跳过拉取"的节流——KV 是多实例共享的，别的实例随时可能写入；
+    //     带着本地缓存直接上传会把别人刚写入的数据盖回旧值。宁可多一次 KV GET。
+    //   ② 本地脏集合不再"整集合以本地为准"，而是记录/字段级合并（_mergeDirtyCollection）——
+    //     否则一个陈旧实例上任何人的登录（写 last_login）都会把自己内存里的旧密码哈希
+    //     整个写回 KV，冲掉其他实例刚改好的密码。
     async _mergeRemoteBeforeSave() {
         if (!this._kvEnabled || this._kvFailed) return true;
-        const now = Date.now();
-        // 节流：刚刚成功合并过（400ms 内）说明本地足够新，可跳过拉取
-        if (this._lastKvMergeAt && now - this._lastKvMergeAt < 400) return true;
         if (this._kvMergeInFlight) { await this._kvMergeInFlight; return this._mergeOkOnce; }
         this._kvMergeInFlight = (async () => {
             this._mergeOkOnce = false;
@@ -457,7 +459,11 @@ class SimpleJSONDB {
                     const beforeMono = this._monotonicLocalSnapshot();
                     for (const key of Object.keys(remote)) {
                         if (key === 'access_logs') continue; // 访问记录走并集合并（见下）
-                        if (this._dirtyKeys.has(key)) continue; // 本地脏集合以本地为准
+                        if (this._dirtyKeys.has(key)) {
+                            // 本地脏集合：记录/字段级合并，保留本地改动的同时采纳远端更新
+                            this._data[key] = this._mergeDirtyCollection(this._data[key], snap && snap[key], remote[key]);
+                            continue;
+                        }
                         if (snap) {
                             // 本地未标记脏，但内容与上次远端快照不同 → 本地确实改过（含嵌套修改）
                             let cur = null;
@@ -821,6 +827,76 @@ class SimpleJSONDB {
         });
     }
 
+    // 脏集合的记录/字段级合并：以"上次与远端一致时的快照"(_remoteSnapshot) 为基准，
+    // 识别本实例真正改过哪些记录的哪些字段，然后以远端最新数据为底、只叠加这些改动。
+    // 解决的问题：集合级"本地脏 ⇒ 本地整集合为准"会让一个内存陈旧的实例
+    // （例如刚处理过一次登录、改了 last_login）把自己内存里的旧密码哈希/旧封禁状态
+    // 整个写回 KV，冲掉其他实例刚提交的修改。
+    // 规则：
+    //   - 本地新增（快照中没有）      ⇒ 保留本地
+    //   - 本地删除（快照有、本地没有）⇒ 保持删除
+    //   - 本地未变（与快照相同）      ⇒ 采用远端（拿到其他实例的更新）
+    //   - 本地有改动                  ⇒ 远端记录为底 + 覆盖"本地相对快照变化的字段"
+    //   - 远端新增（快照与本地都没有）⇒ 采纳
+    // 无法做字段级 diff（快照缺失/结构不符/记录无主键）时退回旧行为（本地为准），
+    // 保证不比原来更差。
+    _mergeDirtyCollection(localVal, snapStr, remoteVal) {
+        if (!Array.isArray(localVal) || !Array.isArray(remoteVal)) return localVal;
+        let snapArr = null;
+        if (typeof snapStr === 'string') {
+            try { snapArr = JSON.parse(snapStr); } catch (e) { snapArr = null; }
+        }
+        if (!Array.isArray(snapArr)) return localVal; // 基线未知，退回旧行为
+        const keyOf = (it) => {
+            if (!it || typeof it !== 'object') return null;
+            if (it.id !== undefined) return 'id:' + String(it.id);
+            if (it.email !== undefined && it.code !== undefined) return 'ec:' + String(it.email) + '|' + String(it.code);
+            return null;
+        };
+        const snapMap = new Map();
+        for (const it of snapArr) {
+            const k = keyOf(it);
+            if (k) snapMap.set(k, it);
+        }
+        if (snapMap.size === 0) return localVal;
+        const remoteMap = new Map();
+        for (const it of remoteVal) {
+            const k = keyOf(it);
+            if (k) remoteMap.set(k, it);
+        }
+        const out = [];
+        const seen = new Set();
+        for (const lItem of localVal) {
+            const k = keyOf(lItem);
+            if (!k) { out.push(lItem); continue; } // 无法识别主键的记录：原样保留
+            seen.add(k);
+            const snapItem = snapMap.get(k);
+            if (!snapItem) { out.push(lItem); continue; }            // 本地新增
+            let localChanged = false;
+            try { localChanged = JSON.stringify(lItem) !== JSON.stringify(snapItem); } catch (e) { localChanged = true; }
+            if (!localChanged) {
+                out.push(remoteMap.get(k) || lItem);                  // 本地没动 ⇒ 采用远端版本
+                continue;
+            }
+            const rItem = remoteMap.get(k);
+            if (!rItem) { out.push(lItem); continue; }               // 远端已删，本地正在改 ⇒ 保留本地
+            const merged = Object.assign({}, rItem);
+            for (const f of Object.keys(lItem)) {
+                let differs = false;
+                try { differs = JSON.stringify(lItem[f]) !== JSON.stringify(snapItem[f]); } catch (e) { differs = true; }
+                if (differs) merged[f] = lItem[f];                   // 只叠加本地真正改过的字段
+            }
+            for (const f of Object.keys(snapItem)) {
+                if (!(f in lItem)) delete merged[f];                 // 本地删掉的字段尊重本地
+            }
+            out.push(merged);
+        }
+        for (const [k, rItem] of remoteMap) {
+            if (!seen.has(k) && !snapMap.has(k)) out.push(rItem);    // 远端新增 ⇒ 采纳
+        }
+        return out;
+    }
+
     // 将远端数据合并进本地：保留本地"脏集合"（本实例刚改过的），其余以远端为准。
     // 相比整体替换 this._data，可避免把本地未落库的修改冲掉。
     _applyRemoteData(remote) {
@@ -833,7 +909,12 @@ class SimpleJSONDB {
         } else {
             for (const key of Object.keys(remote)) {
                 if (key === 'access_logs') continue; // 访问记录走并集合并（见下）
-                if (this._dirtyKeys.has(key)) continue;
+                if (this._dirtyKeys.has(key)) {
+                    // 本地脏集合：记录/字段级合并（保本地改动、取远端更新），
+                    // 不再整集合保留陈旧本地数据
+                    this._data[key] = this._mergeDirtyCollection(this._data[key], this._remoteSnapshot && this._remoteSnapshot[key], remote[key]);
+                    continue;
+                }
                 this._data[key] = remote[key];
             }
         }
@@ -3003,6 +3084,10 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
     const MAX_FAILED_ATTEMPTS = 3;     // 最多尝试3次
     const LOCK_DURATION_MS = 5 * 60 * 1000; // 锁定5分钟
 
+    // 登录前强制刷新 KV：多实例下本实例内存可能停留在 3 秒 TTL 窗口内，
+    // 拿旧密码哈希比对会造成"改密后旧密码依然能登录"的假象
+    await db.readFresh();
+
     // 验证码登录不需要用户名
     let user;
     if (loginType === 'code') {
@@ -4132,6 +4217,10 @@ app.get('/api/user', async (req, res) => {
 // 网站默认验证码登录，很多账号从未用过密码登录（甚至没有密码），必须留一条不依赖旧密码的通道。
 app.put('/api/user/password', requireLogin, requireRateLimit('password'), requireCSRF, async (req, res) => {
     try {
+        // 改密前强制刷新 KV：旧密码比对必须基于云端最新哈希，
+        // 否则陈旧内存既可能误判"旧密码不正确"，也可能放行已作废的旧密码
+        await db.readFresh();
+
         const { oldPassword, newPassword, verify_code } = req.body;
 
         if (!newPassword) {
@@ -5527,6 +5616,8 @@ app.get('/api/members', requireAdmin, async (req, res) => {
 // 管理员重置用户密码
 app.put('/api/members/:id/reset-password', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     try {
+        // 重置前强制刷新 KV，基于云端最新数据操作
+        await db.readFresh();
         const currentUser = req.currentUser;
         const user = findUserByRouteId(req.params.id);
 
