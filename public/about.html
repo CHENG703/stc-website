@@ -1151,8 +1151,9 @@
 
         /* ---- 1. 镐子连点计数 ---- */
         let clicks = 0, timer = null;
-        icon.addEventListener('click', () => {
-            icon.classList.remove('is-pulse');
+        // 点击动效结束后移除类，让镐子恢复原本的悬浮动画
+        icon.addEventListener('animationend', () => icon.classList.remove('is-pulse'));
+        icon.addEventListener('click', () => {            icon.classList.remove('is-pulse');
             void icon.offsetWidth;
             icon.classList.add('is-pulse');
 
