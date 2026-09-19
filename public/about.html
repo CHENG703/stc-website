@@ -573,16 +573,42 @@
             border-radius: 26px;
             box-shadow: 0 30px 90px rgba(0, 0, 0, .55);
             text-align: center;
-            transform: translateY(30px) scale(.96);
-            transition: transform .35s cubic-bezier(.2,.7,.2,1);
         }
-        .wish-overlay.is-open .wish-panel { transform: translateY(0) scale(1); }
+        /* 动态弹出：外扩光环 + 面板弹入 */
+        .wish-panel::after {
+            content: ''; position: absolute; inset: -2px; border-radius: 28px;
+            border: 1px solid rgba(56, 189, 248, .6);
+            opacity: 0; pointer-events: none;
+        }
+        .wish-overlay.is-open .wish-panel { animation: panel-pop .62s cubic-bezier(.16, 1.06, .3, 1) both; }
+        @keyframes panel-pop {
+            0%   { transform: scale(.76) translateY(28px); opacity: 0; filter: blur(10px); }
+            55%  { transform: scale(1.035) translateY(0); opacity: 1; filter: blur(0); }
+            78%  { transform: scale(.988) translateY(0); }
+            100% { transform: scale(1) translateY(0); opacity: 1; filter: blur(0); }
+        }
+        .wish-overlay.is-open .wish-panel::after { animation: panel-ring .95s ease-out both; }
+        @keyframes panel-ring {
+            0%   { opacity: .85; transform: scale(.9); }
+            100% { opacity: 0;   transform: scale(1.14); }
+        }
         .wish-close {
             position: absolute; top: 14px; right: 18px; color: var(--ld-text-soft);
             background: transparent; border: 0; font-size: 28px; cursor: pointer; line-height: 1;
         }
         .wish-close:hover { color: #fff; }
         .wish-title { font-size: 24px; font-weight: 700; margin: 0 0 26px; color: var(--ld-text); }
+        .wish-title .wc { display: inline-block; opacity: 0; }
+        .wish-overlay.is-open .wish-title .wc { animation: wish-title-char .5s cubic-bezier(.2,.8,.2,1) both; }
+        @keyframes wish-title-char {
+            from { opacity: 0; transform: translateY(14px) scale(.9); filter: blur(6px); }
+            to   { opacity: 1; transform: none; filter: blur(0); }
+        }
+        .wish-overlay.is-open .otp-hint { animation: wish-hint-in .5s ease .6s both; }
+        @keyframes wish-hint-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: none; }
+        }
 
         /* 四个输入框（同验证码登录那款） */
         .otp-deck {
@@ -598,13 +624,25 @@
             display: flex; align-items: center; justify-content: center;
             font-size: 28px; font-weight: 700; color: var(--ld-text);
             cursor: text; transform-origin: 50% 320%; user-select: none;
+            transform: translate(var(--tx, 0px), 0);
             transition: border-color .25s, background .25s, box-shadow .25s, transform .36s cubic-bezier(.2,.7,.2,1);
             backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
         }
-        .otp-deck[data-length="4"] .otp-slot[data-i="0"] { transform: translate(calc(-1.5 * (var(--slot) + var(--gap))), 0); }
-        .otp-deck[data-length="4"] .otp-slot[data-i="1"] { transform: translate(calc(-0.5 * (var(--slot) + var(--gap))), 0); }
-        .otp-deck[data-length="4"] .otp-slot[data-i="2"] { transform: translate(calc( 0.5 * (var(--slot) + var(--gap))), 0); }
-        .otp-deck[data-length="4"] .otp-slot[data-i="3"] { transform: translate(calc( 1.5 * (var(--slot) + var(--gap))), 0); }
+        .otp-deck[data-length="4"] .otp-slot[data-i="0"] { --tx: calc(-1.5 * (var(--slot) + var(--gap))); }
+        .otp-deck[data-length="4"] .otp-slot[data-i="1"] { --tx: calc(-0.5 * (var(--slot) + var(--gap))); }
+        .otp-deck[data-length="4"] .otp-slot[data-i="2"] { --tx: calc( 0.5 * (var(--slot) + var(--gap))); }
+        .otp-deck[data-length="4"] .otp-slot[data-i="3"] { --tx: calc( 1.5 * (var(--slot) + var(--gap))); }
+        /* 发牌式入场：从中心一张张飞到各自位置 */
+        .wish-overlay.is-open .otp-slot { animation: slot-deal .52s cubic-bezier(.2,.9,.2,1) both; }
+        .wish-overlay.is-open .otp-slot[data-i="0"] { animation-delay: .14s; }
+        .wish-overlay.is-open .otp-slot[data-i="1"] { animation-delay: .22s; }
+        .wish-overlay.is-open .otp-slot[data-i="2"] { animation-delay: .30s; }
+        .wish-overlay.is-open .otp-slot[data-i="3"] { animation-delay: .38s; }
+        @keyframes slot-deal {
+            0%   { transform: translate(0px, 0) scale(.4) rotate(-18deg); opacity: 0; }
+            60%  { opacity: 1; }
+            100% { transform: translate(var(--tx, 0px), 0) scale(1) rotate(0deg); opacity: 1; }
+        }
         .otp-slot.is-filled { background: rgba(56, 189, 248, .12); border-color: rgba(56, 189, 248, .45); }
         .otp-slot.is-focused { border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, .22), 0 0 22px rgba(56, 189, 248, .35); }
         .otp-slot.is-error { border-color: #ff6b6b !important; box-shadow: 0 0 0 3px rgba(255, 107, 107, .25); animation: otp-flash .6s ease; }
@@ -644,52 +682,48 @@
         .wish-animation.is-active { display: flex; }
         .wish-scene {
             position: absolute; inset: 0;
-            background: radial-gradient(circle at 50% 55%, rgba(14, 165, 233, .18) 0%, rgba(2, 8, 23, .94) 55%, #020817 100%);
-            opacity: 0; transition: opacity .8s ease;
+            background: #000;
+            opacity: 0; transition: opacity .6s ease;
         }
         .wish-animation.is-active .wish-scene { opacity: 1; }
-        .wish-rays {
-            position: absolute; inset: -30%; border-radius: 50%; opacity: .55;
-            background: conic-gradient(from 0deg, transparent 0%, rgba(56, 189, 248, .10) 12%, transparent 24%, rgba(16, 185, 129, .08) 36%, transparent 48%, rgba(56, 189, 248, .10) 60%, transparent 72%, rgba(16, 185, 129, .08) 84%, transparent 100%);
-            animation: wish-rays-spin 18s linear infinite;
+
+        /* 周围闪烁的白点 */
+        .wish-dot {
+            position: absolute; border-radius: 50%; background: #fff; opacity: 0;
+            box-shadow: 0 0 8px rgba(255, 255, 255, .95), 0 0 20px rgba(170, 214, 255, .55);
         }
-        @keyframes wish-rays-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
-        .wish-dove {
-            position: absolute; bottom: -80px; width: 52px; opacity: 0;
-            mix-blend-mode: screen; filter: drop-shadow(0 0 12px rgba(56, 189, 248, .6));
+        .wish-animation.is-active .wish-dot { animation-name: dot-twinkle; animation-iteration-count: infinite; }
+        @keyframes dot-twinkle {
+            0%, 100% { opacity: 0;   transform: scale(.5); }
+            45%      { opacity: .95; transform: scale(1.1); }
+            60%      { opacity: .35; transform: scale(.9); }
+            75%      { opacity: .9;  transform: scale(1.05); }
         }
-        .wish-animation.is-active .wish-dove { animation: dove-fly 5s ease-in forwards; }
-        .wish-dove:nth-of-type(2) { left: 12%; width: 36px; animation-delay: .3s; }
-        .wish-dove:nth-of-type(3) { left: 28%; width: 44px; animation-delay: .7s; }
-        .wish-dove:nth-of-type(4) { left: 44%; width: 58px; animation-delay: .1s; }
-        .wish-dove:nth-of-type(5) { left: 60%; width: 40px; animation-delay: .9s; }
-        .wish-dove:nth-of-type(6) { left: 76%; width: 48px; animation-delay: .5s; }
-        .wish-dove:nth-of-type(7) { left: 88%; width: 34px; animation-delay: 1.1s; }
-        @keyframes dove-fly {
-            0%   { transform: translateY(0) translateX(0) scale(.7); opacity: 0; }
-            10%  { opacity: .85; }
-            100% { transform: translateY(-120vh) translateX(20px) scale(1); opacity: 0; }
-        }
+
         .wish-text { position: relative; z-index: 2; text-align: center; }
         .wish-text .line1 {
-            font-size: 18px; color: var(--ld-text-soft); letter-spacing: 8px;
+            font-size: 18px; color: rgba(241, 245, 249, .7); letter-spacing: 8px;
             margin-bottom: 16px; opacity: 0; transform: translateY(20px);
         }
         .wish-text .line2 {
             font-size: clamp(52px, 14vw, 120px); font-weight: 900; letter-spacing: 10px;
             color: #fff; line-height: 1; margin: 0;
         }
-        .wish-text .line2 .char {
-            display: inline-block; opacity: 0; transform: translateY(40px) scale(.9); filter: blur(6px);
-        }
+        .wish-text .line2 .char { display: inline-block; opacity: 0; }
         .wish-animation.is-active .wish-text .line1 { animation: wish-fade-in 1s ease .3s forwards; }
-        .wish-animation.is-active .wish-text .line2 .char:nth-child(1) { animation: wish-char-in .85s cubic-bezier(.2,.7,.2,1) .8s forwards; }
-        .wish-animation.is-active .wish-text .line2 .char:nth-child(2) { animation: wish-char-in .85s cubic-bezier(.2,.7,.2,1) 1.05s forwards; }
-        .wish-animation.is-active .wish-text .line2 .char:nth-child(3) { animation: wish-char-in .85s cubic-bezier(.2,.7,.2,1) 1.3s forwards; }
-        .wish-animation.is-active .wish-text .line2 .char:nth-child(4) { animation: wish-char-in .85s cubic-bezier(.2,.7,.2,1) 1.55s forwards; }
+        .wish-animation.is-active .wish-text .line2 .char:nth-child(1) { animation: wish-char-in .8s cubic-bezier(.2,.7,.2,1) .85s forwards, wish-blink 3s ease-in-out 1.75s infinite; }
+        .wish-animation.is-active .wish-text .line2 .char:nth-child(2) { animation: wish-char-in .8s cubic-bezier(.2,.7,.2,1) 1.05s forwards, wish-blink 3s ease-in-out 2.05s infinite; }
+        .wish-animation.is-active .wish-text .line2 .char:nth-child(3) { animation: wish-char-in .8s cubic-bezier(.2,.7,.2,1) 1.25s forwards, wish-blink 3s ease-in-out 2.35s infinite; }
+        .wish-animation.is-active .wish-text .line2 .char:nth-child(4) { animation: wish-char-in .8s cubic-bezier(.2,.7,.2,1) 1.45s forwards, wish-blink 3s ease-in-out 2.65s infinite; }
         @keyframes wish-fade-in { to { opacity: 1; transform: translateY(0); } }
         @keyframes wish-char-in {
-            to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); text-shadow: 0 0 40px rgba(56, 189, 248, .55), 0 0 80px rgba(16, 185, 129, .25); }
+            from { opacity: 0; transform: translateY(40px) scale(.9); filter: blur(6px); }
+            to   { opacity: 1; transform: none; filter: blur(0); }
+        }
+        /* 霓虹灯式闪烁 */
+        @keyframes wish-blink {
+            0%, 26%, 33%, 58%, 65%, 100% { opacity: 1;   text-shadow: 0 0 38px rgba(180, 220, 255, .8), 0 0 92px rgba(255, 255, 255, .35); }
+            29%, 61%                     { opacity: .25; text-shadow: none; }
         }
 
         @media (max-width: 560px) {
@@ -1012,9 +1046,7 @@
                     <h2>加入我们</h2>
                     <p>如果你热爱 Minecraft，有创意、有热情，欢迎加入 STC 工会！让我们一起创造更多精彩。</p>
                     <div class="ld-join-buttons">
-                        <a href="/join.html" class="btn btn-primary">🚀 立即加入</a>
-                        <a href="https://qm.qq.com/q/Hggklu4OOW" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">💬 加入QQ群</a>
-                        <a href="/login" class="btn btn-secondary">登录账号</a>
+                        <a href="/join.html" class="btn btn-secondary">加入我们</a>
                     </div>
                     <p class="ld-join-note">申请需审核 · 审核通过后将通过 QQ 邮箱通知你</p>
                 </div>
@@ -1063,13 +1095,6 @@
     <!-- ===== 彩蛋：愿望达成动画 ===== -->
     <div class="wish-animation" id="wish-animation">
         <div class="wish-scene">
-            <div class="wish-rays"></div>
-            <img src="/dove-emblem.png" class="wish-dove" alt="">
-            <img src="/dove-emblem.png" class="wish-dove" alt="">
-            <img src="/dove-emblem.png" class="wish-dove" alt="">
-            <img src="/dove-emblem.png" class="wish-dove" alt="">
-            <img src="/dove-emblem.png" class="wish-dove" alt="">
-            <img src="/dove-emblem.png" class="wish-dove" alt="">
             <div class="wish-text">
                 <div class="line1">我们的愿望</div>
                 <h2 class="line2"><span class="char">世</span><span class="char">界</span><span class="char">和</span><span class="char">平</span></h2>
@@ -1247,10 +1272,10 @@
         real.addEventListener('keydown', (e) => { if (e.key === 'Backspace' && !real.value) { e.preventDefault(); paint(''); } });
         slots.forEach(s => s.addEventListener('click', () => real.focus({ preventScroll: true })));
 
-        /* ---- 3. 弹窗开关 ---- */
+        /* ---- 3. 弹窗开关（动态弹出） ---- */
         function openWish(){
+            resetDeck();                        // 先复位（会清掉动画），再加 is-open 触发入场动画
             overlay.classList.add('is-open');
-            resetDeck();
             real.focus({ preventScroll: true });
         }
         function closeWish(){
@@ -1268,6 +1293,38 @@
             try { localStorage.setItem('stcWishUnlockedAt', String(Date.now())); } catch(e){}
             setTimeout(() => { location.href = '/home'; }, 4200);
         }
+
+        /* ---- 5. 装饰：标题逐字入场 + 动画里的闪烁白点 ---- */
+        (function splitTitle(){
+            const t = document.querySelector('.wish-title');
+            if (!t) return;
+            const text = Array.from(t.textContent.trim());
+            t.textContent = '';
+            text.forEach((c, i) => {
+                const s = document.createElement('span');
+                s.className = 'wc';
+                s.textContent = c;
+                s.style.animationDelay = (0.06 * i).toFixed(2) + 's';
+                t.appendChild(s);
+            });
+        })();
+
+        (function buildDots(){
+            const scene = anim.querySelector('.wish-scene');
+            if (!scene) return;
+            for (let i = 0; i < 48; i++) {
+                const d = document.createElement('span');
+                d.className = 'wish-dot';
+                const size = (Math.random() * 2.6 + 1.4).toFixed(1);
+                d.style.width = size + 'px';
+                d.style.height = size + 'px';
+                d.style.left = (Math.random() * 100).toFixed(2) + '%';
+                d.style.top = (Math.random() * 100).toFixed(2) + '%';
+                d.style.animationDuration = (Math.random() * 2.6 + 1.8).toFixed(2) + 's';
+                d.style.animationDelay = (Math.random() * 3).toFixed(2) + 's';
+                scene.appendChild(d);
+            }
+        })();
 
         paint('');
     })();
