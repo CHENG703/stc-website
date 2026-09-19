@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -499,13 +500,18 @@ fun FilesScreen(
                     item(key = "hdr_files") { SectionHeader("内部存储") }
                 }
 
+                if (entries.isEmpty() && loading) {
+                    item(key = "shimmer") { ShimmerList() }
+                }
+
                 if (entries.isEmpty() && !loading) {
                     item(key = "empty") { EmptyHint("此文件夹是空的，或者没有读取权限") }
                 }
 
-                items(entries, key = { it.absolutePath }) { file ->
+                itemsIndexed(entries, key = { _, f -> f.absolutePath }) { index, file ->
                     val selected = selection.contains(file.absolutePath)
                     FileRow(
+                        modifier = Modifier.enterFadeSlide(delayMs = (index % 12) * 16),
                         file = file,
                         selected = selected,
                         selectionMode = selection.isNotEmpty(),
@@ -751,6 +757,7 @@ private fun Modifier.combinedClickableCompat(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun FileRow(
+    modifier: Modifier = Modifier,
     file: File,
     selected: Boolean,
     selectionMode: Boolean,
@@ -761,6 +768,7 @@ private fun FileRow(
     onAction: (FileAction) -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
 
     // 按需求「软件内不要图标」：不再渲染图标，改用扩展名文字标签
     val typeLabel = Fmt.extLabel(file)
@@ -769,11 +777,13 @@ private fun FileRow(
         else -> "$typeLabel · ${Fmt.size(file.length())} · ${Fmt.time(file.lastModified())}"
     }
 
-    Box {
+    Box(modifier = modifier) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .pressScale(interaction)
                 .combinedClickable(
+                    interactionSource = interaction,
                     onClick = onClick,
                     // 长按：多选模式下切换勾选，平时直接弹出这一项的操作菜单
                     onLongClick = { if (selectionMode) onToggleSelect() else menu = true }

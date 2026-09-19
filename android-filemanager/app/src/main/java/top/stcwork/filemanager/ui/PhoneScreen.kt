@@ -8,6 +8,14 @@ import android.os.Environment
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -86,24 +94,38 @@ fun PhoneScreen(
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            ModeButton("发送给手机", mode == 0) { mode = 0 }
-            ModeButton("从手机接收", mode == 1) { mode = 1 }
+            ModeButton(Modifier.weight(1f), "发送给手机", mode == 0) { mode = 0 }
+            ModeButton(Modifier.weight(1f), "从手机接收", mode == 1) { mode = 1 }
         }
         HorizontalDivider()
-        Box(Modifier.weight(1f)) {
-            if (mode == 0) SendPane(snackbar, hasAccess, onRequestAccess)
+        // 发送 / 接收 之间切换：左右方向的淡入淡出
+        AnimatedContent(
+            targetState = mode,
+            transitionSpec = {
+                val dir = if (targetState > initialState) 1 else -1
+                (fadeIn(tween(160)) + slideInHorizontally(tween(200)) { it / 10 * dir }) togetherWith
+                    (fadeOut(tween(130)) + slideOutHorizontally(tween(200)) { -it / 10 * dir })
+            },
+            modifier = Modifier.weight(1f),
+            label = "phoneMode"
+        ) { m ->
+            if (m == 0) SendPane(snackbar, hasAccess, onRequestAccess)
             else ReceivePane(snackbar)
         }
     }
 }
 
 @Composable
-private fun ModeButton(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun ModeButton(
+    modifier: Modifier = Modifier,
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
     val bg = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
     val fg = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
     Box(
-        modifier = Modifier
-            .weight(1f)
+        modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(bg)
             .clickable { onClick() }
@@ -244,6 +266,14 @@ private fun SendPane(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (share.logs.isEmpty()) {
+                Text(
+                    "等待对方连接…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.breathe()
+                )
+            }
             if (share.logs.isNotEmpty()) {
                 Text("记录", style = MaterialTheme.typography.labelMedium)
                 LazyColumn(Modifier.weight(1f, fill = false)) {
@@ -278,8 +308,9 @@ private fun ReceivePane(snackbar: SnackbarHostState) {
     fun loadList() {
         scope.launch {
             val r = withContext(Dispatchers.IO) { PhoneClient.list(Prefs.phoneHost, Prefs.phoneToken) }
-            if (r.ok && r.data != null) {
-                entries = r.data!!
+            val list = r.data
+            if (r.ok && list != null) {
+                entries = list
                 selected = emptySet()
             } else {
                 toast(r.message)
@@ -305,10 +336,11 @@ private fun ReceivePane(snackbar: SnackbarHostState) {
         scope.launch {
             val r = withContext(Dispatchers.IO) { PhoneClient.pair(host, code) }
             connecting = false
-            if (r.ok && r.data != null) {
+            val newToken = r.data
+            if (r.ok && newToken != null) {
                 Prefs.phoneHost = PhoneClient.normalizeBase(host)
-                Prefs.phoneToken = r.data!!
-                token = r.data!!
+                Prefs.phoneToken = newToken
+                token = newToken
                 code = ""
                 toast(r.message)
                 loadList()

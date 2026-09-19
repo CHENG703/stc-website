@@ -8,12 +8,32 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -33,6 +53,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -242,8 +264,18 @@ fun RootScreen(openUri: Uri?) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f)) {
-            when (tab) {
+        // 切页动效：按左右方向做「淡入 + 轻微横移」
+        AnimatedContent(
+            targetState = tab,
+            transitionSpec = {
+                val dir = if (targetState > initialState) 1 else -1
+                (fadeIn(tween(180)) + slideInHorizontally(tween(220)) { it / 8 * dir }) togetherWith
+                    (fadeOut(tween(150)) + slideOutHorizontally(tween(220)) { -it / 8 * dir })
+            },
+            modifier = Modifier.weight(1f),
+            label = "tabContent"
+        ) { t ->
+            when (t) {
                 0 -> FilesScreen(
                     hasAccess = hasAccess,
                     onRequestAccess = requestAccess,
@@ -286,38 +318,66 @@ fun RootScreen(openUri: Uri?) {
 
         SnackbarHost(snackbar) { Snackbar(it) }
 
-        // 按需求「软件内不要图标」：底部导航仅保留文字
-        NavigationBar {
-            NavigationBarItem(
-                selected = tab == 0,
-                onClick = { tab = 0 },
-                icon = {},
-                label = { Text("文件") }
+        // 按需求「软件内不要图标」：底部导航仅保留文字，选中态用滑动指示条 + 文字变色
+        BottomTabs(selected = tab, onSelect = { tab = it })
+    }
+}
+
+private val TAB_LABELS = listOf("文件", "应用", "电脑", "手机", "我的")
+
+@Composable
+private fun BottomTabs(selected: Int, onSelect: (Int) -> Unit) {
+    Surface(tonalElevation = 3.dp) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+        ) {
+            val itemWidth = maxWidth / TAB_LABELS.size
+            val offset by animateDpAsState(
+                targetValue = itemWidth * selected,
+                animationSpec = tween(260, easing = FastOutSlowInEasing),
+                label = "tabIndicator"
             )
-            NavigationBarItem(
-                selected = tab == 1,
-                onClick = { tab = 1 },
-                icon = {},
-                label = { Text("应用") }
+            // 滑动指示条
+            Box(
+                Modifier
+                    .offset(x = offset)
+                    .width(itemWidth)
+                    .align(Alignment.BottomStart)
+                    .padding(horizontal = itemWidth / 5, vertical = 6.dp)
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.primary)
             )
-            NavigationBarItem(
-                selected = tab == 2,
-                onClick = { tab = 2 },
-                icon = {},
-                label = { Text("电脑") }
-            )
-            NavigationBarItem(
-                selected = tab == 3,
-                onClick = { tab = 3 },
-                icon = {},
-                label = { Text("手机") }
-            )
-            NavigationBarItem(
-                selected = tab == 4,
-                onClick = { tab = 4 },
-                icon = {},
-                label = { Text("我的") }
-            )
+            Row(Modifier.fillMaxSize()) {
+                TAB_LABELS.forEachIndexed { i, label ->
+                    val active = selected == i
+                    val scale by animateFloatAsState(
+                        targetValue = if (active) 1.06f else 1f,
+                        animationSpec = spring(stiffness = 600f),
+                        label = "tabScale"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clickable { onSelect(i) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            label,
+                            fontSize = 14.sp,
+                            modifier = Modifier.graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                            },
+                            color = if (active) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
     }
 }
