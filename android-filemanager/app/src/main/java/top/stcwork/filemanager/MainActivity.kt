@@ -1,5 +1,7 @@
 package top.stcwork.filemanager
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -8,7 +10,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -19,51 +24,80 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.stcwork.filemanager.data.Api
 import top.stcwork.filemanager.data.Prefs
 import top.stcwork.filemanager.data.Session
+import top.stcwork.filemanager.fs.OpenWith
 import top.stcwork.filemanager.ui.AppsScreen
 import top.stcwork.filemanager.ui.EditorScreen
 import top.stcwork.filemanager.ui.FilesScreen
 import top.stcwork.filemanager.ui.LoginScreen
 import top.stcwork.filemanager.ui.PcScreen
 import top.stcwork.filemanager.ui.Perm
+import top.stcwork.filemanager.ui.PhoneScreen
 import top.stcwork.filemanager.ui.ProfileScreen
 import top.stcwork.filemanager.ui.STCTheme
+import top.stcwork.filemanager.util.Hardening
 import java.io.File
 
 class MainActivity : ComponentActivity() {
     /** 前台会话轮询：管理员封禁账号后，App 最多 1 分钟内自动退出登录 */
     private var sessionPoll: Job? = null
 
+    /** 外部（QQ/微信/浏览器等）用「其它应用打开」送进来的文件 */
+    private val incomingUri = MutableStateFlow<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleIncoming(intent)
+        // 加固：改包 / 正式包被改成可调试 → 直接拦下，不进主界面
+        val integrity = Hardening.check(this)
         setContent {
             STCTheme {
+                if (integrity.blocked) {
+                    BlockedScreen(integrity.reason)
+                    return@STCTheme
+                }
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    RootScreen()
+                    val uri by incomingUri.collectAsState()
+                    RootScreen(openUri = uri)
                 }
             }
         }
+    }
+
+    /** 应用已经在后台时，用「其它应用打开」会走这里而不是 onCreate */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIncoming(intent)
+    }
+
+    private fun handleIncoming(i: Intent?) {
+        if (i?.action == Intent.ACTION_VIEW) incomingUri.value = i.data
     }
 
     /** 回到前台立刻校验一次会话（封禁即时生效） */
@@ -103,7 +137,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun RootScreen() {
+fun RootScreen(openUri: Uri?) {
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
 
@@ -115,6 +149,21 @@ fun RootScreen() {
     var editing by remember { mutableStateOf<File?>(null) }
     // 被服务端踢出时在登录页顶部显示的提示（封禁原因 / 解封时间）
     var loginNotice by remember { mutableStateOf("") }
+    // 从 QQ / 微信 等「用其它应用打开」送进来的文件：跳到它所在文件夹并选中
+    var focusFile by remember { mutableStateOf<File?>(null) }
+
+    // 外部送进来的 Uri → 真实文件 → 定位
+    LaunchedEffect(openUri) {
+        val uri = openUri ?: return@LaunchedEffect
+        val file = withContext(Dispatchers.IO) { OpenWith.resolve(context, uri) }
+        if (file != null) {
+            focusFile = file
+            tab = 0
+            snackbar.showSnackbar("已定位到「${file.name}」")
+        } else {
+            snackbar.showSnackbar("没能定位这个文件的位置")
+        }
+    }
 
     // 账号被封禁 / token 失效：服务端一判定，立刻清空本地会话并退回登录页
     LaunchedEffect(Session.kicked) {
@@ -130,7 +179,7 @@ fun RootScreen() {
 
     // 进入「我的」页时顺手校验一次，不用等下一次轮询
     LaunchedEffect(tab, loggedIn) {
-        if (tab != 3 || !loggedIn) return@LaunchedEffect
+        if (tab != 4 || !loggedIn) return@LaunchedEffect
         val token = Prefs.token
         if (token.isBlank()) return@LaunchedEffect
         runCatching { withContext(Dispatchers.IO) { Api.checkSession(Prefs.baseUrl, token) } }
@@ -199,7 +248,8 @@ fun RootScreen() {
                     hasAccess = hasAccess,
                     onRequestAccess = requestAccess,
                     snackbar = snackbar,
-                    onOpenText = { editing = it }
+                    onOpenText = { editing = it },
+                    focusFile = focusFile
                 )
                 1 -> AppsScreen(
                     snackbar = snackbar,
@@ -207,6 +257,11 @@ fun RootScreen() {
                     onRequestAccess = requestAccess
                 )
                 2 -> PcScreen(
+                    snackbar = snackbar,
+                    hasAccess = hasAccess,
+                    onRequestAccess = requestAccess
+                )
+                3 -> PhoneScreen(
                     snackbar = snackbar,
                     hasAccess = hasAccess,
                     onRequestAccess = requestAccess
@@ -255,7 +310,37 @@ fun RootScreen() {
                 selected = tab == 3,
                 onClick = { tab = 3 },
                 icon = {},
+                label = { Text("手机") }
+            )
+            NavigationBarItem(
+                selected = tab == 4,
+                onClick = { tab = 4 },
+                icon = {},
                 label = { Text("我的") }
+            )
+        }
+    }
+}
+
+/** 加固：完整性校验失败时的占位页——不给任何功能入口 */
+@Composable
+private fun BlockedScreen(reason: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("STC 文件管理器", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(18.dp))
+            Text(reason, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "请从官方渠道重新安装本应用。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
             )
         }
     }

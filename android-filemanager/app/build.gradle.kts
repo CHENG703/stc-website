@@ -19,8 +19,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // 加固：压缩 + 混淆（规则见 proguard-rules.pro）
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -39,6 +40,8 @@ android {
 
     buildFeatures {
         compose = true
+        // Hardening 用 BuildConfig.DEBUG 判断"正式包是否被人改成可调试"
+        buildConfig = true
     }
 
     packaging {

@@ -78,7 +78,8 @@ fun FilesScreen(
     hasAccess: Boolean,
     onRequestAccess: () -> Unit,
     snackbar: SnackbarHostState,
-    onOpenText: (File) -> Unit
+    onOpenText: (File) -> Unit,
+    focusFile: File? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -146,6 +147,14 @@ fun FilesScreen(
     }
 
     LaunchedEffect(currentDir, showHidden, sortMode) { refresh() }
+
+    // 从 QQ / 微信 等「用其它应用打开」进来：跳到文件所在文件夹并选中它
+    LaunchedEffect(focusFile) {
+        val f = focusFile ?: return@LaunchedEffect
+        if (!f.exists()) return@LaunchedEffect
+        currentDir = f.parentFile ?: Fs.storageRoot
+        selection = setOf(f.absolutePath)
+    }
 
     BackHandler(enabled = selection.isNotEmpty() || !isRoot) {
         if (selection.isNotEmpty()) {

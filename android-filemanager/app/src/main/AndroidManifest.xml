@@ -28,9 +28,17 @@
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- 手机互传：本机起 HTTP 服务时需要前台服务保活 + 通知；ACCESS_WIFI_STATE 用于取本机 IP -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
     <application
         android:name=".App"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
@@ -43,13 +51,31 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.STCFileManager"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- 在 QQ / 微信 / 浏览器 里点文件「用其它应用打开」时，
+                 STC 文件管理器会出现在候选列表里，并直接定位到该文件所在文件夹 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
+
+        <!-- 手机互传：发送方的前台服务 -->
+        <service
+            android:name=".transfer.ShareService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

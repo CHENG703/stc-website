@@ -1909,8 +1909,74 @@ app.use(cookieParser());
 
 // 5. 请求体大小限制（防止大请求攻击）
 // JSON body 最大 100KB，urlencoded 表单最大 100KB，文件上传走 multer 单独限制
-app.use(express.json({ limit: '100kb', strict: true }));
+app.use(express.json({
+    limit: '100kb',
+    strict: true,
+    // 保留原始报文字节：App 的请求签名是对「原始 body」算的，
+    // 用 req.body 重新 JSON.stringify 会因键序/空格差异导致验签不一致。
+    verify: (req, _res, buf) => { try { req.rawBody = buf; } catch (e) { /* 忽略 */ } }
+}));
 app.use(express.urlencoded({ extended: true, limit: '100kb', parameterLimit: 100 }));
+
+// ---------- App 请求签名校验（防篡改 / 防重放） ----------
+// 只针对声明自己是官方 App 且持有登录令牌的请求：
+//   签名 = HMAC-SHA256(签名密钥, "方法\n路径\n时间戳\n随机数\nbody 的 SHA-256")
+//   签名密钥 = HMAC-SHA256(APP_HMAC_KEY, 登录令牌)，登录时随 token 一起下发，服务端无需存库即可复算。
+// 没配 APP_HMAC_KEY、没带令牌（登录/注册/发码）、或不是 App 客户端的请求一律跳过（网页端零影响）。
+const APP_HMAC_KEY = process.env.APP_HMAC_KEY || '';
+const APP_SIGN_SKEW_MS = 5 * 60 * 1000;
+
+function deriveAppSignKey(token) {
+    if (!APP_HMAC_KEY || !token) return '';
+    return crypto.createHmac('sha256', APP_HMAC_KEY).update(String(token)).digest('base64');
+}
+
+app.use('/api/', (req, res, next) => {
+    (async () => {
+        if (!APP_HMAC_KEY) return next();
+        if (req.headers['x-client-app'] !== 'stc-filemanager') return next();
+
+        const auth = req.headers.authorization || '';
+        const token = (auth.replace(/^Bearer\s+/i, '').trim() || (req.headers['x-auth-token'] || '')).trim();
+        if (!token) return next(); // 未持令牌：登录/注册/发码不签名
+
+        const time = req.headers['x-stc-time'];
+        const nonce = req.headers['x-stc-nonce'];
+        const sign = req.headers['x-stc-sign'];
+        if (!time || !nonce || !sign) {
+            return res.status(403).json({ success: false, message: '客户端签名缺失，请更新到最新版本' });
+        }
+        const t = parseInt(time, 10);
+        if (!Number.isFinite(t) || Math.abs(Date.now() - t) > APP_SIGN_SKEW_MS) {
+            return res.status(403).json({ success: false, message: '请求时间偏差过大，请检查手机时间' });
+        }
+        // 随机数去重：同一个签名不能重放（5 分钟窗口内）
+        const nk = 'nonce:app:' + nonce;
+        if (await _kvGet(nk)) {
+            return res.status(403).json({ success: false, message: '请求重复，请重试' });
+        }
+        const bodyHash = crypto.createHash('sha256')
+            .update(req.rawBody && req.rawBody.length ? req.rawBody : Buffer.alloc(0))
+            .digest('hex');
+        // 注意：这里是 app.use('/api/') 挂载的中间件，req.path 已被裁掉 /api 前缀
+        // （变成 /login），必须用 originalUrl 才能和客户端签的 "/api/login" 对上。
+        const signedPath = String(req.originalUrl || req.path).split('?')[0];
+        const canonical = [req.method, signedPath, String(t), String(nonce), bodyHash].join('\n');
+        const expect = crypto.createHmac('sha256', Buffer.from(deriveAppSignKey(token), 'base64'))
+            .update(canonical).digest('base64');
+        const a = Buffer.from(String(sign));
+        const b = Buffer.from(expect);
+        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+            console.warn('[SIGN] 验签失败:', req.method, req.path, 'ip=' + getClientIP(req));
+            return res.status(403).json({ success: false, message: '请求签名校验失败' });
+        }
+        await _kvSet(nk, { at: Date.now() }, APP_SIGN_SKEW_MS).catch(() => {});
+        next();
+    })().catch(err => {
+        console.error('[SIGN] 校验异常:', err);
+        next();
+    });
+});
 
 // 5.1 API 响应禁止缓存 + 请求前刷新数据源
 // 1) no-store：避免浏览器 / CDN 复用旧数据（表现为"删除后刷新又出现"）
@@ -3256,6 +3322,8 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
         success: true, 
         message: '登录成功', 
         ...(exposeToken ? { token: token } : {}),
+        // App 请求签名密钥：只在配了 APP_HMAC_KEY 时下发，网页端拿不到也用不上
+        ...(APP_HMAC_KEY ? { signKey: deriveAppSignKey(token) } : {}),
         user: {
             id: user.id,
             username: user.username,
@@ -4584,7 +4652,7 @@ app.post('/api/messages', requireLogin, requireRateLimit('messages'), requireCSR
     });
 });
 
-app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), (req, res, next) => {
+app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), requireCSRF, (req, res, next) => {
     upload.single('file')(req, res, (err) => {
         if (err) {
             const msg = err.code === 'LIMIT_FILE_SIZE'
@@ -6642,7 +6710,7 @@ app.get('/api/access-logs', requireAdmin, async (req, res) => {
 //   ② 紧接着的 db.write() 又被 _canSkipKvUpload() 判定为"只改了延迟集合"而整库上传跳过；
 //   ③ 前端刷新时 GET 里的 db.readFresh() 会清掉本地脏标记、整体采用 KV 的旧数据 → 清空被覆盖。
 // 现在：写一条"清空水位线" + force 立即上传 KV；读写两侧都按水位线过滤，其它实例也回写不回来。
-app.delete('/api/access-logs', requireAdmin, async (req, res) => {
+app.delete('/api/access-logs', requireAdmin, requireCSRF, async (req, res) => {
     try {
         await db.readFresh();
         const clearedAt = Date.now();

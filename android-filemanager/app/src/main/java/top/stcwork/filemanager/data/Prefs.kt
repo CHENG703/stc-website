@@ -89,6 +89,33 @@ object Prefs {
         p().edit().remove("pc_token").apply()
     }
 
+    /**
+     * App 请求签名密钥：登录时服务端下发（HMAC(APP_HMAC_KEY, token) 的 base64），
+     * 之后每个带令牌的请求都用它对「方法/路径/时间戳/随机数/body」签名，
+     * 服务端可凭令牌复算校验 —— 防篡改、防重放。未配置时为空串（不签名）。
+     */
+    var signKey: String
+        get() = p().getString("sign_key", "") ?: ""
+        set(value) = p().edit().putString("sign_key", value).apply()
+
+    /** 手机互传：对方手机地址（形如 http://192.168.1.23:8766） */
+    var phoneHost: String
+        get() = p().getString("phone_host", "") ?: ""
+        set(value) = p().edit().putString("phone_host", value.trim().trimEnd('/')).apply()
+
+    /** 手机互传：配对成功后拿到的令牌 */
+    var phoneToken: String
+        get() = p().getString("phone_token", "") ?: ""
+        set(value) = p().edit().putString("phone_token", value).apply()
+
+    /** 「手机」页是否已连上对方 */
+    val phonePaired: Boolean
+        get() = phoneHost.isNotBlank() && phoneToken.isNotBlank()
+
+    fun clearPhonePair() {
+        p().edit().remove("phone_token").apply()
+    }
+
     fun saveSession(
         token: String,
         username: String,
@@ -116,6 +143,7 @@ object Prefs {
             .remove("is_admin")
             .remove("role")
             .remove("role_label")
+            .remove("sign_key")
             .apply()
     }
 }

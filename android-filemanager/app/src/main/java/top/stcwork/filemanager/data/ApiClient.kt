@@ -1,13 +1,17 @@
 package top.stcwork.filemanager.data
 
+import android.util.Base64
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * 与 STC 网站（server.js）通信的最小客户端。
@@ -55,6 +59,30 @@ object Api {
 
     private fun nonce(): String = UUID.randomUUID().toString().replace("-", "")
 
+    // ---------------- 请求签名（防篡改 / 防重放） ----------------
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    private fun hmacBase64(keyBase64: String, data: String): String {
+        val key = Base64.decode(keyBase64, Base64.DEFAULT)
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(key, "HmacSHA256"))
+        return Base64.encodeToString(mac.doFinal(data.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+    }
+
+    /** 局域网地址才允许明文 http（电脑/手机互传），公网地址一律要求 https */
+    fun isLanHost(host: String): Boolean {
+        if (host.equals("localhost", true) || host == "127.0.0.1") return true
+        val parts = host.split(".")
+        if (parts.size != 4) return false
+        val n = parts.map { it.toIntOrNull() ?: return false }
+        if (n[0] == 10) return true
+        if (n[0] == 192 && n[1] == 168) return true
+        if (n[0] == 172 && n[1] in 16..31) return true
+        return false
+    }
+
     private fun cookieHeader(): String? =
         if (cookies.isEmpty()) null else cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
@@ -87,6 +115,12 @@ object Api {
         timeoutRead: Int = TIMEOUT_READ
     ): Response {
         val url = URL(baseUrl.trimEnd('/') + path)
+        // 公网地址必须 https：明文 http 会被中间人偷走 token
+        if (url.protocol == "http" && !isLanHost(url.host)) {
+            return Response(0, """{"success":false,"message":"服务器地址必须使用 https（局域网 IP 除外）"}""")
+        }
+        val bodyBytes = jsonBody?.toByteArray(Charsets.UTF_8)
+
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = TIMEOUT_CONNECT
@@ -96,7 +130,22 @@ object Api {
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9")
             setRequestProperty("User-Agent", "STCFileManager/1.0 (Android)")
+            // 声明官方客户端：服务端据此（在配了 APP_HMAC_KEY 时）要求请求签名
+            setRequestProperty("X-Client-App", APP_CLIENT)
             cookieHeader()?.let { setRequestProperty("Cookie", it) }
+
+            // 已登录（有签名密钥）时对每个请求签名：方法/路径/时间戳/随机数/body 摘要
+            val key = runCatching { Prefs.signKey }.getOrDefault("")
+            if (key.isNotBlank()) {
+                runCatching {
+                    val t = System.currentTimeMillis().toString()
+                    val n = nonce()
+                    val canonical = listOf(method, path, t, n, sha256Hex(bodyBytes ?: ByteArray(0))).joinToString("\n")
+                    setRequestProperty("X-STC-Time", t)
+                    setRequestProperty("X-STC-Nonce", n)
+                    setRequestProperty("X-STC-Sign", hmacBase64(key, canonical))
+                }
+            }
             if (csrf != null) setRequestProperty("X-CSRF-Token", csrf)
             if (nonce != null) setRequestProperty("X-Request-Nonce", nonce)
             if (bearer != null && bearer.isNotBlank()) {
@@ -110,9 +159,9 @@ object Api {
         }
 
         try {
-            if (jsonBody != null) {
+            if (bodyBytes != null) {
                 val out: OutputStream = conn.outputStream
-                out.write(jsonBody.toByteArray(Charsets.UTF_8))
+                out.write(bodyBytes)
                 out.flush()
                 out.close()
             }
@@ -196,6 +245,10 @@ object Api {
         val ok = json.optBoolean("success")
         val user = json.optJSONObject("user")
         val role = user?.optString("role").orEmpty()
+        // 服务端下发的请求签名密钥（未配置 APP_HMAC_KEY 时为空，后续请求就不签名）
+        if (ok) {
+            runCatching { Prefs.signKey = json.optString("signKey").orEmpty() }
+        }
         return LoginResult(
             success = ok,
             message = json.optString("message").ifBlank { if (ok) "登录成功" else "登录失败" },

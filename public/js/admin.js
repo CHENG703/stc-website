@@ -479,7 +479,7 @@ const CMDLog = {
                 this.log('服务器状态: 运行中', 'info');
                 break;
             case 'users':
-                fetch('/api/members').then(r=>r.json()).then(u=>this.log('用户数量: '+u.length,'info')).catch(()=>this.log('获取失败','error'));
+                fetchWithAuth('/api/members').then(r=>r.json()).then(u=>this.log('用户数量: '+u.length,'info')).catch(()=>this.log('获取失败','error'));
                 break;
             case 'whoami':
                 this.log('当前用户: '+(sessionStorage.getItem('username')||'未登录'), 'info');
@@ -644,7 +644,7 @@ const CMDLog = {
                 }).catch(e=>this.log('解封失败: '+e.message,'error'));
                 break;
             case 'banlist':
-                fetch('/api/ban-ips').then(r=>r.json()).then(d=>{
+                fetchWithAuth('/api/ban-ips').then(r=>r.json()).then(d=>{
                     if(d.data && d.data.length === 0) {
                         this.log('没有封禁任何IP', 'info');
                     } else {
@@ -971,7 +971,8 @@ const CMDLog = {
                 const cuPassword = cuParts[2];
                 const cuIsAdmin = cuParts[3] === 'admin' || cuParts[3] === 'true';
                 this.log('正在创建用户: ' + cuUsername, 'warn');
-                fetch('/api/console/create_user', {
+                // 必须用 fetchWithAuth：写请求要带一次性 X-CSRF-Token + X-Request-Nonce
+                fetchWithAuth('/api/console/create_user', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
                     body: JSON.stringify({username: cuUsername, email: cuEmail, password: cuPassword, isAdmin: cuIsAdmin})
@@ -994,9 +995,9 @@ const CMDLog = {
                     return;
                 }
                 this.log('正在查找用户: ' + args, 'warn');
-                fetch('/api/members').then(r=>r.json()).then(result=>{
+                fetchWithAuth('/api/members').then(r=>r.json()).then(result=>{
                     const members = result.data || [];
-                    const target = members.find(u => u.username === args || u.id === parseInt(args));
+                    const target = members.find(u => u.username === args || String(u.id) === String(args));
                     if (!target) {
                         this.log('未找到用户: ' + args, 'error');
                         return;
@@ -1005,7 +1006,7 @@ const CMDLog = {
                         this.log('无法删除超级管理员', 'error');
                         return;
                     }
-                    fetch('/api/members/' + target.id, {method:'DELETE'}).then(r=>r.json()).then(d=>{
+                    fetchWithAuth('/api/members/' + target.id, {method:'DELETE'}).then(r=>r.json()).then(d=>{
                         if(d.success) {
                             this.log('用户已删除: ' + target.username, 'info');
                             loadMembers();
@@ -1021,9 +1022,9 @@ const CMDLog = {
                     return;
                 }
                 this.log('正在封禁用户: ' + args, 'warn');
-                fetch('/api/members').then(r=>r.json()).then(result=>{
+                fetchWithAuth('/api/members').then(r=>r.json()).then(result=>{
                     const members = result.data || [];
-                    const target = members.find(u => u.username === args || u.id === parseInt(args));
+                    const target = members.find(u => u.username === args || String(u.id) === String(args));
                     if (!target) {
                         this.log('未找到用户: ' + args, 'error');
                         return;
@@ -1052,9 +1053,9 @@ const CMDLog = {
                     return;
                 }
                 this.log('正在解封用户: ' + args, 'warn');
-                fetch('/api/members').then(r=>r.json()).then(result=>{
+                fetchWithAuth('/api/members').then(r=>r.json()).then(result=>{
                     const members = result.data || [];
-                    const target = members.find(u => u.username === args || u.id === parseInt(args));
+                    const target = members.find(u => u.username === args || String(u.id) === String(args));
                     if (!target) {
                         this.log('未找到用户: ' + args, 'error');
                         return;
@@ -1078,9 +1079,9 @@ const CMDLog = {
                     return;
                 }
                 this.log('正在设为管理员: ' + args, 'warn');
-                fetch('/api/members').then(r=>r.json()).then(result=>{
+                fetchWithAuth('/api/members').then(r=>r.json()).then(result=>{
                     const members = result.data || [];
-                    const target = members.find(u => u.username === args || u.id === parseInt(args));
+                    const target = members.find(u => u.username === args || String(u.id) === String(args));
                     if (!target) {
                         this.log('未找到用户: ' + args, 'error');
                         return;
@@ -1104,9 +1105,9 @@ const CMDLog = {
                     return;
                 }
                 this.log('正在取消管理员: ' + args, 'warn');
-                fetch('/api/members').then(r=>r.json()).then(result=>{
+                fetchWithAuth('/api/members').then(r=>r.json()).then(result=>{
                     const members = result.data || [];
-                    const target = members.find(u => u.username === args || u.id === parseInt(args));
+                    const target = members.find(u => u.username === args || String(u.id) === String(args));
                     if (!target) {
                         this.log('未找到用户: ' + args, 'error');
                         return;
@@ -1133,9 +1134,9 @@ const CMDLog = {
                     this.log('用法: userinfo <用户名或ID>', 'error');
                     return;
                 }
-                fetch('/api/members').then(r=>r.json()).then(result=>{
+                fetchWithAuth('/api/members').then(r=>r.json()).then(result=>{
                     const members = result.data || [];
-                    const target = members.find(u => u.username === args || u.id === parseInt(args));
+                    const target = members.find(u => u.username === args || String(u.id) === String(args));
                     if (!target) {
                         this.log('未找到用户: ' + args, 'error');
                         return;
