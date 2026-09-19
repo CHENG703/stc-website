@@ -4652,7 +4652,9 @@ app.post('/api/messages', requireLogin, requireRateLimit('messages'), requireCSR
     });
 });
 
-app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), requireCSRF, (req, res, next) => {
+// 注意：requireCSRF 只挂一次，且必须在 multer 之后 ——
+// CSRF token 与 nonce 都是一次性的，挂两次会被前一个消费掉，第二个必定 403「已被重放」。
+app.post('/api/tasks', requireLogin, requireRateLimit('tasks'), (req, res, next) => {
     upload.single('file')(req, res, (err) => {
         if (err) {
             const msg = err.code === 'LIMIT_FILE_SIZE'
