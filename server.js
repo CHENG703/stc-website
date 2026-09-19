@@ -2831,7 +2831,8 @@ const requireSuperAdmin = async (req, res, next) => {
 };
 
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'intro.html'));
+    // 进入网站 = 介绍页（关于我们）；解锁后由页面脚本 24h 内自动跳 /home
+    res.sendFile(path.join(__dirname, 'public', 'about.html'));
 });
 
 app.get('/home', (req, res) => {
