@@ -3068,16 +3068,21 @@ app.get('/api/auth-test', async (req, res) => {
 
 app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) => {
     const { username, password, code, loginType } = req.body;
+
+    // loginType 归一：只有 'code' 是验证码登录，其余（缺失/拼写错误/其他值）一律按密码登录。
+    // 历史漏洞：不带 loginType 的请求会让下方 `if (loginType === 'password')` 不成立，
+    // 密码校验被整体跳过——知道用户名 + 任意字符串即可登录任意账号。
+    const effectiveLoginType = loginType === 'code' ? 'code' : 'password';
     
-    if (!username && loginType !== 'code') {
+    if (!username && effectiveLoginType !== 'code') {
         return res.status(400).json({ success: false, message: '请填写用户名' });
     }
     
-    if (loginType === 'password' && !password) {
+    if (effectiveLoginType === 'password' && !password) {
         return res.status(400).json({ success: false, message: '请填写密码' });
     }
     
-    if (loginType === 'code' && !code) {
+    if (effectiveLoginType === 'code' && !code) {
         return res.status(400).json({ success: false, message: '请填写验证码' });
     }
     
@@ -3090,7 +3095,7 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
 
     // 验证码登录不需要用户名
     let user;
-    if (loginType === 'code') {
+    if (effectiveLoginType === 'code') {
         // 从验证码记录中获取邮箱对应的用户
         const emailCode = db.data.verification_codes.find(c => c.code === code);
         if (emailCode) {
@@ -3110,7 +3115,7 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
     }
     
     // Vercel 回退机制：如果用户不存在且是密码登录，检查环境变量中的管理员凭据
-    if (!user && loginType === 'password' && process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD) {
+    if (!user && effectiveLoginType === 'password' && process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD) {
         const adminUsername = process.env.ADMIN_USERNAME;
         const adminPassword = process.env.ADMIN_PASSWORD;
         
@@ -3187,7 +3192,7 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
         user.locked_until = 0;
     }
     
-    if (loginType === 'password') {
+    if (effectiveLoginType === 'password') {
         if (!bcrypt.compareSync(password, user.password)) {
             // 密码错误：累加计数
             user.login_attempts = (user.login_attempts || 0) + 1;
@@ -3212,7 +3217,7 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
         await db.write();
     }
     // 验证码登录在前面已验证通过，也清除锁定计数
-    if (loginType === 'code') {
+    if (effectiveLoginType === 'code') {
         user.login_attempts = 0;
         user.locked_until = 0;
         await db.write();
