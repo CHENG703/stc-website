@@ -4069,52 +4069,135 @@ app.get('/api/user', async (req, res) => {
     });
 });
 
-// 修改密码
+// 修改密码：两种方式二选一 —— 旧密码（传统）或邮箱验证码（忘记旧密码时用）。
+// 网站默认验证码登录，很多账号从未用过密码登录（甚至没有密码），必须留一条不依赖旧密码的通道。
 app.put('/api/user/password', requireLogin, requireRateLimit('password'), requireCSRF, async (req, res) => {
     try {
-        const { oldPassword, newPassword } = req.body;
+        const { oldPassword, newPassword, verify_code } = req.body;
 
-        if (!oldPassword || !newPassword) {
-            return res.status(400).json({ error: '请填写旧密码和新密码' });
+        if (!newPassword) {
+            return res.status(400).json({ error: '请填写新密码' });
         }
 
         if (!validatePassword(newPassword)) {
             return res.status(400).json({ error: '新密码长度至少6位' });
         }
 
-        // 先尝试从数据库找用户
-        let user = db.data.users.find(u => u.id === req.currentUser.id);
-        // 如果用户不在数据库里（Vercel 环境 token 构建的虚拟用户），先注册到数据库
+        // requireLogin 已保证 currentUser 来自数据库（找不到会直接 403），不会再有"虚拟用户"
+        const user = db.data.users.find(u => u.id === req.currentUser.id);
         if (!user) {
-            user = {
-                id: req.currentUser.id,
-                username: req.currentUser.username,
-                email: req.currentUser.email || '',
-                password: '',
-                is_admin: !!req.currentUser.is_admin,
-                is_super_admin: !!req.currentUser.is_super_admin,
-                status: 'active',
-                created_at: new Date().toISOString()
-            };
-            db.data.users.push(user);
-            console.log(`[USER-PWD] 用户 ${user.username} 不在数据库，自动补录`);
+            return res.status(404).json({ error: '用户不存在' });
         }
 
-        if (!bcrypt.compareSync(oldPassword, user.password)) {
-            return res.status(400).json({ error: '旧密码不正确' });
+        // 邮箱验证码通道：只认发给「当前登录用户自己邮箱」的码
+        let verifiedByCode = false;
+        if (!oldPassword && verify_code) {
+            if (!user.email) {
+                return res.status(400).json({ error: '账号未绑定邮箱，无法使用验证码修改密码' });
+            }
+            const code = String(verify_code).trim().toUpperCase();
+            const rec = (db.data.verification_codes || []).find(c => c.email === user.email && c.code === code);
+            if (!rec || Date.now() > rec.expires) {
+                return res.status(400).json({ error: '验证码错误或已过期' });
+            }
+            verifiedByCode = true;
         }
 
-        if (oldPassword === newPassword) {
+        if (!verifiedByCode) {
+            if (!oldPassword) {
+                return res.status(400).json({ error: '请填写旧密码，或改用邮箱验证码修改' });
+            }
+            if (!user.password || !bcrypt.compareSync(oldPassword, user.password)) {
+                return res.status(400).json({ error: '旧密码不正确' });
+            }
+        }
+
+        if (oldPassword && oldPassword === newPassword) {
             return res.status(400).json({ error: '新密码不能与旧密码相同' });
+        }
+
+        // 验证码用掉即焚，防止重放
+        if (verifiedByCode) {
+            const usedCode = String(verify_code).trim().toUpperCase();
+            db.data.verification_codes = (db.data.verification_codes || [])
+                .filter(c => !(c.email === user.email && c.code === usedCode));
         }
 
         user.password = bcrypt.hashSync(newPassword, 10);
         await db.write();
 
+        console.log(`[USER-PWD] 用户 ${user.username} 通过${verifiedByCode ? '邮箱验证码' : '旧密码'}修改了密码`);
         res.json({ success: true, message: '密码修改成功，请重新登录' });
     } catch (err) {
         console.error('修改密码失败:', err);
         res.status(500).json({ error: '服务器错误' });
+    }
+});
+
+// 已登录用户给自己的邮箱发「改密验证码」：
+// 登录态本身已证明账号所有权，不需要再过图形验证；限流沿用 verifyCode（1 分钟 3 次）。
+app.post('/api/user/send-code', requireLogin, requireRateLimit('verifyCode'), requireCSRF, async (req, res) => {
+    try {
+        const user = req.currentUser;
+        if (!user.email || !validateEmail(user.email)) {
+            return res.status(400).json({ success: false, message: '当前账号未绑定有效邮箱' });
+        }
+
+        if (!Array.isArray(db.data.verification_codes)) db.data.verification_codes = [];
+
+        const existing = db.data.verification_codes.find(c => c.email === user.email);
+        if (existing && Date.now() - existing.created_at < 60000) {
+            return res.status(400).json({ success: false, message: '请等待60秒后再发送' });
+        }
+
+        const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+        if (existing) {
+            existing.code = code;
+            existing.created_at = Date.now();
+            existing.expires = Date.now() + 300000;
+        } else {
+            db.data.verification_codes.push({
+                email: user.email,
+                code: code,
+                type: 'password',
+                created_at: Date.now(),
+                expires: Date.now() + 300000
+            });
+        }
+        await db.write();
+
+        const transporter = getEmailTransporter();
+        if (!transporter) {
+            console.error('[USER-CODE FAIL] 邮件服务未配置');
+            return res.status(500).json({ success: false, message: '邮件服务未配置，请联系管理员' });
+        }
+        await transporter.sendMail({
+            from: mailFromHeader(),
+            to: user.email,
+            subject: '【STC】修改密码验证码',
+            text: `您正在修改STC任务网站的密码，验证码是：${code}，有效期5分钟，请勿泄露给他人。`,
+            html: `
+                <div style="font-family: 'Microsoft YaHei', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #0ea5e9, #38bdf8); padding: 30px; border-radius: 16px 16px 0 0;">
+                        <h1 style="color: white; margin: 0; font-size: 24px; text-align: center;">STC 修改密码验证码</h1>
+                    </div>
+                    <div style="background: #f0f9ff; padding: 30px; border-radius: 0 0 16px 16px; border: 1px solid #bae6fd;">
+                        <p style="color: #475569; font-size: 16px; margin: 0 0 20px;">您好！</p>
+                        <p style="color: #475569; font-size: 16px; margin: 0 0 20px;">您正在修改STC任务网站的密码，验证码是：</p>
+                        <div style="background: white; padding: 20px; border-radius: 12px; text-align: center; margin: 20px 0; border: 2px dashed #0ea5e9;">
+                            <span style="font-size: 32px; font-weight: bold; color: #0284c7; letter-spacing: 8px;">${code}</span>
+                        </div>
+                        <p style="color: #64748b; font-size: 14px; margin: 20px 0 0;">验证码有效期为5分钟，请勿泄露给他人。若非本人操作，请立即检查账号安全。</p>
+                    </div>
+                    <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 20px 0 0;">© 2025 STC任务网站</p>
+                </div>
+            `
+        });
+        console.log(`[USER-CODE OK] email=${user.email} 改密验证码已发送`);
+        res.json({ success: true, message: '验证码已发送' });
+    } catch (error) {
+        console.error(`[USER-CODE FAIL] ${error.message}`);
+        res.status(500).json({ success: false, message: '邮件发送失败，请稍后重试' });
     }
 });
 
@@ -5293,6 +5376,15 @@ app.get('/api/join/reject/:token', async (req, res) => {
     `);
 });
 
+// 按 URL 参数查找用户：历史数据里 id 既有数字（注册用 Date.now()）也有字符串
+// （ensureAdminUser 用 crypto.randomUUID()）。不能用 parseInt 匹配 ——
+// parseInt("550e8400-…") = 550，UUID 用户的后台操作（重置密码/封禁/删除…）会一律 404。
+function findUserByRouteId(rawId) {
+    const key = String(rawId == null ? '' : rawId).trim();
+    if (!key) return null;
+    return db.data.users.find(u => String(u.id) === key) || null;
+}
+
 function canModifyUser(currentUser, targetUser, action) {
     if (targetUser.username === 'REDACTED_USER') {
         return { allowed: false, reason: '不能操作超级管理员' };
@@ -5375,7 +5467,7 @@ app.get('/api/members', requireAdmin, async (req, res) => {
 app.put('/api/members/:id/reset-password', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     try {
         const currentUser = req.currentUser;
-        const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+        const user = findUserByRouteId(req.params.id);
 
         if (!user) {
             return res.status(404).json({ success: false, message: '用户不存在' });
@@ -5403,7 +5495,7 @@ app.put('/api/members/:id/reset-password', requireAdmin, requireRateLimit('admin
 
 app.post('/api/members/:id/ban', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
-    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    const user = findUserByRouteId(req.params.id);
     
     if (!user) {
         return res.status(404).json({ success: false, message: '用户不存在' });
@@ -5439,7 +5531,7 @@ app.post('/api/members/:id/ban', requireAdmin, requireRateLimit('admin'), requir
 
 app.post('/api/members/:id/unban', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
-    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    const user = findUserByRouteId(req.params.id);
     
     if (!user) {
         return res.status(404).json({ success: false, message: '用户不存在' });
@@ -5464,7 +5556,7 @@ app.post('/api/members/:id/unban', requireAdmin, requireRateLimit('admin'), requ
 // 设置用户角色：'guest'（访客）/ 'member'（成员）
 app.post('/api/members/:id/role', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
-    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    const user = findUserByRouteId(req.params.id);
 
     if (!user) {
         return res.status(404).json({ success: false, message: '用户不存在' });
@@ -5487,7 +5579,7 @@ app.post('/api/members/:id/role', requireAdmin, requireRateLimit('admin'), requi
 
 app.post('/api/members/:id/set_admin', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
-    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    const user = findUserByRouteId(req.params.id);
     
     if (!user) {
         return res.status(404).json({ success: false, message: '用户不存在' });
@@ -5506,7 +5598,7 @@ app.post('/api/members/:id/set_admin', requireAdmin, requireRateLimit('admin'), 
 
 app.post('/api/members/:id/unset_admin', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
-    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    const user = findUserByRouteId(req.params.id);
     
     if (!user) {
         return res.status(404).json({ success: false, message: '用户不存在' });
@@ -5525,7 +5617,7 @@ app.post('/api/members/:id/unset_admin', requireAdmin, requireRateLimit('admin')
 
 app.delete('/api/members/:id', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     const currentUser = req.currentUser;
-    const user = db.data.users.find(u => u.id === parseInt(req.params.id));
+    const user = findUserByRouteId(req.params.id);
     
     if (!user) {
         return res.status(404).json({ success: false, message: '用户不存在' });
@@ -5536,7 +5628,7 @@ app.delete('/api/members/:id', requireAdmin, requireRateLimit('admin'), requireC
         return res.status(403).json({ success: false, message: result.reason });
     }
     
-    db.data.users = db.data.users.filter(u => u.id !== parseInt(req.params.id));
+    db.data.users = db.data.users.filter(u => u !== user);
     await db.write();
     
     res.json({ success: true, message: '用户已删除' });

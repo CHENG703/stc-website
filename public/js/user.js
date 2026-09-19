@@ -155,16 +155,73 @@ async function loadUserInfo() {
     }
 }
 
-// 修改密码
+// 修改密码 —— 支持两种方式：旧密码 / 邮箱验证码（忘记旧密码时）
+let pwdCodeMode = false;
+
+function togglePwdCodeMode(useCode) {
+    pwdCodeMode = !!useCode;
+    document.getElementById('old-password-group').style.display = pwdCodeMode ? 'none' : '';
+    document.getElementById('pwd-code-group').style.display = pwdCodeMode ? '' : 'none';
+    document.getElementById('pwd-use-code-link').style.display = pwdCodeMode ? 'none' : '';
+    document.getElementById('pwd-use-old-link').style.display = pwdCodeMode ? '' : 'none';
+}
+
+// 给当前账号绑定的邮箱发送改密验证码（60 秒倒计时防连点）
+async function sendPwdCode() {
+    const btn = document.getElementById('pwd-code-btn');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+        const response = await fetchWithAuth('/api/user/send-code', { method: 'POST' });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && data.success) {
+            showMessage('验证码已发送，请查收邮箱');
+            let left = 60;
+            btn.textContent = `${left}s 后重发`;
+            const timer = setInterval(() => {
+                left--;
+                if (left <= 0) {
+                    clearInterval(timer);
+                    btn.disabled = false;
+                    btn.textContent = '获取验证码';
+                } else {
+                    btn.textContent = `${left}s 后重发`;
+                }
+            }, 1000);
+        } else {
+            showMessage(data.message || data.error || '验证码发送失败', 'error');
+            btn.disabled = false;
+            btn.textContent = '获取验证码';
+        }
+    } catch (error) {
+        if (error.message !== 'AccessDenied') {
+            showMessage('验证码发送失败，请重试', 'error');
+        }
+        btn.disabled = false;
+        btn.textContent = '获取验证码';
+    }
+}
+
 async function handleChangePassword(event) {
     event.preventDefault();
 
     const oldPassword = document.getElementById('old-password').value;
+    const verifyCode = (document.getElementById('pwd-verify-code').value || '').trim();
     const newPassword = document.getElementById('new-password').value;
     const confirmNewPassword = document.getElementById('confirm-new-password').value;
 
-    if (!oldPassword || !newPassword || !confirmNewPassword) {
-        showMessage('请填写所有字段', 'warning');
+    if (!newPassword || !confirmNewPassword) {
+        showMessage('请填写新密码', 'warning');
+        return;
+    }
+
+    if (pwdCodeMode && !verifyCode) {
+        showMessage('请填写邮箱验证码', 'warning');
+        return;
+    }
+
+    if (!pwdCodeMode && !oldPassword) {
+        showMessage('请填写旧密码', 'warning');
         return;
     }
 
@@ -178,7 +235,7 @@ async function handleChangePassword(event) {
         return;
     }
 
-    if (oldPassword === newPassword) {
+    if (!pwdCodeMode && oldPassword === newPassword) {
         showMessage('新密码不能与旧密码相同', 'warning');
         return;
     }
@@ -189,7 +246,10 @@ async function handleChangePassword(event) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
+            body: JSON.stringify(pwdCodeMode ? {
+                verify_code: verifyCode,
+                newPassword
+            } : {
                 oldPassword,
                 newPassword
             })

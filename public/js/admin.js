@@ -1162,7 +1162,7 @@ const CMDLog = {
                 this.log('正在重置密码: ' + rpUsername, 'warn');
                 fetchWithAuth('/api/members').then(r=>r.json()).then(result=>{
                     const members = result.data || [];
-                    const target = members.find(u => u.username === rpUsername || u.id === parseInt(rpUsername));
+                    const target = members.find(u => u.username === rpUsername || String(u.id) === String(rpUsername).trim());
                     if (!target) {
                         this.log('未找到用户: ' + rpUsername, 'error');
                         return;
