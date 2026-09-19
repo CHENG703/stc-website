@@ -2489,7 +2489,7 @@ app.use(async (req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
     extensions: ['html', 'htm'],
-    // 不设置 index：/ 由上方显式路由处理，否则 express-static 会抢先把 / 映射为 index.html
+    index: false, // 显式禁用默认 index.html，/ 由显式路由处理
     // 防止浏览器/CDN 缓存旧版页面与脚本（如功能更新后仍加载旧资源）
     setHeaders: (res, filePath) => {
         if (filePath.endsWith('.html') || filePath.endsWith('.js') || filePath.endsWith('.css')) {
