@@ -41,7 +41,12 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -79,6 +84,7 @@ import top.stcwork.filemanager.ui.PcScreen
 import top.stcwork.filemanager.ui.Perm
 import top.stcwork.filemanager.ui.PhoneScreen
 import top.stcwork.filemanager.ui.ProfileScreen
+import top.stcwork.filemanager.ui.DisclaimerScreen
 import top.stcwork.filemanager.ui.STCTheme
 import top.stcwork.filemanager.util.Hardening
 import java.io.File
@@ -174,6 +180,10 @@ fun RootScreen(openUri: Uri?) {
     // 从 QQ / 微信 等「用其它应用打开」送进来的文件：跳到它所在文件夹并选中
     var focusFile by remember { mutableStateOf<File?>(null) }
 
+    // 免责声明页 / 首屏同意状态
+    var showDisclaimer by remember { mutableStateOf(false) }
+    var agreed by remember { mutableStateOf(Prefs.agreedTerms) }
+
     // 外部送进来的 Uri → 真实文件 → 定位
     LaunchedEffect(openUri) {
         val uri = openUri ?: return@LaunchedEffect
@@ -263,6 +273,33 @@ fun RootScreen(openUri: Uri?) {
         return
     }
 
+    // 免责声明与用户协议：未同意前以弹窗形式展示，必须「同意」才能继续使用
+    if (!agreed) {
+        AlertDialog(
+            onDismissRequest = { /* 必须明确选择，不允许点外部关闭 */ },
+            title = { Text("免责声明与用户协议") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(stringResource(R.string.disclaimer_text), style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    Prefs.agreedTerms = true
+                    agreed = true
+                }) { Text("同意并继续") }
+            },
+            dismissButton = {
+                TextButton(onClick = { (context as ComponentActivity).finish() }) { Text("不同意") }
+            }
+        )
+    }
+
+    if (showDisclaimer) {
+        DisclaimerScreen(onBack = { showDisclaimer = false })
+        return
+    }
+
     Column(Modifier.fillMaxSize()) {
         // 切页动效：按左右方向做「淡入 + 轻微横移」
         AnimatedContent(
@@ -311,7 +348,8 @@ fun RootScreen(openUri: Uri?) {
                         skipped = false
                     },
                     onRequestAccess = requestAccess,
-                    hasAccess = hasAccess
+                    hasAccess = hasAccess,
+                    onOpenDisclaimer = { showDisclaimer = true }
                 )
             }
         }

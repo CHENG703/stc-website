@@ -1355,11 +1355,14 @@ function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin, ro
             '</div>';
 
         var actionsContainer = modal.querySelector('#modal-actions');
+        // 用户 id 可能是数字（注册）也可能是 UUID 字符串（内置管理员）。
+        // 必须当字符串拼进 onclick，否则 UUID 会被当成 JS 表达式 → 语法错误 → 按钮点了没反应。
+        var uid = jsStrForAttr(userId);
         var btnStyle = 'padding:10px 15px;border:none;border-radius:5px;cursor:pointer;color:white;background:#667eea;';
         
         if (!isSuperAdmin) {
             if (isBanned) {
-                actionsContainer.innerHTML += '<button style="' + btnStyle + 'background:#10b981;" onclick="toggleBan(' + userId + ', false)">解除封禁</button>';
+                actionsContainer.innerHTML += '<button style="' + btnStyle + 'background:#10b981;" onclick="toggleBan(\'' + uid + '\', false)">解除封禁</button>';
             } else {
                 // 封禁时长：填 0 或不填 = 永久封禁，填天数 = 限时封禁（到期自动解封）
                 actionsContainer.innerHTML +=
@@ -1367,26 +1370,26 @@ function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin, ro
                     '<div style="font-size:12px;color:#666;">封禁时长（天，0 或留空 = 永久）</div>' +
                     '<input id="ban-days" type="number" min="0" step="1" value="7" style="padding:8px;border:1px solid #ccc;border-radius:4px;">' +
                     '<input id="ban-reason" type="text" placeholder="封禁原因（可选）" maxlength="200" style="padding:8px;border:1px solid #ccc;border-radius:4px;">' +
-                    '<button style="' + btnStyle + '" onclick="toggleBan(' + userId + ', true)">封禁</button>' +
+                    '<button style="' + btnStyle + '" onclick="toggleBan(\'' + uid + '\', true)">封禁</button>' +
                     '</div>';
             }
 
             if (!isAdmin) {
                 // 访客 / 成员 身份切换（仅对普通用户可见）
                 var isGuest = (role === 'guest');
-                actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="setMemberRole(' + userId + ', \'' + (isGuest ? 'member' : 'guest') + '\')">' +
+                actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="setMemberRole(\'' + uid + '\', \'' + (isGuest ? 'member' : 'guest') + '\')">' +
                     (isGuest ? '设为成员（工会）' : '设为访客') + '</button>';
             }
 
             if (isAdmin) {
-                actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="toggleAdmin(' + userId + ', false)">取消管理员</button>';
+                actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="toggleAdmin(\'' + uid + '\', false)">取消管理员</button>';
             } else {
-                actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="toggleAdmin(' + userId + ', true)">设为管理员</button>';
+                actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="toggleAdmin(\'' + uid + '\', true)">设为管理员</button>';
             }
 
-            actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="resetPassword(' + userId + ')">重置密码</button>';
+            actionsContainer.innerHTML += '<button style="' + btnStyle + '" onclick="resetPassword(\'' + uid + '\')">重置密码</button>';
 
-            actionsContainer.innerHTML += '<button style="' + btnStyle + 'background:#dc3545;" onclick="deleteMember(' + userId + ', \'' + jsStrForAttr(username) + '\')">删除成员</button>';
+            actionsContainer.innerHTML += '<button style="' + btnStyle + 'background:#dc3545;" onclick="deleteMember(\'' + uid + '\', \'' + jsStrForAttr(username) + '\')">删除成员</button>';
         } else {
             actionsContainer.innerHTML += '<p style="color:#666;margin:0;">您无法对该管理员执行操作</p>';
         }
@@ -1641,7 +1644,7 @@ async function loadMembers() {
                     status = '<span style="color:#10b981;">正常</span>';
                 }
                 var escName = escapeHtml(m.username);
-                var actionBtn = '<button class="btn btn-sm" onclick="showMemberActions(' + m.id + ', \'' + jsStrForAttr(m.username) + '\', ' + !!m.is_banned + ', ' + !!m.is_admin + ', ' + !!(m.is_super_admin || false) + ', \'' + jsStrForAttr(m.role || 'member') + '\')">操作</button>';
+                var actionBtn = '<button class="btn btn-sm" onclick="showMemberActions(\'' + jsStrForAttr(m.id) + '\', \'' + jsStrForAttr(m.username) + '\', ' + !!m.is_banned + ', ' + !!m.is_admin + ', ' + !!(m.is_super_admin || false) + ', \'' + jsStrForAttr(m.role || 'member') + '\')">操作</button>';
                 return '<tr>' +
                     '<td>' + escName + '</td>' +
                     '<td>' + escapeHtml(m.email) + '</td>' +

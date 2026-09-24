@@ -116,6 +116,11 @@ object Prefs {
         p().edit().remove("phone_token").apply()
     }
 
+    /** 是否已同意「免责声明与用户协议」（首次启动弹窗，同意后不再弹出） */
+    var agreedTerms: Boolean
+        get() = p().getBoolean("agreed_terms", false)
+        set(value) = p().edit().putBoolean("agreed_terms", value).apply()
+
     fun saveSession(
         token: String,
         username: String,

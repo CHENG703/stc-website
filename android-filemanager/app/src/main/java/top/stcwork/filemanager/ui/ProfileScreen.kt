@@ -1,6 +1,7 @@
 package top.stcwork.filemanager.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,7 +37,8 @@ fun ProfileScreen(
     onLogout: () -> Unit,
     onLogin: () -> Unit,
     onRequestAccess: () -> Unit,
-    hasAccess: Boolean
+    hasAccess: Boolean,
+    onOpenDisclaimer: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val version = remember {
@@ -161,6 +163,18 @@ fun ProfileScreen(
                     onClick = onLogout,
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("退出登录") }
+            }
+
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("法律与条款", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "免责声明与用户协议",
+                        Modifier.clickable { onOpenDisclaimer() },
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
         }
     }

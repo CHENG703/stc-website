@@ -302,6 +302,31 @@ app.use((req, res, next) => {
     return res.status(403).json({ success: false, message: '请求来源不被信任，已拒绝' });
 });
 
+// ---------- 官方客户端版本闸门（2.1.0 起：低于最低版本的客户端一律拒绝服务）----------
+// 手机端「STC 文件管理」/ 「STC 电脑端」每次请求都带 X-App-Version。
+// 低于 APP_MIN_VERSION 的请求直接 426，客户端收到后强制跳升级。
+// 不带该头的请求（网页浏览器、第三方脚本）不受影响 —— 网页端版本由服务端自己控制。
+// 必须挂在所有 /api 路由之前，否则后面的路由会先匹配掉。
+// 常量 APP_MIN_VERSION / APP_LATEST_VERSION / compareVersion 定义在文件后段
+// （同一模块内，请求到达时早已初始化）。
+app.use('/api/', (req, res, next) => {
+    const v = req.headers['x-app-version'];
+    if (typeof v === 'string' && v.trim() && v !== 'unknown') {
+        if (compareVersion(v, APP_MIN_VERSION) < 0) {
+            res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+            return res.status(426).json({
+                success: false,
+                code: 'UPDATE_REQUIRED',
+                message: `当前版本过低（${v}），请升级到 ${APP_LATEST_VERSION} 后再使用`,
+                latest: APP_LATEST_VERSION,
+                min: APP_MIN_VERSION,
+                url: appVersionInfo(req.headers['x-app-platform'] === 'pc' ? 'pc' : 'filemanager').url
+            });
+        }
+    }
+    next();
+});
+
 const runtimeDir = IS_VERCEL ? '/tmp/stc-runtime' : (isZeabur ? '/data/stc-runtime' : __dirname);
 if ((IS_VERCEL || isZeabur) && !fs.existsSync(runtimeDir)) {
     try { fs.mkdirSync(runtimeDir, { recursive: true }); } catch (e) {}
@@ -2185,13 +2210,16 @@ CookieStore._currentContext = null;
 // 若已不再使用跨域镜像，可设环境变量 SESSION_COOKIE_SAMESITE=lax 进一步收紧。
 const SESSION_COOKIE_SAMESITE = process.env.SESSION_COOKIE_SAMESITE ||
     ((IS_VERCEL || isProduction) ? 'none' : 'lax');
+// 登录有效期：30 天（网页 session cookie、httpOnly token cookie、App token 三处统一）。
+// 之前是 24 小时 —— 手机端「文件管理」第二天就被踢下线，故延长。
+const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const sessionConfig = {
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
         secure: IS_VERCEL || isProduction,
-        maxAge: 24 * 60 * 60 * 1000,
+        maxAge: TOKEN_TTL_MS,
         httpOnly: true,
         sameSite: SESSION_COOKIE_SAMESITE,
         path: '/'
@@ -2205,7 +2233,7 @@ const sessionConfig = {
 // 兼容：跨域调用方（GitHub Pages 镜像、脚本客户端）仍可从响应体拿 token —— 仅当请求来源不是本站时才返回，
 //      避免本站 XSS 通过伪造登录响应体拿到 token。
 const AUTH_COOKIE_NAME = 'stc_auth_token';
-const AUTH_COOKIE_MAX_AGE = 24 * 60 * 60 * 1000; // 与 token 内 ts 的 24h 有效期一致
+const AUTH_COOKIE_MAX_AGE = TOKEN_TTL_MS;
 // 跨域镜像需要 none（第三方 cookie 政策可能拦截，属浏览器限制，服务端无解）；不用镜像可设 AUTH_COOKIE_SAMESITE=lax
 const AUTH_COOKIE_SAMESITE = process.env.AUTH_COOKIE_SAMESITE || SESSION_COOKIE_SAMESITE;
 
@@ -2412,7 +2440,8 @@ app.use((req, res, next) => {
             if (sig !== expectedSig) {
                 throw new Error('invalid signature');
             }
-            if (Date.now() - payload.ts >= 24 * 60 * 60 * 1000) {
+            // 登录有效期（与 AUTH_COOKIE_MAX_AGE 一致）：30 天
+            if (Date.now() - payload.ts >= TOKEN_TTL_MS) {
                 throw new Error('expired');
             }
             authUser = {
@@ -5602,6 +5631,67 @@ app.get('/api/join/reject/:token', async (req, res) => {
     `);
 });
 
+// ============================================================================
+// 客户端版本自检 / 强制升级（2.1.0 起）
+// ----------------------------------------------------------------------------
+// 手机端「STC 文件管理」与「STC 电脑端」启动时调用 /api/app/version 自检：
+//   · latest      —— 最新版本号，客户端据此提示"有新版本"
+//   · min         —— 最低可用版本，低于它的客户端一律拒绝服务（强制升级）
+// 客户端每次请求带上 X-App-Version，服务端中间件对低于 min 的请求回 426。
+// 版本号可用环境变量覆盖（改版本号不必改代码）：APP_LATEST_VERSION / APP_MIN_VERSION
+// ============================================================================
+
+const APP_LATEST_VERSION = process.env.APP_LATEST_VERSION || '2.1.0';
+const APP_MIN_VERSION = process.env.APP_MIN_VERSION || '2.1.0';
+
+const APP_UPDATE_NOTES = '2.1.0：新增自动检测更新与强制升级；登录有效期延长至 30 天；'
+    + '修复大文件传输卡住；手机端支持后台传输。';
+
+function appVersionInfo(app) {
+    const isPc = app === 'pc';
+    return {
+        app: isPc ? 'pc' : 'filemanager',
+        latest: APP_LATEST_VERSION,
+        min: APP_MIN_VERSION,
+        // 低于 min 的客户端必须升级后才能继续使用
+        force: true,
+        url: isPc
+            ? `/downloads/STC-PC-Client-${APP_LATEST_VERSION}.zip`
+            : `/downloads/STCFileManager-${APP_LATEST_VERSION}.apk`,
+        notes: APP_UPDATE_NOTES,
+        publishedAt: '2026-09-25'
+    };
+}
+
+/** 比较版本号：a > b 返回 1，相等 0，小于 -1（只比数字段，忽略前后缀） */
+function compareVersion(a, b) {
+    const pa = String(a || '').trim().replace(/^v/i, '').split(/[.\-+_]/);
+    const pb = String(b || '').trim().replace(/^v/i, '').split(/[.\-+_]/);
+    const n = Math.max(pa.length, pb.length);
+    for (let i = 0; i < n; i++) {
+        const x = parseInt(pa[i], 10) || 0;
+        const y = parseInt(pb[i], 10) || 0;
+        if (x > y) return 1;
+        if (x < y) return -1;
+    }
+    return 0;
+}
+
+// 公开接口：不需要登录（未登录也要能拿到"必须升级"的信息）
+app.get('/api/app/version', (req, res) => {
+    const app = String(req.query.app || 'filemanager').toLowerCase();
+    const info = appVersionInfo(app === 'pc' ? 'pc' : 'filemanager');
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, ...info, serverTime: Date.now() });
+});
+
+app.get('/api/app/version/:app', (req, res) => {
+    const app = String(req.params.app || '').toLowerCase();
+    const info = appVersionInfo(app === 'pc' ? 'pc' : 'filemanager');
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, ...info, serverTime: Date.now() });
+});
+
 // 按 URL 参数查找用户：历史数据里 id 既有数字（注册用 Date.now()）也有字符串
 // （ensureAdminUser 用 crypto.randomUUID()）。不能用 parseInt 匹配 ——
 // parseInt("550e8400-…") = 550，UUID 用户的后台操作（重置密码/封禁/删除…）会一律 404。
@@ -5845,22 +5935,35 @@ app.post('/api/members/:id/unset_admin', requireAdmin, requireRateLimit('admin')
 });
 
 app.delete('/api/members/:id', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
-    const currentUser = req.currentUser;
-    const user = findUserByRouteId(req.params.id);
-    
-    if (!user) {
-        return res.status(404).json({ success: false, message: '用户不存在' });
+    try {
+        // 删除是"读-改-写"操作：Serverless 多实例下必须先拉云端最新数据，
+        // 否则会用本实例的陈旧内存整库回写，把用户又"复活"（表现为删不掉/刷新又回来）。
+        await db.readFresh();
+
+        const currentUser = req.currentUser;
+        const user = findUserByRouteId(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: '用户不存在' });
+        }
+
+        const result = canModifyUser(currentUser, user, 'delete');
+        if (!result.allowed) {
+            return res.status(403).json({ success: false, message: result.reason });
+        }
+
+        const removedId = String(user.id);
+        const removedName = user.username;
+        db.data.users = db.data.users.filter(u => u !== user);
+        // force：跳过"延迟上传"，立即整库落库，保证删除不会被别的实例覆盖回来
+        await db.write({ force: true });
+
+        console.log(`[MEMBER] ${currentUser.username} 删除用户 ${removedName}（id=${removedId}）`);
+        res.json({ success: true, message: '用户已删除', id: removedId });
+    } catch (err) {
+        console.error('[MEMBER] 删除用户失败:', err);
+        res.status(500).json({ success: false, message: '删除失败：' + (err && err.message ? err.message : String(err)) });
     }
-    
-    const result = canModifyUser(currentUser, user, 'delete');
-    if (!result.allowed) {
-        return res.status(403).json({ success: false, message: result.reason });
-    }
-    
-    db.data.users = db.data.users.filter(u => u !== user);
-    await db.write();
-    
-    res.json({ success: true, message: '用户已删除' });
 });
 
 // 留言管理API
