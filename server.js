@@ -3506,21 +3506,45 @@ app.post('/api/register', requireRateLimit('register'), requireCSRF, requireCapt
         return res.status(400).json({ success: false, message: '该邮箱已被注册' });
     }
     
-    if (invite_code) {
-        const invite = db.data.invite_codes.find(c => c.code === invite_code && !c.used);
+    // 注册渠道：**软件（安卓 App）注册不需要邀请码；网页注册必须邀请码**。
+    // 软件注册走 app_client='stc-filemanager'（见 ApiClient），网页端没有这个标记。
+    const isApp = isAppClient(req)
+        || String(req.headers['x-client-app'] || '').toLowerCase() === 'stc-filemanager';
+    const code = String(invite_code || '').trim();
+
+    if (!isApp) {
+        if (!code) {
+            return res.status(400).json({
+                success: false,
+                message: '网站注册需要邀请码（没有邀请码请先在网站提交加入申请，或直接用「STC 文件管理器」App 注册）'
+            });
+        }
+        // 邀请码可能被别的实例刚核销，先拉最新再判断，避免一码多用
+        try { await db.readFresh(); } catch (e) { /* 忽略：读不到就按当前内存判断 */ }
+        if (!Array.isArray(db.data.invite_codes)) db.data.invite_codes = [];
+        const invite = db.data.invite_codes.find(c => c && c.code === code && !(c.used || c.is_used));
         if (!invite) {
             return res.status(400).json({ success: false, message: '邀请码无效或已使用' });
         }
         invite.used = true;
+        invite.is_used = true;
         invite.used_by = email;
         invite.used_at = new Date().toISOString();
+    } else if (code) {
+        // 软件注册：填了邀请码也照样核销（保持原行为）
+        const invite = db.data.invite_codes.find(c => c && c.code === code && !(c.used || c.is_used));
+        if (invite) {
+            invite.used = true;
+            invite.is_used = true;
+            invite.used_by = email;
+            invite.used_at = new Date().toISOString();
+        }
     }
-    
+
     const hash = bcrypt.hashSync(password, 10);
     // 自助注册一律为「访客」：访客用于非工会人员（含软件内注册），
     // 登录后功能与成员一致，区别只在于管理员可对访客做限时封禁。
     // 工会身份由「加入申请」审批通过时授予 role='member'，或管理员后台手动调整。
-    const isApp = isAppClient(req);
     db.data.users.push({
         id: Date.now(),
         username: username,

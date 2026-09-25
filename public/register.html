@@ -454,10 +454,11 @@
                 </div>
 
                 <div class="form-group">
-                    <label class="form-label">邀请码</label>
-                    <input type="text" class="form-input" id="invite-code" name="invite-code" placeholder="请输入邀请码（选填）">
+                    <label class="form-label">邀请码 <span style="color:#e11d48;">（必填）</span></label>
+                    <input type="text" class="form-input" id="invite-code" name="invite-code" placeholder="请输入邀请码" required>
                     <div class="no-invite-link">
                         <a href="/apply-invite">我没有邀请码？申请一个</a>
+                        <span style="color:#9ca3af;"> · 也可以直接用「STC 文件管理器」App 注册（无需邀请码）</span>
                     </div>
                 </div>
 
@@ -618,6 +619,12 @@
 
             if (!captcha) {
                 showError('请先输入人机验证码');
+                return;
+            }
+
+            // 网站注册必须邀请码（软件/App 注册不需要）；服务端会再校验一次，这里只是提前提示
+            if (!inviteCode) {
+                showError('网站注册需要邀请码：请填写邀请码，或点「申请一个」，也可以直接用「STC 文件管理器」App 注册');
                 return;
             }
             
