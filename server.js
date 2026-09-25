@@ -303,26 +303,37 @@ app.use((req, res, next) => {
 });
 
 // ---------- 官方客户端版本闸门（2.1.0 起：低于最低版本的客户端一律拒绝服务）----------
-// 手机端「STC 文件管理」/ 「STC 电脑端」每次请求都带 X-App-Version。
 // 低于 APP_MIN_VERSION 的请求直接 426，客户端收到后强制跳升级。
-// 不带该头的请求（网页浏览器、第三方脚本）不受影响 —— 网页端版本由服务端自己控制。
 // 必须挂在所有 /api 路由之前，否则后面的路由会先匹配掉。
 // 常量 APP_MIN_VERSION / APP_LATEST_VERSION / compareVersion 定义在文件后段
 // （同一模块内，请求到达时早已初始化）。
+//
+// 版本从哪来（两个来源都要看，缺一不可）：
+//   1. X-App-Version 头 —— 2.1.0 起每个请求都带
+//   2. User-Agent 里的 "STCFileManager/1.0" —— **旧版（1.0）App 不发版本头**，
+//      只能靠 UA 认出来；否则旧版照样能用，"强制升级"就是一句空话。
+// 两个都没有 → 浏览器 / 第三方脚本，放行（网页端版本由服务端自己控制）。
+function clientAppVersion(req) {
+    const h = req.headers['x-app-version'];
+    if (typeof h === 'string' && h.trim() && h.toLowerCase() !== 'unknown') return h.trim();
+    const ua = String(req.headers['user-agent'] || '');
+    const m = /STCFileManager\/([0-9][0-9A-Za-z.\-+_]*)/i.exec(ua);
+    if (m) return m[1].replace(/-debug$/i, '');
+    return '';
+}
+
 app.use('/api/', (req, res, next) => {
-    const v = req.headers['x-app-version'];
-    if (typeof v === 'string' && v.trim() && v !== 'unknown') {
-        if (compareVersion(v, APP_MIN_VERSION) < 0) {
-            res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-            return res.status(426).json({
-                success: false,
-                code: 'UPDATE_REQUIRED',
-                message: `当前版本过低（${v}），请升级到 ${APP_LATEST_VERSION} 后再使用`,
-                latest: APP_LATEST_VERSION,
-                min: APP_MIN_VERSION,
-                url: appVersionInfo(req.headers['x-app-platform'] === 'pc' ? 'pc' : 'filemanager').url
-            });
-        }
+    const v = clientAppVersion(req);
+    if (v && compareVersion(v, APP_MIN_VERSION) < 0) {
+        res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+        return res.status(426).json({
+            success: false,
+            code: 'UPDATE_REQUIRED',
+            message: `当前版本过低（${v}），已停止服务，请升级到 ${APP_LATEST_VERSION} 后再使用`,
+            latest: APP_LATEST_VERSION,
+            min: APP_MIN_VERSION,
+            url: appVersionInfo(req.headers['x-app-platform'] === 'pc' ? 'pc' : 'filemanager').url
+        });
     }
     next();
 });
