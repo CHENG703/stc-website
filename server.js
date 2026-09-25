@@ -5541,7 +5541,7 @@ async function decideJoinApplication(application, action, operator, req) {
         application.status = 'rejected';
         application.rejected_at = new Date().toISOString();
         application.rejected_by = operator || 'admin';
-        await db.write();
+        await db.write({ force: true });
 
         let mailTip = '';
         try {
@@ -5578,7 +5578,7 @@ async function decideJoinApplication(application, action, operator, req) {
         application.approved_at = new Date().toISOString();
         application.approved_by = operator || 'admin';
         application.note = 'QQ邮箱已存在账号，未重复创建';
-        await db.write();
+        await db.write({ force: true });
         return { ok: true, action: 'approve', message: `${application.gameId}（QQ ${application.qq}）的邮箱已有账号，已标记通过，未重复创建` };
     }
 
@@ -5610,7 +5610,22 @@ async function decideJoinApplication(application, action, operator, req) {
     application.approved_at = new Date().toISOString();
     application.approved_by = operator || 'admin';
     application.created_username = username;
-    await db.write();
+    await db.write({ force: true });
+
+    // 回读校验：确认账号真的落库了。
+    // 多实例下写回可能被别的实例旧内存覆盖 —— 那样页面会显示"已批准"却没账号，
+    // 这里直接报失败，让管理员再点一次，而不是给出假成功。
+    try {
+        await db.readFresh();
+        if (!db.data.users.find(u => u.email === email)) {
+            // 回滚成待审，否则下次再点会变成"该申请已处理"，永远建不了号
+            application.status = 'pending';
+            application.approved_at = '';
+            application.created_username = '';
+            await db.write({ force: true }).catch(() => {});
+            return { ok: false, action: 'approve', message: '账号未能保存（被其它实例的旧数据覆盖），请再点一次批准' };
+        }
+    } catch (e) { /* 校验读失败不阻断，按成功处理 */ }
 
     let mailTip = '审核邮件已发送';
     try {
@@ -5653,6 +5668,10 @@ app.get('/api/join/approve/:token', async (req, res) => {
     const token = req.params.token;
     if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
 
+    // 先拉云端最新：Serverless 多实例下本实例内存可能是旧快照，
+    // 读不到这条申请就会误报"链接无效"（表现为点了批准却什么都没发生）。
+    try { await db.readFresh(); } catch (e) { /* 读失败就按当前内存继续 */ }
+
     const application = db.data.join_applications.find(a => a.approval_token === token);
     if (!application) {
         return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
@@ -5661,51 +5680,25 @@ app.get('/api/join/approve/:token', async (req, res) => {
         return res.status(400).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1>该申请已处理</h1><p>当前状态：<strong>${application.status}</strong></p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
     }
 
-    const email = application.email;
-    // 为申请人生成随机初始密码（邮件中告知，登录后可自行修改）
-    const password = Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
-
-    // 该 QQ 邮箱已注册过账号：标记已处理，并提示
-    if (db.data.users.find(u => u.email === email)) {
-        application.status = 'approved';
-        application.approved_at = new Date().toISOString();
-        application.note = 'QQ邮箱已存在账号，未重复创建';
-        await db.write();
+    // 建号 + 给申请人发邮件：统一走 decideJoinApplication（和 QQ 群 /批准 完全一致）。
+    // 它内部用 force 写库 —— 否则写入可能被其它实例的旧内存覆盖，
+    // 页面显示"已批准"、库里却没有账号。
+    const r = await decideJoinApplication(application, 'approve', '邮件审批链接', req);
+    if (!r.ok) {
+        return res.status(400).send(
+            `<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;">`
+            + `<h1 style="color:#ef4444;">❌ 审批未完成</h1>`
+            + `<p>${xssEscape(r.message)}</p>`
+            + `<p><a href="/admin.html" style="color:#6366f1;">返回管理面板</a></p></div>`
+        );
+    }
+    if (!r.username) {
+        // 该 QQ 邮箱已有账号：只标记通过，不重复建号
         return res.send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;max-width:500px;margin:0 auto;"><h1 style="color:#f59e0b;">⚠️ 该QQ已注册过账号</h1><p>申请人 <strong>${application.gameId}</strong>（QQ ${application.qq}）的邮箱已存在账号，请让其直接登录。</p><a href="/admin.html" style="color:#6366f1;">返回管理面板</a></div>`);
     }
-
-    // 用户名使用游戏ID；若冲突则加 QQ 号后缀
-    let username = application.gameId;
-    if (db.data.users.find(u => u.username === username)) {
-        username = `${application.gameId}_${application.qq}`;
-    }
-    if (db.data.users.find(u => u.username === username)) {
-        username = `${application.gameId}_${application.qq}_${Math.random().toString(36).slice(2, 6)}`;
-    }
-
-    const hash = bcrypt.hashSync(password, 10);
-    db.data.users.push({
-        id: Date.now(),
-        username: username,
-        email: email,
-        password: hash,
-        is_admin: false,
-        is_super_admin: false,
-        is_banned: false,
-        banned_until: 0,
-        banned_reason: '',
-        // 加入申请审批通过 ⇒ 工会成员身份（区别于自助注册的「访客」）
-        role: ROLE_MEMBER,
-        register_source: 'join-application',
-        login_attempts: 0,
-        created_at: new Date().toISOString(),
-        join_from: 'join-application'
-    });
-
-    application.status = 'approved';
-    application.approved_at = new Date().toISOString();
-    application.created_username = username;
-    await db.write();
+    const username = r.username;
+    const password = r.password;
+    const email = application.email;
 
     // 组装审核通过邮件内容
     const approveMailHtml = `
@@ -5773,6 +5766,9 @@ app.get('/api/join/reject/:token', async (req, res) => {
     const token = req.params.token;
     if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
 
+    // 同上：先拉云端最新，避免旧快照导致"链接无效"
+    try { await db.readFresh(); } catch (e) { /* 读失败就按当前内存继续 */ }
+
     const application = db.data.join_applications.find(a => a.reject_token === token);
     if (!application) {
         return res.status(404).send(`<div style="font-family:'Microsoft YaHei';padding:40px;text-align:center;"><h1 style="color:#ef4444;">❌ 链接无效或已过期</h1><p>该审批链接不存在或已被使用。</p><a href="/" style="color:#6366f1;">返回首页</a></div>`);
@@ -5783,7 +5779,7 @@ app.get('/api/join/reject/:token', async (req, res) => {
 
     application.status = 'rejected';
     application.rejected_at = new Date().toISOString();
-    await db.write();
+    await db.write({ force: true });
 
     // 组装驳回邮件内容
     const rejectMailHtml = `
