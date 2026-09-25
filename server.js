@@ -384,7 +384,11 @@ const defaults = {
     // 必要性：access_logs 属 DELAYED_KV_KEYS（默认不整库上传 KV），且其他热实例内存里
     // 可能还留着旧记录，会在 60 秒节流到达时把旧记录整批写回 KV → 只把数组清空是清不掉的。
     access_logs_cleared_at: 0,
-    announcements: []
+    announcements: [],
+    // 「已删除用户」水位线：多实例部署下，另一个实例可能还持有删除前的旧内存，
+    // 它一写回就把用户"复活"（表现为后台删不掉 / 刷新又出现）。
+    // 因此删除时把 id 记在这里，所有读取用户的地方一律过滤 —— 与 access_logs 水位线同理。
+    deleted_user_ids: []
 };
 
 const ARRAY_MUTATING_METHODS = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin'];
@@ -2856,10 +2860,13 @@ async function getCurrentUser(req) {
         }
     }
     
+    // 已删除用户（水位线）一律不认：账号被删后立刻失效
+    const deletedIds = deletedUserIdSet();
+
     // 优先使用 authUser（从 token 解析，最可靠）
     if (req.authUser && req.authUser.id) {
         // 先尝试从数据库查找完整用户信息
-        let user = db.data.users.find(u => u.id === req.authUser.id);
+        let user = db.data.users.find(u => u.id === req.authUser.id && !deletedIds.has(String(u.id)));
         if (user) {
             // 封禁即时生效：被封禁的账号立刻失去所有需要鉴权的接口访问权，
             // 不必等 24 小时 token 过期（原实现只在登录时校验 is_banned，是漏洞）。
@@ -2887,7 +2894,7 @@ async function getCurrentUser(req) {
     
     // 如果没有 authUser，尝试用 session
     if (req.session.userId) {
-        let user = db.data.users.find(u => u.id === req.session.userId);
+        let user = db.data.users.find(u => u.id === req.session.userId && !deletedIds.has(String(u.id)));
         if (user) {
             const ban = getBanState(user);
             if (ban.banned) {
@@ -3232,6 +3239,7 @@ app.post('/api/login', requireRateLimit('login'), requireCSRF, async (req, res) 
         
         db.data.verification_codes = db.data.verification_codes.filter(c => c.email !== user.email);
     } else {
+        purgeDeletedUsers();     // 已删除的账号不能登录（水位线内的记录先剔掉）
         user = db.data.users.find(u => u.username === username || u.email === username);
     }
     
@@ -3489,6 +3497,7 @@ app.post('/api/register', requireRateLimit('register'), requireCSRF, requireCapt
         return res.status(400).json({ success: false, message: '验证码已过期' });
     }
     
+    purgeDeletedUsers();     // 已删账号的用户名/邮箱可以重新注册
     if (db.data.users.find(u => u.username === username)) {
         return res.status(400).json({ success: false, message: '用户名已存在' });
     }
@@ -5720,10 +5729,31 @@ app.get('/api/app/version/:app', (req, res) => {
 // 按 URL 参数查找用户：历史数据里 id 既有数字（注册用 Date.now()）也有字符串
 // （ensureAdminUser 用 crypto.randomUUID()）。不能用 parseInt 匹配 ——
 // parseInt("550e8400-…") = 550，UUID 用户的后台操作（重置密码/封禁/删除…）会一律 404。
+/**
+ * 已删除用户 id 集合（水位线）。
+ * 多实例部署时，别的实例可能还拿着删除前的旧内存并写回 KV，把用户"复活"；
+ * 有了水位线，不管谁写回来，读的时候一律过滤掉。
+ */
+function deletedUserIdSet() {
+    if (!Array.isArray(db.data.deleted_user_ids)) db.data.deleted_user_ids = [];
+    return new Set(db.data.deleted_user_ids.map(String));
+}
+
+/** 把已删除的用户从数组里彻底剔除（幂等，读用户前调用） */
+function purgeDeletedUsers() {
+    const ids = deletedUserIdSet();
+    if (!ids.size || !Array.isArray(db.data.users)) return 0;
+    const before = db.data.users.length;
+    db.data.users = db.data.users.filter(u => !ids.has(String(u && u.id)));
+    return before - db.data.users.length;
+}
+
 function findUserByRouteId(rawId) {
     const key = String(rawId == null ? '' : rawId).trim();
     if (!key) return null;
-    return db.data.users.find(u => String(u.id) === key) || null;
+    purgeDeletedUsers();
+    const del = deletedUserIdSet();
+    return db.data.users.find(u => String(u.id) === key && !del.has(String(u.id))) || null;
 }
 
 function canModifyUser(currentUser, targetUser, action) {
@@ -5775,6 +5805,7 @@ function canModifyUser(currentUser, targetUser, action) {
 app.get('/api/members', requireAdmin, async (req, res) => {
     // 封禁状态需要即时准确：读取前强制刷新一次（避免多实例下显示旧状态）
     try { await db.readFresh(); } catch (e) { /* 忽略 */ }
+    purgeDeletedUsers();   // 水位线内的用户一律不显示（防止别的实例旧数据把它带回来）
     const members = db.data.users.map(u => {
         const role = getUserRole(u);
         const ban = getBanState(u);
@@ -5979,12 +6010,50 @@ app.delete('/api/members/:id', requireAdmin, requireRateLimit('admin'), requireC
 
         const removedId = String(user.id);
         const removedName = user.username;
-        db.data.users = db.data.users.filter(u => u !== user);
+
+        // 同名重复账号（历史遗留，见 findDuplicateUsernames）一并删掉：
+        // 只删一条的话，列表里还留着同名用户，看起来就是"删不掉"。
+        // 超级管理员记录不参与同名清理，避免误删管理员。
+        const removedIds = [removedId];
+        const name = String(removedName || '');
+        db.data.users = db.data.users.filter(u => {
+            if (u === user) return false;
+            if (name && u && u.username === name && !u.is_super_admin) {
+                removedIds.push(String(u.id));
+                return false;
+            }
+            return true;
+        });
+
+        // 水位线：记录"这些 id 已删除"，别的实例就算把旧数据写回来也不会复活
+        const existing = Array.isArray(db.data.deleted_user_ids) ? db.data.deleted_user_ids : [];
+        db.data.deleted_user_ids = Array.from(new Set(existing.concat(removedIds.map(String))));
+
         // force：跳过"延迟上传"，立即整库落库，保证删除不会被别的实例覆盖回来
         await db.write({ force: true });
 
-        console.log(`[MEMBER] ${currentUser.username} 删除用户 ${removedName}（id=${removedId}）`);
-        res.json({ success: true, message: '用户已删除', id: removedId });
+        // 回读校验：确实没了才告诉前端成功，杜绝"提示成功、刷新又出现"
+        await db.readFresh();
+        purgeDeletedUsers();
+        const del = deletedUserIdSet();
+        const still = db.data.users.some(u =>
+            String(u.id) === removedId || (name && u.username === name && !del.has(String(u.id)))
+        );
+        if (still) {
+            console.warn(`[MEMBER] 删除后回读仍在：${removedName}（id=${removedId}）`);
+            return res.status(500).json({
+                success: false,
+                message: '删除未能保存到云端（被其它实例的旧数据覆盖了），请再点一次删除'
+            });
+        }
+
+        console.log(`[MEMBER] ${currentUser.username} 删除用户 ${removedName}（id=${removedId}，共 ${removedIds.length} 条）`);
+        res.json({
+            success: true,
+            message: removedIds.length > 1 ? `已删除该用户（含 ${removedIds.length} 条重复记录）` : '用户已删除',
+            id: removedId,
+            removed: removedIds.length
+        });
     } catch (err) {
         console.error('[MEMBER] 删除用户失败:', err);
         res.status(500).json({ success: false, message: '删除失败：' + (err && err.message ? err.message : String(err)) });
@@ -6034,6 +6103,7 @@ app.post('/api/console/create_user', requireAdmin, requireRateLimit('admin'), re
         return res.status(400).json({ success: false, message: '请填写所有字段' });
     }
     
+    purgeDeletedUsers();     // 已删账号的用户名/邮箱可以重新注册
     if (db.data.users.find(u => u.username === username)) {
         return res.status(400).json({ success: false, message: '用户名已存在' });
     }

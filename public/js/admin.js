@@ -1539,17 +1539,19 @@ async function deleteMember(userId, username) {
             method: 'DELETE'
         });
         if (response.ok) {
-            showMessage('用户已删除', 'success');
+            var ok = await response.json().catch(() => ({}));
+            showMessage(ok.message || '用户已删除', 'success');
             CMDLog.log(`用户 ${username} 已删除`, 'warn');
             loadMembers();
             document.querySelector('.modal-overlay')?.remove();
         } else {
-            var data = await response.json();
-            showMessage(data.error || data.message || '操作失败', 'error');
-            CMDLog.log(`删除失败: ${data.error || data.message || '未知错误'}`, 'error');
+            var data = await response.json().catch(() => ({}));
+            showMessage('删除失败（HTTP ' + response.status + '）：' + (data.message || data.error || '未知错误'), 'error');
+            CMDLog.log(`删除失败: ${data.message || data.error || '未知错误'}`, 'error');
         }
     } catch (error) {
-        showMessage('操作失败', 'error');
+        // 403 会被 fetchWithAuth 转成带服务端原因的 Error（如"不能操作超级管理员"），直接显示出来
+        showMessage('删除失败：' + (error && error.message ? error.message : '未知错误'), 'error');
         CMDLog.log(`删除失败: ${error.message}`, 'error');
     }
 }
