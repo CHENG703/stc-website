@@ -1402,6 +1402,9 @@ const RATE_CONFIGS = {
     password:     { max: 3,   window: 60 * 1000 },        // 改密：1分钟3次
     ai:           { max: 20,  window: 60 * 1000 },        // AI 对话：1分钟20次
     slide:        { max: 10,  window: 30 * 1000 },        // 滑块验证上报：30秒10次
+    // 机器人（AstrBot 插件）轮询：本机插件按秒级轮询，且已用 API Key 鉴权，
+    // 再套 5 次/分钟会把插件全部挡在 429 门外（表现为"群里收不到申请"）。
+    bot:          { max: 300, window: 60 * 1000 },        // 机器人接口：1分钟300次
 };
 
 function requireRateLimit(type) {
@@ -7307,7 +7310,7 @@ function verifyBotKey(req) {
 }
 
 // 机器人连接/长轮询（获取待发送消息）
-app.post('/api/bot/connect', requireRateLimit('email'), async (req, res) => {
+app.post('/api/bot/connect', requireRateLimit('bot'), async (req, res) => {
     if (!verifyBotKey(req)) {
         return res.status(401).json({ success: false, message: '无效的 API Key' });
     }
@@ -7358,7 +7361,7 @@ app.post('/api/bot/connect', requireRateLimit('email'), async (req, res) => {
 });
 
 // 机器人上报消息发送结果
-app.post('/api/bot/report-send-result', requireRateLimit('email'), async (req, res) => {
+app.post('/api/bot/report-send-result', requireRateLimit('bot'), async (req, res) => {
     if (!verifyBotKey(req)) {
         return res.status(401).json({ success: false, message: '无效的 API Key' });
     }
@@ -7388,7 +7391,7 @@ app.post('/api/bot/report-send-result', requireRateLimit('email'), async (req, r
 });
 
 // 机器人上报收到的消息
-app.post('/api/bot/report-message', requireRateLimit('email'), async (req, res) => {
+app.post('/api/bot/report-message', requireRateLimit('bot'), async (req, res) => {
     if (!verifyBotKey(req)) {
         return res.status(401).json({ success: false, message: '无效的 API Key' });
     }
@@ -7452,7 +7455,7 @@ function joinAppPublicView(a) {
 }
 
 /** 拉取「还没推到群里」的待审申请 */
-app.get('/api/bot/join/pending', requireRateLimit('email'), async (req, res) => {
+app.get('/api/bot/join/pending', requireRateLimit('bot'), async (req, res) => {
     if (!verifyBotKey(req)) return res.status(401).json({ success: false, message: '无效的 API Key' });
     try {
         await db.readFresh().catch(() => {});
@@ -7469,7 +7472,7 @@ app.get('/api/bot/join/pending', requireRateLimit('email'), async (req, res) => 
 });
 
 /** 机器人标记某几条已推送到群，避免每次轮询重复发 */
-app.post('/api/bot/join/mark-notified', requireRateLimit('email'), async (req, res) => {
+app.post('/api/bot/join/mark-notified', requireRateLimit('bot'), async (req, res) => {
     if (!verifyBotKey(req)) return res.status(401).json({ success: false, message: '无效的 API Key' });
     try {
         await db.readFresh().catch(() => {});
@@ -7488,7 +7491,7 @@ app.post('/api/bot/join/mark-notified', requireRateLimit('email'), async (req, r
 });
 
 /** 群里的 /批准 /驳回 最终落到这里执行 */
-app.post('/api/bot/join/decide', requireRateLimit('email'), async (req, res) => {
+app.post('/api/bot/join/decide', requireRateLimit('bot'), async (req, res) => {
     if (!verifyBotKey(req)) return res.status(401).json({ success: false, message: '无效的 API Key' });
     try {
         await db.readFresh().catch(() => {});
@@ -7589,7 +7592,7 @@ app.get('/api/bot/messages', requireAdmin, async (req, res) => {
 });
 
 // 管理员：发送消息（加入发送队列）
-app.post('/api/bot/send', requireAdmin, requireRateLimit('email'), requireCSRF, async (req, res) => {
+app.post('/api/bot/send', requireAdmin, requireRateLimit('bot'), requireCSRF, async (req, res) => {
     try {
         await ensureBotCollections();
         const { target_type, target_id, content, image_url, group_id, user_id } = req.body || {};
