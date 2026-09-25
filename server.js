@@ -5396,7 +5396,7 @@ const JOIN_ADMIN_EMAILS = (process.env.JOIN_ADMIN_EMAILS || '')
 
 // 提交加入申请
 app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCaptcha, async (req, res) => {
-    const { qq, gameId, age, projection, playTime } = req.body || {};
+    const { qq, gameId, age, projection, playTime, skills } = req.body || {};
 
     if (!qq || !/^\d+$/.test(qq)) {
         return res.status(400).json({ success: false, message: 'QQ号码必须为纯数字' });
@@ -5415,6 +5415,9 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
     }
     if (!playTime || !String(playTime).trim()) {
         return res.status(400).json({ success: false, message: '请填写日常上线时间' });
+    }
+    if (!skills || !String(skills).trim()) {
+        return res.status(400).json({ success: false, message: '请填写擅长的事情' });
     }
 
     const email = String(qq) + '@qq.com';
@@ -5439,8 +5442,12 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
         age: String(age).trim(),
         projection: String(projection).trim(),
         playTime: String(playTime).trim(),
+        // 擅长的事情（2026-09-25 新增；老申请没有这个字段时显示"未填写"）
+        skills: String(skills || '').trim() || '未填写',
         email: email,
         status: 'pending',
+        // 机器人是否已把这条申请推送到审批群（避免重复刷屏）
+        bot_notified: false,
         created_at: new Date().toISOString(),
         approval_token: crypto.randomBytes(24).toString('hex'),
         reject_token: crypto.randomBytes(24).toString('hex')
@@ -5480,6 +5487,7 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
                             <p style="margin: 0 0 10px;"><strong>年龄/年级：</strong> ${application.age}</p>
                             <p style="margin: 0 0 10px;"><strong>是否会使用投影：</strong> ${application.projection}</p>
                             <p style="margin: 0 0 10px;"><strong>日常上线时间：</strong> ${application.playTime}</p>
+                            <p style="margin: 0 0 10px;"><strong>擅长的事情：</strong> ${application.skills || '未填写'}</p>
                             <p style="margin: 0;"><strong>申请时间：</strong> ${new Date().toLocaleString('zh-CN')}</p>
                         </div>
                         <p style="color: #64748b; font-size: 14px; margin: 20px 0;">直接点击下方按钮审批，无需登录管理面板：</p>
@@ -5508,6 +5516,136 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
 });
 
 // 批准加入申请：创建账号 + 发邮件给申请人
+// app.get('/api/join/approve/:token') —— 邮件里的审批链接，逻辑见下方共用函数
+
+/**
+ * 加入申请审批的共用实现（邮件链接与 QQ 群机器人走同一套逻辑，避免两边行为不一致）。
+ * @param {object} application join_applications 里的记录
+ * @param {'approve'|'reject'} action
+ * @param {string} operator 操作者标识（如 "QQ群:123456(群主)"）
+ * @returns {Promise<{ok:boolean, action?:string, message:string, username?:string, password?:string}>}
+ */
+async function decideJoinApplication(application, action, operator, req) {
+    if (!application) return { ok: false, message: '申请不存在' };
+    if (application.status !== 'pending') {
+        return { ok: false, message: `该申请已处理（当前状态：${application.status}）` };
+    }
+
+    const base = (typeof getSiteBaseUrl === 'function') ? getSiteBaseUrl(req) : '';
+
+    // ---------------- 驳回 ----------------
+    if (action === 'reject') {
+        application.status = 'rejected';
+        application.rejected_at = new Date().toISOString();
+        application.rejected_by = operator || 'admin';
+        await db.write();
+
+        let mailTip = '';
+        try {
+            await sendMailAwait({
+                from: mailFromHeader(),
+                to: application.email,
+                subject: '【STC】加入申请未通过',
+                html: `
+                    <div style="font-family:'Microsoft YaHei';max-width:560px;margin:0 auto;padding:20px;">
+                        <div style="background:#ef4444;padding:24px;border-radius:16px 16px 0 0;">
+                            <h1 style="color:white;margin:0;font-size:22px;text-align:center;">加入申请未通过</h1>
+                        </div>
+                        <div style="background:#fef2f2;padding:26px;border-radius:0 0 16px 16px;border:1px solid #fecaca;">
+                            <p style="color:#475569;">你好，${application.gameId}：</p>
+                            <p style="color:#475569;">很遗憾，你提交的 STC 工会加入申请未通过本次审核。</p>
+                            <p style="color:#475569;">如有疑问可在群里联系管理员了解原因，欢迎以后再次申请。</p>
+                        </div>
+                        <p style="color:#94a3b8;font-size:12px;text-align:center;">© 2025 STC任务网站</p>
+                    </div>`
+            });
+            mailTip = '已邮件通知申请人';
+        } catch (e) {
+            mailTip = '邮件通知失败：' + e.message;
+        }
+        return { ok: true, action: 'reject', message: `已驳回 ${application.gameId}（QQ ${application.qq}）。${mailTip}` };
+    }
+
+    // ---------------- 批准 ----------------
+    const email = application.email;
+
+    // 该 QQ 邮箱已注册过账号：只标记，不重复建号
+    if (db.data.users.find(u => u.email === email)) {
+        application.status = 'approved';
+        application.approved_at = new Date().toISOString();
+        application.approved_by = operator || 'admin';
+        application.note = 'QQ邮箱已存在账号，未重复创建';
+        await db.write();
+        return { ok: true, action: 'approve', message: `${application.gameId}（QQ ${application.qq}）的邮箱已有账号，已标记通过，未重复创建` };
+    }
+
+    const password = Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
+    let username = application.gameId;
+    if (db.data.users.find(u => u.username === username)) username = `${application.gameId}_${application.qq}`;
+    if (db.data.users.find(u => u.username === username)) {
+        username = `${application.gameId}_${application.qq}_${Math.random().toString(36).slice(2, 6)}`;
+    }
+
+    db.data.users.push({
+        id: Date.now(),
+        username,
+        email,
+        password: bcrypt.hashSync(password, 10),
+        is_admin: false,
+        is_super_admin: false,
+        is_banned: false,
+        banned_until: 0,
+        banned_reason: '',
+        role: ROLE_MEMBER,
+        register_source: 'join-application',
+        login_attempts: 0,
+        created_at: new Date().toISOString(),
+        join_from: 'join-application'
+    });
+
+    application.status = 'approved';
+    application.approved_at = new Date().toISOString();
+    application.approved_by = operator || 'admin';
+    application.created_username = username;
+    await db.write();
+
+    let mailTip = '审核邮件已发送';
+    try {
+        await sendMailAwait({
+            from: mailFromHeader(),
+            to: email,
+            subject: '【STC】恭喜你通过审核，欢迎加入STC工会！',
+            html: `
+                <div style="font-family:'Microsoft YaHei';max-width:560px;margin:0 auto;padding:20px;">
+                    <div style="background:linear-gradient(135deg,#10b981,#34d399);padding:30px;border-radius:16px 16px 0 0;">
+                        <h1 style="color:white;margin:0;font-size:24px;text-align:center;">审核通过 ✅</h1>
+                    </div>
+                    <div style="background:#ecfdf5;padding:30px;border-radius:0 0 16px 16px;border:1px solid #a7f3d0;">
+                        <p style="color:#475569;">你好，${application.gameId}！恭喜你通过 STC 工会审核。</p>
+                        <div style="background:white;padding:20px;border-radius:12px;margin:20px 0;border:1px solid #a7f3d0;">
+                            <p style="margin:0 0 8px;color:#475569;">用户名：<strong>${username}</strong></p>
+                            <p style="margin:0 0 8px;color:#475569;">邮箱：<strong>${email}</strong></p>
+                            <p style="margin:0;color:#475569;">密码：<strong>${password}</strong></p>
+                        </div>
+                        <p style="color:#64748b;font-size:14px;">请在 <a href="${base}/login">${base}/login</a> 登录，登录后建议立即修改密码。</p>
+                    </div>
+                    <p style="color:#94a3b8;font-size:12px;text-align:center;">© 2025 STC任务网站</p>
+                </div>`
+        });
+    } catch (e) {
+        mailTip = '审核邮件发送失败：' + e.message;
+    }
+
+    return {
+        ok: true,
+        action: 'approve',
+        username,
+        password,
+        email,
+        message: `已批准 ${application.gameId}（QQ ${application.qq}）加入。账号 ${username} 已创建，${mailTip}`
+    };
+}
+
 app.get('/api/join/approve/:token', async (req, res) => {
     const token = req.params.token;
     if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
@@ -7291,6 +7429,102 @@ app.post('/api/bot/report-message', requireRateLimit('email'), async (req, res) 
 });
 
 // 管理员：查看机器人状态
+// ============================================================
+// 加入申请：QQ 群机器人审批接口（AstrBot 插件用 X-Bot-Key 鉴权）
+// ------------------------------------------------------------
+// 流程：网站收到申请 → 插件轮询 pending 拿到新申请 → 发到审批群
+//       → 群管理员回复「/批准 申请号」或「/驳回 申请号」→ 插件回调 decide
+// ============================================================
+
+function joinAppPublicView(a) {
+    return {
+        id: a.id,
+        qq: a.qq,
+        gameId: a.gameId,
+        age: a.age || '',
+        projection: a.projection || '',
+        playTime: a.playTime || '',
+        skills: a.skills || '未填写',
+        email: a.email,
+        status: a.status,
+        created_at: a.created_at
+    };
+}
+
+/** 拉取「还没推到群里」的待审申请 */
+app.get('/api/bot/join/pending', requireRateLimit('email'), async (req, res) => {
+    if (!verifyBotKey(req)) return res.status(401).json({ success: false, message: '无效的 API Key' });
+    try {
+        await db.readFresh().catch(() => {});
+        if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
+        const list = db.data.join_applications
+            .filter(a => a && a.status === 'pending' && a.bot_notified !== true)
+            .sort((x, y) => Number(x.id) - Number(y.id))
+            .slice(0, 10)
+            .map(joinAppPublicView);
+        res.json({ success: true, applications: list, server_time: Date.now() });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+/** 机器人标记某几条已推送到群，避免每次轮询重复发 */
+app.post('/api/bot/join/mark-notified', requireRateLimit('email'), async (req, res) => {
+    if (!verifyBotKey(req)) return res.status(401).json({ success: false, message: '无效的 API Key' });
+    try {
+        await db.readFresh().catch(() => {});
+        const ids = (req.body && (req.body.ids || (req.body.id != null ? [req.body.id] : []))) || [];
+        const set = new Set(ids.map(String));
+        if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
+        let n = 0;
+        for (const a of db.data.join_applications) {
+            if (set.has(String(a.id))) { a.bot_notified = true; a.bot_notified_at = new Date().toISOString(); n++; }
+        }
+        await db.write({ force: true });
+        res.json({ success: true, marked: n });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+/** 群里的 /批准 /驳回 最终落到这里执行 */
+app.post('/api/bot/join/decide', requireRateLimit('email'), async (req, res) => {
+    if (!verifyBotKey(req)) return res.status(401).json({ success: false, message: '无效的 API Key' });
+    try {
+        await db.readFresh().catch(() => {});
+        const { id, qq, action, operator, reason } = req.body || {};
+        const act = String(action || '').toLowerCase() === 'reject' ? 'reject' : 'approve';
+        if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
+
+        // 允许用申请号或 QQ 号定位（群里更习惯直接说 QQ）
+        let app = null;
+        if (id != null && String(id) !== '') {
+            app = db.data.join_applications.find(a => String(a.id) === String(id));
+        }
+        if (!app && qq) {
+            const list = db.data.join_applications.filter(a => String(a.qq) === String(qq) && a.status === 'pending');
+            app = list.length ? list[list.length - 1] : null;
+        }
+        if (!app) {
+            return res.json({ success: false, message: '找不到该申请（可能已处理或申请号不对）' });
+        }
+
+        const r = await decideJoinApplication(app, act, operator || 'QQ群机器人', req);
+        if (reason) { app.reason = String(reason).slice(0, 200); await db.write({ force: true }); }
+        res.json({
+            success: r.ok,
+            action: r.action || act,
+            message: r.message,
+            application: joinAppPublicView(app),
+            username: r.username || '',
+            password: r.password || ''
+        });
+    } catch (e) {
+        console.error('[BOT][JOIN] 审批失败:', e);
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
 app.get('/api/bot/status', requireAdmin, async (req, res) => {
     try {
         await ensureBotCollections();

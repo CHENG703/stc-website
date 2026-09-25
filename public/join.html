@@ -346,6 +346,11 @@
                     <input type="text" id="f-playtime" placeholder="例如：每天晚上 19:00 - 22:00" maxlength="50" autocomplete="off">
                 </div>
                 <div class="form-group">
+                    <label>擅长的事情<span class="required">*</span></label>
+                    <input type="text" id="f-skills" placeholder="例如：建筑、红石、PVP、指挥、剪视频" maxlength="100" autocomplete="off">
+                    <div class="hint">填你最拿手的几样，方便安排分工</div>
+                </div>
+                <div class="form-group">
                     <label>人机验证<span class="required">*</span></label>
                     <div class="captcha-row">
                         <input type="text" id="captcha-input" placeholder="请输入图形中的字符" maxlength="4" autocomplete="off" autocapitalize="off">
@@ -425,6 +430,7 @@
             const age = document.getElementById('f-age').value.trim();
             const projection = document.getElementById('f-projection').value.trim();
             const playTime = document.getElementById('f-playtime').value.trim();
+            const skills = document.getElementById('f-skills').value.trim();
             const captcha = document.getElementById('captcha-input').value.trim();
 
             if (!/^\d+$/.test(qq)) {
@@ -434,6 +440,7 @@
             if (!age) return showMsg('请填写年龄或年级', 'error');
             if (!projection) return showMsg('请填写是否会使用投影', 'error');
             if (!playTime) return showMsg('请填写日常上线时间', 'error');
+            if (!skills) return showMsg('请填写擅长的事情', 'error');
             if (!captcha) return showMsg('请先输入人机验证码', 'error');
 
             const btn = document.getElementById('submit-btn');
@@ -450,7 +457,7 @@
                         ...(token ? { 'X-CSRF-Token': token } : {}),
                         'X-Request-Nonce': genNonce()
                     },
-                    body: JSON.stringify({ qq, gameId, age, projection, playTime, captcha })
+                    body: JSON.stringify({ qq, gameId, age, projection, playTime, skills, captcha })
                 });
                 const data = await resp.json();
                 if (data.success) {
