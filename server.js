@@ -322,17 +322,31 @@ function clientAppVersion(req) {
     return '';
 }
 
+// 这几个接口**必须放行**，否则旧版看到的不是"请升级"，而是一句莫名其妙的报错：
+// 旧版登录流程是「先 GET /api/csrf-token 拿令牌 → 再 POST /api/login」，
+// 在 csrf 上拦 ⇒ 旧版只拿到空的 csrfToken ⇒ 提示「无法获取安全令牌，请检查网络或服务器地址」，
+// 用户根本不知道要升级。放行 csrf，让它在 /api/login 上撞到 426，
+// 旧版会把响应里的 message 原样显示在登录页 ⇒ 看到"版本过低，请升级"。
+// 版本接口本身也不能拦：旧版要先能查到新版本才谈得上升级。
+const VERSION_GATE_SKIP = ['/api/csrf-token', '/api/app/version'];
+
 app.use('/api/', (req, res, next) => {
+    const p = String(req.originalUrl || req.url || '').split('?')[0].toLowerCase();
+    if (VERSION_GATE_SKIP.some(s => p === s || p.startsWith(s + '/'))) return next();
+
     const v = clientAppVersion(req);
     if (v && compareVersion(v, APP_MIN_VERSION) < 0) {
+        const isPc = String(req.headers['x-app-platform'] || '').toLowerCase() === 'pc';
         res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
         return res.status(426).json({
             success: false,
             code: 'UPDATE_REQUIRED',
-            message: `当前版本过低（${v}），已停止服务，请升级到 ${APP_LATEST_VERSION} 后再使用`,
+            // 旧版只会把 message 显示出来，所以下载方式必须写进这句话里
+            message: `当前版本 v${v} 已停止服务，请升级到 v${APP_LATEST_VERSION} 后再使用。`
+                + `下载地址：https://www.stcwork.top/products（或用手机浏览器打开该地址下载安装包）`,
             latest: APP_LATEST_VERSION,
             min: APP_MIN_VERSION,
-            url: appVersionInfo(req.headers['x-app-platform'] === 'pc' ? 'pc' : 'filemanager').url
+            url: appVersionInfo(isPc ? 'pc' : 'filemanager').url
         });
     }
     next();
