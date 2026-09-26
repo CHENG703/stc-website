@@ -350,6 +350,11 @@
                     <input type="text" id="f-skills" placeholder="例如：建筑、红石、PVP、指挥、剪视频" maxlength="100" autocomplete="off">
                     <div class="hint">填你最拿手的几样，方便安排分工</div>
                 </div>
+                <div class="form-group">
+                    <label>接收账号的邮箱（选填）</label>
+                    <input type="text" id="f-email" placeholder="留空则用 QQ邮箱（qq号@qq.com）接收密码" maxlength="60" autocomplete="off">
+                    <div class="hint">审核通过后，网站会把初始密码发到这个邮箱；不填则发到你的 QQ 邮箱</div>
+                </div>
                 <button type="submit" id="submit-btn" class="submit-btn">提交</button>
             </form>
             <div id="msg" class="msg"></div>
@@ -417,6 +422,7 @@
             const projection = document.getElementById('f-projection').value.trim();
             const playTime = document.getElementById('f-playtime').value.trim();
             const skills = document.getElementById('f-skills').value.trim();
+            const email = document.getElementById('f-email').value.trim();
 
             if (!/^\d+$/.test(qq)) {
                 return showMsg('QQ号码必须为纯数字', 'error');
@@ -426,6 +432,7 @@
             if (!projection) return showMsg('请填写是否会使用投影', 'error');
             if (!playTime) return showMsg('请填写日常上线时间', 'error');
             if (!skills) return showMsg('请填写擅长的事情', 'error');
+            if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showMsg('邮箱格式不正确', 'error');
 
             const btn = document.getElementById('submit-btn');
             btn.disabled = true;
@@ -441,7 +448,7 @@
                         ...(token ? { 'X-CSRF-Token': token } : {}),
                         'X-Request-Nonce': genNonce()
                     },
-                    body: JSON.stringify({ qq, gameId, age, projection, playTime, skills })
+                    body: JSON.stringify({ qq, gameId, age, projection, playTime, skills, email })
                 });
                 const data = await resp.json();
                 if (data.success) {

@@ -5411,7 +5411,9 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
         return res.status(400).json({ success: false, message: '请填写擅长的事情' });
     }
 
-    const email = String(qq) + '@qq.com';
+    // 优先用申请人填写的真实邮箱接收账号密码；未填则用「QQ号@qq.com」兜底（前提是 QQ 邮箱已开通）
+    const rawEmail = req.body && req.body.email ? String(req.body.email).trim() : '';
+    const email = (rawEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) ? rawEmail : (String(qq) + '@qq.com');
 
     if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
 
@@ -5521,7 +5523,8 @@ async function decideJoinApplication(application, action, operator, req) {
     if (application.status !== 'pending') {
         // 历史遗留自救：以前出现过"页面显示已批准、但账号被别的实例覆盖没建成"的记录，
         // 这类 approved 却查不到账号的申请允许重新批准，否则会永远卡在已处理状态。
-        const hasAccount = (db.data.users || []).some(u => u.email === application.email);
+        const _effEmail = application.email || (application.qq ? `${application.qq}@qq.com` : '');
+        const hasAccount = (db.data.users || []).some(u => u.email === _effEmail);
         if (!(application.status === 'approved' && !hasAccount)) {
             return { ok: false, message: `该申请已处理（当前状态：${application.status}）` };
         }
@@ -5563,7 +5566,9 @@ async function decideJoinApplication(application, action, operator, req) {
     }
 
     // ---------------- 批准 ----------------
-    const email = application.email;
+    // 入群申请历史上只收集了 QQ 号、没有邮箱字段，这里用「QQ号@qq.com」拼一个真实可用的 QQ 邮箱兜底，
+    // 既能让账号有可登录的邮箱，也能把账号/密码邮件发到申请人 QQ 邮箱。
+    const email = application.email || (application.qq ? `${application.qq}@qq.com` : '');
 
     // 该 QQ 邮箱已注册过账号：只标记，不重复建号
     if (db.data.users.find(u => u.email === email)) {
@@ -5581,6 +5586,11 @@ async function decideJoinApplication(application, action, operator, req) {
     if (db.data.users.find(u => u.username === username)) {
         username = `${application.gameId}_${application.qq}_${Math.random().toString(36).slice(2, 6)}`;
     }
+
+    // 清理历史脏账号：早期入群申请未收集邮箱，建出的账号 email 为空、无法登录。
+    // 重新批准时删掉同 username 的旧脏账号，用新账号（带有效邮箱）覆盖。
+    const dirtyIdx = db.data.users.findIndex(u => u.join_from === 'join-application' && u.username === username && !u.email);
+    if (dirtyIdx >= 0) db.data.users.splice(dirtyIdx, 1);
 
     db.data.users.push({
         id: Date.now(),
