@@ -7472,6 +7472,23 @@ app.get('/api/bot/join/pending', requireRateLimit('bot'), async (req, res) => {
     }
 });
 
+/** 群内 /待审 用：列出所有还没审批的申请（含已推送到群的，不按 bot_notified 过滤） */
+app.get('/api/bot/join/list', requireRateLimit('bot'), async (req, res) => {
+    if (!verifyBotKey(req)) return res.status(401).json({ success: false, message: '无效的 API Key' });
+    try {
+        await db.readFresh().catch(() => {});
+        if (!Array.isArray(db.data.join_applications)) db.data.join_applications = [];
+        const list = db.data.join_applications
+            .filter(a => a && a.status === 'pending')
+            .sort((x, y) => Number(x.id) - Number(y.id))
+            .slice(0, 50)
+            .map(joinAppPublicView);
+        res.json({ success: true, applications: list, server_time: Date.now() });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
 /** 机器人标记某几条已推送到群，避免每次轮询重复发 */
 app.post('/api/bot/join/mark-notified', requireRateLimit('bot'), async (req, res) => {
     if (!verifyBotKey(req)) return res.status(401).json({ success: false, message: '无效的 API Key' });
