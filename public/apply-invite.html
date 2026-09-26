@@ -419,14 +419,6 @@
                     <input type="email" class="form-input" id="email" name="email" placeholder="请输入QQ邮箱（如：123@qq.com）" required>
                 </div>
 
-                <div class="form-group">
-                    <label class="form-label">人机验证</label>
-                    <div class="captcha-row">
-                        <input type="text" class="form-input" id="captcha-input" name="captcha" placeholder="请输入图形中的字符" maxlength="4" autocomplete="off" autocapitalize="off">
-                        <img class="captcha-img" id="captcha-img" src="/api/captcha" alt="验证码" title="点击刷新" onclick="refreshCaptcha()">
-                    </div>
-                    <div class="captcha-hint">看不清？点击图片刷新</div>
-                </div>
 
                 <button type="submit" class="apply-btn" id="apply-btn">提交申请</button>
             </form>
@@ -472,12 +464,6 @@
             return Date.now().toString(36) + Math.random().toString(16).slice(2, 10);
         }
 
-        // 刷新人机验证码
-        function refreshCaptcha() {
-            const img = document.getElementById('captcha-img');
-            img.src = '/api/captcha?t=' + Date.now();
-        }
-
         // 检查是否是QQ邮箱
         function isQQEmail(email) {
             return /^[1-9][0-9]{4,10}@qq\.com$/i.test(email);
@@ -517,7 +503,6 @@
         // 确认提交申请
         async function confirmApply() {
             const btn = document.getElementById('apply-btn');
-            const captcha = document.getElementById('captcha-input').value.trim();
             
             try {
                 const token = await getCSRFTokenOnce();
@@ -529,7 +514,7 @@
                         ...(token ? { 'X-CSRF-Token': token } : {}),
                         'X-Request-Nonce': genNonce()
                     },
-                    body: JSON.stringify({ email: pendingEmail, captcha })
+                    body: JSON.stringify({ email: pendingEmail })
                 });
 
                 const data = await response.json();
@@ -538,9 +523,6 @@
                     showSuccess('申请已提交！请等待管理员审核，结果将发送至您的邮箱。');
                     closeModal();
                 } else {
-                    // 验证码为单次使用，申请失败后刷新验证码
-                    refreshCaptcha();
-                    document.getElementById('captcha-input').value = '';
                     showError(data.message || '申请失败');
                     closeModal();
                 }
@@ -555,7 +537,6 @@
             e.preventDefault();
             
             const email = document.getElementById('email').value.trim();
-            const captcha = document.getElementById('captcha-input').value.trim();
             const btn = document.getElementById('apply-btn');
             
             if (!email) {
@@ -565,11 +546,6 @@
 
             if (!isQQEmail(email)) {
                 showError('请输入正确的QQ邮箱格式（如：123456@qq.com）');
-                return;
-            }
-
-            if (!captcha) {
-                showError('请先输入人机验证码');
                 return;
             }
 

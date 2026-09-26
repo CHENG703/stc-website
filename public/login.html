@@ -773,7 +773,7 @@
                             <label class="form-label" data-lang="login.email">邮箱</label>
                             <input type="email" class="form-input" id="login-email" name="email" placeholder="请输入注册的邮箱" data-lang-placeholder="login.email">
                         </div>
-                        <div class="step-tip" id="code-step1-tip">填好邮箱和人机验证码后点「发送验证码」，验证码会发到你的邮箱（5 分钟内有效）。</div>
+                        <div class="step-tip" id="code-step1-tip">填好邮箱后点「发送验证码」，验证码会发到你的邮箱（5 分钟内有效）。</div>
                     </div>
 
                     <!-- 验证码登录：第 2 步（输码 → 自动登录） -->
@@ -805,16 +805,6 @@
                         <!-- 兼容现有提交逻辑：deck 把数字写到这个隐藏字段 -->
                         <input type="hidden" id="login-code" name="code" value="">
                     </div>
-                </div>
-
-                <!-- 人机验证（图形验证码）：只在验证码登录第 1 步（发码）使用 -->
-                <div class="form-group" id="captcha-group">
-                    <label class="form-label">人机验证</label>
-                    <div class="captcha-row">
-                        <input type="text" class="form-input" id="captcha-input" maxlength="6" placeholder="请输入图中字符" autocomplete="off">
-                        <img id="captcha-img" class="captcha-img" alt="验证码" title="点击刷新验证码" onclick="refreshCaptcha()">
-                    </div>
-                    <div class="captcha-tip">看不清？点击图片可刷新</div>
                 </div>
 
                 <!-- 验证码登录第 1 步的主按钮（发送验证码） -->
@@ -1120,16 +1110,14 @@
         // ===== 验证码登录分两步：1 = 邮箱 + 人机验证，2 = 输入验证码（输满自动登录） =====
         let codeStep = 1;
         let codeSent = false;
-        const STEP1_TIP = '填好邮箱和人机验证码后点「发送验证码」，验证码会发到你的邮箱（5 分钟内有效）。';
+        const STEP1_TIP = '填好邮箱后点「发送验证码」，验证码会发到你的邮箱（5 分钟内有效）。';
 
         // 按「当前 tab + 当前步骤」决定各控件的显隐
         function updateAuthChrome() {
             const isCode = currentLoginType === 'code';
-            const needCaptcha = isCode && codeStep === 1; // 只有「验证码登录第 1 步（发码）」要人机验证
-            document.getElementById('captcha-group').classList.toggle('hidden', !needCaptcha);
+            const needCaptcha = isCode && codeStep === 1;
             document.getElementById('send-login-code').classList.toggle('hidden', !needCaptcha);
             document.getElementById('login-btn').classList.toggle('hidden', isCode && codeStep === 1);
-            if (needCaptcha && typeof ensureCaptcha === 'function') ensureCaptcha();
         }
 
         // 切换到验证码登录的第 n 步
@@ -1209,13 +1197,6 @@
                 return;
             }
 
-            // 人机验证（图形验证码）
-            const captcha = getCaptchaValue();
-            if (!captcha) {
-                showError('请输入人机验证码');
-                return;
-            }
-
             hideMessages();
             btn.disabled = true;
             btn.textContent = '发送中...';
@@ -1230,7 +1211,7 @@
                         ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
                         'X-Request-Nonce': nonce
                     },
-                    body: JSON.stringify({ email, type: 'login', captcha })
+                    body: JSON.stringify({ email, type: 'login' })
                 });
                 // 先检查是否是 JSON 响应
                 const ct = response.headers.get('content-type') || '';

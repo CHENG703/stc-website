@@ -1322,18 +1322,9 @@ async function verifyCaptcha(sessionId, input) {
     return record.code.toUpperCase() === input.trim().toUpperCase();
 }
 
-// 中间件：要求请求携带正确的验证码
+// 中间件：原「图形验证码」人机验证 —— 已按需求整体关闭（不再校验，直接放行）
 function requireCaptcha(req, res, next) {
-    const sid = req.sessionID || (req.cookies && req.cookies['connect.sid']) || crypto.randomUUID();
-    verifyCaptcha(sid, req.body && req.body.captcha).then(ok => {
-        if (!ok) {
-            return res.status(400).json({ success: false, message: '人机验证失败，请重新验证' });
-        }
-        next();
-    }).catch(err => {
-        console.error('[CAPTCHA] 校验异常:', err);
-        res.status(500).json({ success: false, message: '验证码校验失败，请重试' });
-    });
+    return next();
 }
 
 // App 专用：安卓客户端（STC 文件管理器）无法渲染 SVG 图形验证码，
@@ -1346,12 +1337,9 @@ const APP_CLIENT_ID = 'stc-filemanager';
 function isAppClient(req) {
     return !!(req.body && req.body.app_client === APP_CLIENT_ID);
 }
+// 中间件：原「图形验证码 / App 跳过」—— 已整体关闭（直接放行）
 function requireCaptchaApp(req, res, next) {
-    if (isAppClient(req)) {
-        console.log('[CAPTCHA] App 客户端跳过图形验证:', getClientIP(req));
-        return next();
-    }
-    return requireCaptcha(req, res, next);
+    return next();
 }
 
 // 注意：/api/login 自 2026-09-13 起不再挂人机验证（图形验证码），两种登录方式一致：
