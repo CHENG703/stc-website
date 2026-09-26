@@ -5531,7 +5531,12 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
 async function decideJoinApplication(application, action, operator, req) {
     if (!application) return { ok: false, message: '申请不存在' };
     if (application.status !== 'pending') {
-        return { ok: false, message: `该申请已处理（当前状态：${application.status}）` };
+        // 历史遗留自救：以前出现过"页面显示已批准、但账号被别的实例覆盖没建成"的记录，
+        // 这类 approved 却查不到账号的申请允许重新批准，否则会永远卡在已处理状态。
+        const hasAccount = (db.data.users || []).some(u => u.email === application.email);
+        if (!(application.status === 'approved' && !hasAccount)) {
+            return { ok: false, message: `该申请已处理（当前状态：${application.status}）` };
+        }
     }
 
     const base = (typeof getSiteBaseUrl === 'function') ? getSiteBaseUrl(req) : '';
