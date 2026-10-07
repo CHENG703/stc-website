@@ -5381,8 +5381,12 @@ function getSiteBaseUrl(req) {
 }
 
 // 接收加入申请的管理员邮箱（通过环境变量 JOIN_ADMIN_EMAILS 配置，多个邮箱用逗号分隔）
-// 安全：不再内置默认邮箱，未配置时跳过审批邮件通知
-const JOIN_ADMIN_EMAILS = (process.env.JOIN_ADMIN_EMAILS || '')
+// 未显式配置时，依次回退到站点已有的管理员邮箱 / 发件邮箱，
+// 避免"申请提交成功了、但管理员完全不知情"的静默丢通知问题。
+const JOIN_ADMIN_EMAILS = (process.env.JOIN_ADMIN_EMAILS ||
+    process.env.ADMIN_NOTIFY_EMAIL ||
+    process.env.ADMIN_EMAIL ||
+    process.env.EMAIL_USER || '')
     .split(',').map(s => s.trim()).filter(Boolean);
 
 // 提交加入申请
@@ -5456,7 +5460,7 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
     try {
         const _t = getEmailTransporter(); if (!_t) throw new Error('邮件服务未配置');
         if (JOIN_ADMIN_EMAILS.length === 0) {
-            console.warn('[JOIN] JOIN_ADMIN_EMAILS 未配置，跳过审批邮件通知');
+            console.warn('[JOIN] 无任何管理员邮箱（JOIN_ADMIN_EMAILS / ADMIN_NOTIFY_EMAIL / ADMIN_EMAIL / EMAIL_USER 都为空），跳过审批邮件通知');
             return res.json({ success: true, message: '申请已提交，请耐心等待管理员审批' });
         }
         const adminTo = JOIN_ADMIN_EMAILS[0];
@@ -5502,7 +5506,9 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
         });
         console.log(`[JOIN-ADMIN] 加入申请通知邮件已发送: ${JOIN_ADMIN_EMAILS.join(', ')}, 申请人: ${application.gameId} (${application.qq})`);
     } catch (error) {
-        console.error('[JOIN-ADMIN] 加入申请通知邮件发送失败:', error.message);
+        console.error('[JOIN-ADMIN] 加入申请通知邮件发送失败:', error.message,
+            '| 收件人:', JOIN_ADMIN_EMAILS.join(', '),
+            '| 请检查 JOIN_ADMIN_EMAILS 与 EMAIL_USER/EMAIL_PASS 配置');
     }
 
     res.json({ success: true, message: '申请已提交，审核通过后会通过邮件通知你' });
