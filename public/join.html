@@ -355,7 +355,13 @@
                     <input type="text" id="f-email" placeholder="留空则用 QQ邮箱（qq号@qq.com）接收密码" maxlength="60" autocomplete="off">
                     <div class="hint">审核通过后，网站会把初始密码发到这个邮箱；不填则发到你的 QQ 邮箱</div>
                 </div>
-                <div class="hint" style="margin-bottom:18px;color:#8b8b96;">提交申请时会自动获取你所在的省/市/区与经纬度（仅用于审核参考，可在浏览器中拒绝定位授权）。</div>
+                <div class="hint" style="margin-bottom:18px;color:#8b8b96;">提交申请时将自动获取你所在的省/市/区与经纬度（默认定位，仅用于审核参考）。</div>
+                <div class="form-group agree-group">
+                    <label class="agree-label" style="display:flex;align-items:flex-start;gap:8px;font-weight:normal;cursor:pointer;">
+                        <input type="checkbox" id="f-agree" style="margin-top:4px;">
+                        <span>我已阅读并同意 <a href="/privacy.html" target="_blank" rel="noopener">《隐私协议》</a> 与 <a href="/terms.html" target="_blank" rel="noopener">《服务条款》</a>（申请将自动获取你的位置信息，仅用于审核参考）</span>
+                    </label>
+                </div>
                 <button type="submit" id="submit-btn" class="submit-btn">提交</button>
             </form>
             <div id="msg" class="msg"></div>
@@ -449,6 +455,7 @@
             if (!playTime) return showMsg('请填写日常上线时间', 'error');
             if (!skills) return showMsg('请填写擅长的事情', 'error');
             if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showMsg('邮箱格式不正确', 'error');
+            if (!document.getElementById('f-agree').checked) return showMsg('请先阅读并勾选同意《隐私协议》与《服务条款》', 'error');
 
             const btn = document.getElementById('submit-btn');
             btn.disabled = true;
