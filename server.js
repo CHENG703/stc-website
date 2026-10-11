@@ -34,8 +34,12 @@ const APPEAL_EMAIL = '1968550750@qq.com';
 // Vercel KV（条件加载，本地未安装时不报错）
 let kv = null;
 const KV_KEY = 'stc:database';
-const KV_ENABLED = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+// 临时急救开关：设为 '1' 时强制禁用 KV，网站改用本地文件持久化（KV 暂停/读不回数据、又急着让页面能写时用）。
+// 注意：此模式本地文件是唯一事实源，Serverless 冷启动/重新部署会丢未同步的数据，且读不回 KV 中的老数据，仅作临时兜底。
+// 与 Postgres 模式互斥（PG 首次导入需要 KV 可读，故启用 PG 时不应设置此变量）。
+const KV_ENABLED = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) && process.env.DISABLE_KV !== '1';
 const KV_READ_TTL = 3000; // 从 KV 刷新数据的间隔（毫秒），避免每个请求都读 KV
+const PG_READ_TTL = 3000; // 从 Postgres 周期性刷新的间隔（毫秒），仅下载、带宽可忽略
 
 // 高频、低价值 / 运行态集合：变更时只更新内存与本地缓存文件，KV 侧最多每分钟同步一次。
 // （机器人每 2 秒轮询一次、每个请求都写一条访问日志，若每次都整库上传 KV，
@@ -357,6 +361,34 @@ if ((IS_VERCEL || isZeabur) && !fs.existsSync(runtimeDir)) {
     try { fs.mkdirSync(runtimeDir, { recursive: true }); } catch (e) {}
 }
 
+// ---------- Postgres 后端（方案2：替代 Upstash KV，消除带宽上限） ----------
+// 设计：每个顶层集合独立成 site_kv 一行；写入仅 upsert 脏集合，
+// 从根本上消除"整库即传"造成的带宽浪费。迁移期 PG 为空会自动从 KV 导入种子。
+let pgPool = null;
+const PG_ENABLED = !!(process.env.DATABASE_URL);
+if (PG_ENABLED) {
+    try {
+        const pgmod = require('pg');
+        const Pool = pgmod.Pool;
+        const connStr = process.env.DATABASE_URL;
+        const useSsl = !/sslmode=disable/i.test(connStr);
+        pgPool = new Pool({
+            connectionString: connStr,
+            ssl: useSsl ? { rejectUnauthorized: false } : false,
+            max: 5,
+        });
+        pgPool.on('error', (e) => console.warn('[PG] 连接池错误:', e.message));
+        // 幂等建表（jsonb 列直接存对象，无需加密——连接受信任）
+        pgPool.query(
+            "CREATE TABLE IF NOT EXISTS site_kv (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+        ).then(() => console.log('[PG] 已连接，表 site_kv 就绪'))
+         .catch((e) => console.error('[PG] 建表/连接失败:', e.message));
+        console.log('[PG] Postgres 后端已启用（DATABASE_URL）');
+    } catch (e) {
+        console.warn('[PG] pg 模块加载失败，Postgres 后端未启用:', e.message);
+    }
+}
+
 const dbPath = path.join(runtimeDir, 'database.json');
 // 初始化数据库静态加密（AES-256-GCM）。密钥：环境变量 DB_KEY > db.key 持久化文件。
 // 必须在 new SimpleJSONDB(...) 之前完成，否则文件无法解密读取。
@@ -425,6 +457,17 @@ class SimpleJSONDB {
         this._remoteSnapshot = null;  // 上次从 KV 读到的各集合快照（写前差异检测，含嵌套修改）
         this._mergeOkOnce = false;    // 写前合并是否成功（false 时禁止覆盖写入）
 
+        // Postgres 后端状态（替代 Upstash KV，去除带宽上限）
+        this._pgEnabled = PG_ENABLED && !!pgPool;
+        this._pgLoaded = false;
+        this._pgEmpty = false;
+        this._pgWriteError = null;
+        this._lastPgSaveOkAt = 0;
+        this._lastPgLogSaveAt = 0;
+        this._pendingPgSave = Promise.resolve();
+        this._pgReadAt = 0;
+        this._pgReadInFlight = null;
+
         this._loadFileSync();
         // 历史明文 → 自动迁移为加密存储（在具备密钥且加载成功时执行）
         if (this._needsUpgrade && !this._loadFailed && dbEnc.isEncryptionEnabled()) {
@@ -479,6 +522,100 @@ class SimpleJSONDB {
             console.warn('[KV] 从 KV 加载失败，使用本地文件:', e.message);
             this._kvLoaded = true; // 标记已尝试，避免反复失败
         }
+    }
+
+    // ---------- Postgres 后端（替代 Upstash KV） ----------
+    async _loadPg() {
+        if (!this._pgEnabled) return;
+        if (this._pgLoaded) return;
+        try {
+            const { rows } = await pgPool.query('SELECT key, value FROM site_kv');
+            if (rows.length === 0) {
+                // PG 为空：迁移期尝试从 KV（仍可读时）一次性导入种子数据
+                this._pgEmpty = true;
+                if (this._kvEnabled && !this._kvFailed && !this._kvLoaded) {
+                    await this._loadKv();
+                }
+                if (this._data && typeof this._data === 'object' && Object.keys(this._data).length) {
+                    await this._savePg(true);
+                    this._pgEmpty = false;
+                }
+                this._pgLoaded = true;
+                return;
+            }
+            const remote = {};
+            for (const r of rows) remote[r.key] = r.value; // jsonb → JS 对象
+            this._applyRemoteData(remote);
+            this._writeFileSync();
+            this._pgLoaded = true;
+            this._pgEmpty = false;
+            console.log(`[PG] 数据已从 Postgres 加载（keys=${rows.length}）`);
+        } catch (e) {
+            console.warn('[PG] 从 Postgres 加载失败，回退到本地文件:', e.message);
+            this._pgEnabled = false; // 连接异常则降级，避免反复报错
+            this._pgLoaded = true;
+        }
+    }
+
+    // 写入 Postgres：仅 upsert 脏集合（force=true 时整库上传，用于迁移种子/恢复）。
+    // 写前对脏集合与远端做一次记录/字段级合并，避免多实例互相覆盖。
+    async _savePg(force) {
+        if (!this._pgEnabled) return;
+        const keys = force
+            ? Object.keys(this._data || {}).filter(k => this._data[k] !== undefined)
+            : Array.from(this._dirtyKeys);
+        if (keys.length === 0) return;
+        if (!force) {
+            try {
+                const { rows } = await pgPool.query(
+                    'SELECT key, value FROM site_kv WHERE key = ANY($1)', [keys]);
+                const remoteMap = {};
+                for (const r of rows) remoteMap[r.key] = r.value;
+                const snap = this._remoteSnapshot;
+                const beforeMono = this._monotonicLocalSnapshot();
+                for (const k of keys) {
+                    const remote = remoteMap[k];
+                    if (remote === undefined) continue;
+                    if (k === 'access_logs') {
+                        this._data.access_logs = this._mergeAccessLogsList(
+                            this._data.access_logs, remote, Number(this._data.access_logs_cleared_at) || 0);
+                    } else {
+                        this._data[k] = this._mergeDirtyCollection(this._data[k], snap && snap[k], remote);
+                    }
+                }
+                this._ensureDefaults();
+                this._restoreMonotonic(beforeMono);
+            } catch (e) {
+                console.warn('[PG] 写前合并远端失败:', e.message);
+            }
+        }
+        let client;
+        try {
+            client = await pgPool.connect();
+            await client.query('BEGIN');
+            for (const k of keys) {
+                await client.query(
+                    'INSERT INTO site_kv(key, value, updated_at) VALUES($1, $2::jsonb, now()) ' +
+                    'ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()',
+                    [k, JSON.stringify(this._data[k])]);
+            }
+            await client.query('COMMIT');
+            if (!force) this._dirtyKeys.clear();
+            this._lastPgSaveOkAt = Date.now();
+            this._pgWriteError = null;
+            this._updateRemoteSnapshot(this._data);
+        } catch (e) {
+            if (client) { try { await client.query('ROLLBACK'); } catch (_) { /* 忽略 */ } }
+            this._pgWriteError = e;
+            console.error('[PG] 写入失败:', e.message);
+        } finally {
+            if (client) client.release();
+        }
+    }
+
+    _schedulePgSave() {
+        if (!this._pgEnabled) return;
+        this._pendingPgSave = this._pendingPgSave.catch(() => {}).then(() => this._savePg());
     }
 
     // 写入 KV 前的一致性合并：拉取远端最新数据作为基底，仅把本实例的修改合并进去。
@@ -725,6 +862,7 @@ class SimpleJSONDB {
     // 不能只信"kv.set 没抛错"——历史上出现过接口返回成功、云端其实没落库的情况，
     // 表现为用户点清空 → 刷新 → 旧记录又回来（前端却提示成功）。
     async verifyAccessLogsCleared(clearedAt) {
+        if (this._pgEnabled) return true; // PG 模式：本地落库成功即认可（写前已与远端合并）
         if (!this._kvEnabled || this._kvFailed) return true; // 非 KV 模式：本地落盘成功即认可
         try {
             const kvRaw = await kv.get(KV_KEY);
@@ -773,22 +911,31 @@ class SimpleJSONDB {
 
     _saveFile() {
         this._writeFileSync();
-        // 同时保存到 KV（立即排队，见 _scheduleKvSave）
-        this._scheduleKvSave();
+        // 主后端为 Postgres 时只写 PG；否则（KV / 文件模式）写 KV
+        if (this._pgEnabled) {
+            this._schedulePgSave();
+        } else if (this._kvEnabled) {
+            this._scheduleKvSave();
+        }
     }
 
     // rootKey：当前修改所属的顶层集合名（如 users / tasks / announcements），
     // 用于写入 KV 时识别"哪些集合是本实例改过的"，从而只覆盖这些集合。
     _onMutate(rootKey) {
         if (rootKey) this._dirtyKeys.add(rootKey);
-        // 高频低价值集合（访问日志）：只更新内存与本地缓存文件，不立即触发 KV 全量写入。
+        // 高频低价值集合（访问日志）：只更新内存与本地缓存文件，不立即触发全量写入。
         // 否则每个请求都会把整库上传一次，极易打满 KV 配额/带宽，导致删除任务等写操作失败。
         if (rootKey && DELAYED_KV_KEYS.has(rootKey)) {
             this._writeFileSync();
             const lastKv = Math.max(this._lastKvSaveOkAt || 0, this._lastKvLogSaveAt || 0);
-            if (this._kvEnabled && Date.now() - lastKv > 60000) {
+            const lastPg = Math.max(this._lastPgSaveOkAt || 0, this._lastPgLogSaveAt || 0);
+            if (this._kvEnabled && !this._pgEnabled && Date.now() - lastKv > 60000) {
                 this._lastKvLogSaveAt = Date.now();
                 this._scheduleKvSave();
+            }
+            if (this._pgEnabled && Date.now() - lastPg > 60000) {
+                this._lastPgLogSaveAt = Date.now();
+                this._schedulePgSave();
             }
             return;
         }
@@ -1010,6 +1157,19 @@ class SimpleJSONDB {
     // 强制从 KV 拉取最新数据（写操作前调用）。
     // 保证"读-改-写"基于最新状态，避免用陈旧内存覆盖其他实例刚写入的封禁/公告等。
     async readFresh() {
+        if (this._pgEnabled) {
+            if (!this._pgLoaded) { await this._loadPg(); return this; }
+            try {
+                const { rows } = await pgPool.query('SELECT key, value FROM site_kv');
+                const remote = {};
+                for (const r of rows) remote[r.key] = r.value;
+                this._applyRemoteData(remote);
+                this._writeFileSync();
+            } catch (e) {
+                console.warn('[PG] readFresh 失败，沿用当前数据:', e.message);
+            }
+            return this;
+        }
         if (!this._kvEnabled || this._kvFailed) return this;
         if (this._kvFreshInFlight) { await this._kvFreshInFlight; return this; }
         this._kvFreshInFlight = (async () => {
@@ -1042,6 +1202,34 @@ class SimpleJSONDB {
     }
 
     async read() {
+        // Postgres 模式：以 PG 为唯一事实源，每个进程首次加载一次（PG 强一致，无需每请求刷新）
+        if (this._pgEnabled) {
+            if (!this._pgLoaded) {
+                await this._loadPg();
+                return this;
+            }
+            // 周期从 PG 拉取最新（仅下载，带宽可忽略），保持 Vercel 多实例一致。
+            // 与 KV 同理，但只下载不整库上传，避免带宽超标。
+            const now = Date.now();
+            if (now - this._pgReadAt > PG_READ_TTL && now - this._lastWriteAt > PG_READ_TTL) {
+                if (!this._pgReadInFlight) {
+                    this._pgReadInFlight = (async () => {
+                        try {
+                            const { rows } = await pgPool.query('SELECT key, value FROM site_kv');
+                            const remote = {};
+                            for (const r of rows) remote[r.key] = r.value;
+                            this._applyRemoteData(remote);
+                            this._writeFileSync();
+                        } catch (e) {
+                            console.warn('[PG] 周期性刷新失败，沿用当前数据:', e.message);
+                        }
+                        this._pgReadAt = Date.now();
+                    })();
+                }
+                try { await this._pgReadInFlight; } finally { this._pgReadInFlight = null; }
+            }
+            return this;
+        }
         // KV 模式：以 KV 为唯一事实源。首次从 KV 加载，之后按 KV_READ_TTL
         // 周期性刷新，解决 Vercel 多实例之间数据不一致（A 实例写入、B 实例读不到）的问题。
         if (this._kvEnabled) {
@@ -1110,6 +1298,32 @@ class SimpleJSONDB {
     async write(opts) {
         const forceKv = !!(opts && opts.force);
         this._lastWriteAt = Date.now();
+        // Postgres 模式：仅 upsert 脏集合，写前已与远端合并，带宽极低
+        if (this._pgEnabled) {
+            if (!forceKv && this._canSkipKvUpload()) {
+                this._writeFileSync();
+                const last = Math.max(this._lastPgSaveOkAt || 0, this._lastPgLogSaveAt || 0);
+                if (Date.now() - last > 60000) {
+                    this._lastPgLogSaveAt = Date.now();
+                    this._schedulePgSave();
+                }
+                await this.flush();
+                if (this._pgWriteError) {
+                    const err = this._pgWriteError;
+                    this._pgWriteError = null;
+                    throw new Error('数据未能保存到 Postgres：' + err.message);
+                }
+                return;
+            }
+            this._saveFile();
+            await this.flush();
+            if (this._pgWriteError) {
+                const err = this._pgWriteError;
+                this._pgWriteError = null;
+                throw new Error('数据未能保存到 Postgres：' + err.message);
+            }
+            return;
+        }
         // 仅"高频延迟集合"（访问日志、机器人轮询数据）发生变化时，跳过整库上传，
         // 最多每分钟同步一次。否则每 2 秒一次的机器人轮询会把 KV 配额耗尽，
         // 导致删除任务等写操作静默失败（前端提示成功、刷新后数据又回来）。
@@ -1137,6 +1351,7 @@ class SimpleJSONDB {
 
     async flush() {
         await this._pendingKvSave;
+        await this._pendingPgSave;
     }
 
     // 持久化状态诊断（供 /api/admin/db-status 使用，不包含业务数据内容）
@@ -1149,7 +1364,11 @@ class SimpleJSONDB {
         let persistedSize = -1;
         try { persistedSize = Buffer.byteLength(dbEnc.serializeDb(this._data)); } catch (e) { /* 忽略 */ }
         return {
-            mode: this._kvEnabled ? 'kv' : 'file',
+            mode: this._pgEnabled ? 'pg' : (this._kvEnabled ? 'kv' : 'file'),
+            pgEnabled: this._pgEnabled,
+            pgLoaded: this._pgLoaded,
+            pgLastSaveOkAt: this._lastPgSaveOkAt || 0,
+            pgWriteError: this._pgWriteError ? this._pgWriteError.message : null,
             kvEnabled: this._kvEnabled,
             kvLoaded: this._kvLoaded,
             kvDecryptFailed: this._kvFailed,
@@ -1196,6 +1415,13 @@ async function _kvGet(key) {
     if (KV_ENABLED && kv) {
         try { return await kv.get(key); } catch (e) { /* 降级 */ }
     }
+    // 备份类 key：KV 不可用时改用 Postgres 持久（迁移后仍能恢复）
+    if (pgPool && key.startsWith('stc:backup')) {
+        try {
+            const { rows } = await pgPool.query('SELECT value FROM site_kv WHERE key=$1', [key]);
+            return rows.length ? rows[0].value : null;
+        } catch (e) { /* 降级到本地 */ }
+    }
     return _localMapGet(key);
 }
 async function _kvSet(key, value, ttlMs) {
@@ -1206,11 +1432,25 @@ async function _kvSet(key, value, ttlMs) {
             return;
         } catch (e) { /* 降级 */ }
     }
+    // 备份类 key：KV 不可用时改用 Postgres 持久
+    if (pgPool && key.startsWith('stc:backup')) {
+        try {
+            await pgPool.query(
+                'INSERT INTO site_kv(key, value, updated_at) VALUES($1, $2::jsonb, now()) ' +
+                'ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()',
+                [key, JSON.stringify(value)]);
+            return;
+        } catch (e) { /* 降级到本地 */ }
+    }
     _localMapSet(key, value, ttlMs);
 }
 async function _kvDel(key) {
     if (KV_ENABLED && kv) {
         try { await kv.del(key); return; } catch (e) { /* 降级 */ }
+    }
+    // 备份类 key：KV 不可用时改用 Postgres 持久
+    if (pgPool && key.startsWith('stc:backup')) {
+        try { await pgPool.query('DELETE FROM site_kv WHERE key=$1', [key]); return; } catch (e) { /* 降级 */ }
     }
     _localMapDel(key);
 }
@@ -6411,7 +6651,7 @@ async function createBackup() {
     const backupName = `backup-${timestamp}`;
 
     // Vercel/KV 环境：备份持久化到 KV（重启不丢失）
-    if (KV_ENABLED && kv) {
+    if ((KV_ENABLED && kv) || pgPool) {
         const dbData = db._data || {};
         const meta = await _kvBackupSave(backupName, dbData, new Date().toISOString(), ['database.json']);
         lastBackupTime = new Date();
@@ -6608,7 +6848,7 @@ app.post('/api/admin/auto-backup/stop', requireSuperAdmin, requireRateLimit('adm
 app.get('/api/admin/backups', requireSuperAdmin, async (req, res) => {
     try {
         // KV 模式：从 KV 读取备份列表（持久化，重启不丢失）
-        if (KV_ENABLED && kv) {
+        if ((KV_ENABLED && kv) || pgPool) {
             const list = (await _kvGet(KV_BACKUP_LIST)) || [];
             const backups = list.map(meta => ({
                 name: meta.name,
@@ -6672,7 +6912,7 @@ app.post('/api/admin/rollback', requireSuperAdmin, requireRateLimit('admin'), re
     
     try {
         // KV 模式：从 KV 恢复备份
-        if (KV_ENABLED && kv) {
+        if ((KV_ENABLED && kv) || pgPool) {
             const backup = await _kvBackupLoad(backupName);
             if (!backup) {
                 return res.status(404).json({ success: false, message: '备份不存在' });
@@ -6688,12 +6928,10 @@ app.post('/api/admin/rollback', requireSuperAdmin, requireRateLimit('admin'), re
                 console.warn('[备份] 回滚前自动备份失败:', e.message);
             }
             
-            // 恢复数据库到 KV 和本地缓存
+            // 恢复数据库到当前主后端（Postgres / KV / 本地文件）
             db._data = backup.data;
             db._ensureDefaults();
-            await db._saveKv();
-            db._writeFileSync();
-            db._kvReadAt = 0;
+            await db.write({ force: true });
             
             res.json({ 
                 success: true, 
@@ -6749,7 +6987,7 @@ app.delete('/api/admin/backup/:name', requireSuperAdmin, requireRateLimit('admin
     
     try {
         // KV 模式：从 KV 删除备份
-        if (KV_ENABLED && kv) {
+        if ((KV_ENABLED && kv) || pgPool) {
             const meta = await _kvGet(KV_BACKUP_PREFIX + name + ':meta');
             if (!meta) {
                 return res.status(404).json({ success: false, message: '备份不存在' });
