@@ -607,27 +607,39 @@ class SimpleJSONDB {
             }
         }
         let client;
-        try {
-            client = await pgPool.connect();
-            await client.query('BEGIN');
-            for (const k of keys) {
-                await client.query(
-                    'INSERT INTO site_kv(key, value, updated_at) VALUES($1, $2::jsonb, now()) ' +
-                    'ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()',
-                    [k, JSON.stringify(this._data[k])]);
+        let lastErr = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            client = null;
+            try {
+                client = await pgPool.connect();
+                await client.query('BEGIN');
+                for (const k of keys) {
+                    await client.query(
+                        'INSERT INTO site_kv(key, value, updated_at) VALUES($1, $2::jsonb, now()) ' +
+                        'ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()',
+                        [k, JSON.stringify(this._data[k])]);
+                }
+                await client.query('COMMIT');
+                if (!force) this._dirtyKeys.clear();
+                this._lastPgSaveOkAt = Date.now();
+                this._pgWriteError = null;
+                this._updateRemoteSnapshot(this._data);
+                return; // 写入成功
+            } catch (e) {
+                if (client) { try { await client.query('ROLLBACK'); } catch (_) { /* 忽略 */ } }
+                this._pgWriteError = e;
+                lastErr = e;
+                console.error('[PG] 写入失败(第' + (attempt + 1) + '次):', e.message);
+                if (attempt < 2) {
+                    if (client) { try { client.release(); } catch (_) { /* 忽略 */ } }
+                    client = null;
+                    await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+                }
+            } finally {
+                if (client) client.release();
             }
-            await client.query('COMMIT');
-            if (!force) this._dirtyKeys.clear();
-            this._lastPgSaveOkAt = Date.now();
-            this._pgWriteError = null;
-            this._updateRemoteSnapshot(this._data);
-        } catch (e) {
-            if (client) { try { await client.query('ROLLBACK'); } catch (_) { /* 忽略 */ } }
-            this._pgWriteError = e;
-            console.error('[PG] 写入失败:', e.message);
-        } finally {
-            if (client) client.release();
         }
+        if (lastErr) console.error('[PG] 写入最终失败:', lastErr.message);
     }
 
     _schedulePgSave() {
