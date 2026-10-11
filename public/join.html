@@ -355,6 +355,7 @@
                     <input type="text" id="f-email" placeholder="留空则用 QQ邮箱（qq号@qq.com）接收密码" maxlength="60" autocomplete="off">
                     <div class="hint">审核通过后，网站会把初始密码发到这个邮箱；不填则发到你的 QQ 邮箱</div>
                 </div>
+                <div class="hint" style="margin-bottom:18px;color:#8b8b96;">提交申请时会自动获取你所在的省/市/区与经纬度（仅用于审核参考，可在浏览器中拒绝定位授权）。</div>
                 <button type="submit" id="submit-btn" class="submit-btn">提交</button>
             </form>
             <div id="msg" class="msg"></div>
@@ -412,6 +413,21 @@
             msg.className = 'msg';
         }
 
+        // 自动采集申请人地理位置（需用户授权；拒绝或不支持则降级为后端 IP 定位）
+        function getLocation() {
+            return new Promise((resolve) => {
+                if (!navigator.geolocation) return resolve(null);
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => resolve({
+                        lat: Number(pos.coords.latitude.toFixed(6)),
+                        lng: Number(pos.coords.longitude.toFixed(6))
+                    }),
+                    () => resolve(null),
+                    { timeout: 8000, maximumAge: 600000, enableHighAccuracy: false }
+                );
+            });
+        }
+
         document.getElementById('join-form').addEventListener('submit', async function (e) {
             e.preventDefault();
             hideMsg();
@@ -439,6 +455,9 @@
             btn.textContent = '提交中...';
 
             try {
+                const loc = await getLocation();
+                const lat = loc ? loc.lat : undefined;
+                const lng = loc ? loc.lng : undefined;
                 const token = await getCSRFTokenOnce();
                 const resp = await fetch('/api/join/apply', {
                     method: 'POST',
@@ -448,7 +467,7 @@
                         ...(token ? { 'X-CSRF-Token': token } : {}),
                         'X-Request-Nonce': genNonce()
                     },
-                    body: JSON.stringify({ qq, gameId, age, projection, playTime, skills, email })
+                    body: JSON.stringify({ qq, gameId, age, projection, playTime, skills, email, lat, lng })
                 });
                 const data = await resp.json();
                 if (data.success) {

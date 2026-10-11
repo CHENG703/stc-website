@@ -5629,9 +5629,50 @@ const JOIN_ADMIN_EMAILS = (process.env.JOIN_ADMIN_EMAILS ||
     process.env.EMAIL_USER || '')
     .split(',').map(s => s.trim()).filter(Boolean);
 
+// ---------- 地理定位辅助（免费、无需 Key 的 BigDataCloud，后端在 Vercel 海外调用较快） ----------
+// 由经纬度反查省/市/区（GPS 定位时使用）
+async function reverseGeocode(lat, lng) {
+    try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 3500);
+        const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=zh`, { signal: ctrl.signal });
+        clearTimeout(timer);
+        if (!r.ok) return null;
+        const d = await r.json();
+        return {
+            province: d.principalSubdivision || '',
+            city: d.city || d.locality || '',
+            district: d.locality || ''
+        };
+    } catch (e) {
+        console.warn('[GEO] 经纬度反查失败:', e.message);
+        return null;
+    }
+}
+// 由真实 IP 反查省/市（用户拒绝 GPS 授权时的降级方案，精度到城市级）
+async function ipGeocode(ip) {
+    if (!ip) return null;
+    try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 3500);
+        const r = await fetch(`https://api.bigdatacloud.net/data/ip-geolocation-with-confidence?ip=${encodeURIComponent(ip)}&localityLanguage=zh`, { signal: ctrl.signal });
+        clearTimeout(timer);
+        if (!r.ok) return null;
+        const d = await r.json();
+        return {
+            province: d.principalSubdivision || '',
+            city: d.city || '',
+            district: d.locality || ''
+        };
+    } catch (e) {
+        console.warn('[GEO] IP 反查失败:', e.message);
+        return null;
+    }
+}
+
 // 提交加入申请
 app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCaptcha, async (req, res) => {
-    const { qq, gameId, age, projection, playTime, skills } = req.body || {};
+    const { qq, gameId, age, projection, playTime, skills, lat, lng } = req.body || {};
 
     if (!qq || !/^\d+$/.test(qq)) {
         return res.status(400).json({ success: false, message: 'QQ号码必须为纯数字' });
@@ -5672,6 +5713,19 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
         return res.status(400).json({ success: false, message: '该QQ邮箱已注册过账号，请直接登录' });
     }
 
+    // 自动定位：优先用前端传来的 GPS 经纬度反查省/市/区；用户拒绝授权则降级为 IP 粗定位（到城市级）
+    let geo = null, geoSource = 'none';
+    const latNum = Number(lat), lngNum = Number(lng);
+    if (latNum && lngNum && !isNaN(latNum) && !isNaN(lngNum)) {
+        geo = await reverseGeocode(latNum, lngNum);
+        if (geo) geoSource = 'gps';
+    }
+    if (!geo) {
+        const clientIp = getClientIP(req);
+        geo = await ipGeocode(clientIp);
+        if (geo) geoSource = 'ip';
+    }
+
     const application = {
         id: Date.now(),
         qq: String(qq),
@@ -5682,6 +5736,13 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
         // 擅长的事情（2026-09-25 新增；老申请没有这个字段时显示"未填写"）
         skills: String(skills || '').trim() || '未填写',
         email: email,
+        // 地理位置（2026-10-11 新增）：审批时可查看申请人所在省/市/区与经纬度
+        province: (geo && geo.province) || '',
+        city: (geo && geo.city) || '',
+        district: (geo && geo.district) || '',
+        lat: (geoSource === 'gps' && !isNaN(latNum)) ? latNum : 0,
+        lng: (geoSource === 'gps' && !isNaN(lngNum)) ? lngNum : 0,
+        geo_source: geoSource,
         status: 'pending',
         // 机器人是否已把这条申请推送到审批群（避免重复刷屏）
         bot_notified: false,
@@ -5725,6 +5786,8 @@ app.post('/api/join/apply', requireRateLimit('invite'), requireCSRF, requireCapt
                             <p style="margin: 0 0 10px;"><strong>是否会使用投影：</strong> ${application.projection}</p>
                             <p style="margin: 0 0 10px;"><strong>日常上线时间：</strong> ${application.playTime}</p>
                             <p style="margin: 0 0 10px;"><strong>擅长的事情：</strong> ${application.skills || '未填写'}</p>
+                            <p style="margin: 0 0 10px;"><strong>所在地区：</strong> ${(application.province || '') + ' ' + (application.city || '') + ' ' + (application.district || '') || '-'}（${application.geo_source === 'gps' ? 'GPS 定位' : application.geo_source === 'ip' ? 'IP 定位' : '未获取'}）</p>
+                            <p style="margin: 0 0 10px;"><strong>经纬度：</strong> ${(application.lat && application.lng) ? (application.lat + ', ' + application.lng) : '未获取'}</p>
                             <p style="margin: 0;"><strong>申请时间：</strong> ${new Date().toLocaleString('zh-CN')}</p>
                         </div>
                         <p style="color: #64748b; font-size: 14px; margin: 20px 0;">直接点击下方按钮审批，无需登录管理面板：</p>
