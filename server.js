@@ -6337,6 +6337,16 @@ app.get('/api/members', requireAdmin, async (req, res) => {
     res.json({ success: true, data: members });
 });
 
+// 成员对应的「进入申请」记录（审核时可查看申请人填写的表格与发送时的地址）
+app.get('/api/admin/members/:id/application', requireAdmin, async (req, res) => {
+    try { await db.readFresh(); } catch (e) { /* 忽略 */ }
+    const user = (db.data.users || []).find(u => String(u.id) === String(req.params.id));
+    if (!user) return res.status(404).json({ success: false, message: '成员不存在' });
+    const apps = (db.data.join_applications || []).filter(a => a.email === user.email);
+    apps.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+    res.json({ success: true, application: apps[0] || null });
+});
+
 // 管理员重置用户密码
 app.put('/api/members/:id/reset-password', requireAdmin, requireRateLimit('admin'), requireCSRF, async (req, res) => {
     try {

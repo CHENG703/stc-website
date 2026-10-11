@@ -1401,6 +1401,51 @@ function showMemberActions(userId, username, isBanned, isAdmin, isSuperAdmin, ro
     }
 }
 
+// 查看成员对应的「进入申请」记录（含填写的表格与发送时的地址）
+async function showMemberDetail(userId) {
+    CMDLog.log('查看成员 ' + userId + ' 的进入申请详情', 'info');
+    const existingModal = document.querySelector('.modal-overlay');
+    if (existingModal) existingModal.remove();
+    try {
+        const uid = jsStrForAttr(userId);
+        const resp = await fetchWithAuth('/api/admin/members/' + uid + '/application', { method: 'GET' });
+        const data = await resp.json();
+        if (!data.success) { alert(data.message || '获取失败'); return; }
+        const a = data.application;
+        let html;
+        if (!a) {
+            html = '<p style="color:#666;margin:0;">该成员没有进入申请记录（可能由管理员直接创建）。</p>';
+        } else {
+            const row = (k, v) => '<div style="display:flex;gap:10px;padding:7px 0;border-bottom:1px solid #f0f0f0;font-size:14px;">' +
+                '<div style="width:96px;color:#888;flex-shrink:0;">' + k + '</div>' +
+                '<div style="flex:1;word-break:break-all;">' + (escapeHtml(String(v == null ? '' : v)) || '未填写') + '</div></div>';
+            const addr = [a.province, a.city, a.district].filter(Boolean).join(' / ') || '未获取';
+            const coord = (a.lat && a.lng) ? (Number(a.lat).toFixed(4) + ', ' + Number(a.lng).toFixed(4)) : '未获取';
+            const statusMap = { pending: '待审核', approved: '已通过', rejected: '已驳回' };
+            const statusLabel = statusMap[a.status] || a.status || '未知';
+            const sourceMap = { gps: 'GPS 精确定位', ip: 'IP 粗定位（城市级）', none: '未获取' };
+            const sourceLabel = sourceMap[a.geo_source] || a.geo_source || '未知';
+            html = row('QQ', a.qq) + row('游戏ID', a.gameId) + row('年龄/年级', a.age) +
+                row('是否用投影', a.projection) + row('上线时间', a.playTime) + row('擅长', a.skills) +
+                row('邮箱', a.email) + row('所在地区', addr) + row('经纬度', coord) +
+                row('定位来源', sourceLabel) + row('提交时间', a.created_at) + row('申请状态', statusLabel);
+        }
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.style.display = 'flex';
+        modal.style.zIndex = '9999';
+        modal.innerHTML = '<div class="modal-content" style="background:white;padding:20px;border-radius:8px;min-width:340px;max-width:480px;max-height:85vh;overflow:auto;">' +
+            '<h3 style="margin:0 0 12px 0;color:#333;">进入申请详情</h3>' +
+            '<div>' + html + '</div>' +
+            '<button onclick="this.closest(\'.modal-overlay\').remove()" class="btn btn-secondary" style="margin-top:16px;">关闭</button>' +
+            '</div>';
+        document.body.appendChild(modal);
+    } catch (e) {
+        console.error('showMemberDetail错误:', e);
+        alert('错误: ' + e.message);
+    }
+}
+
 // 切换封禁状态
 async function toggleBan(userId, ban) {
     var days = 0, reason = '';
@@ -1646,7 +1691,8 @@ async function loadMembers() {
                     status = '<span style="color:#10b981;">正常</span>';
                 }
                 var escName = escapeHtml(m.username);
-                var actionBtn = '<button class="btn btn-sm" onclick="showMemberActions(\'' + jsStrForAttr(m.id) + '\', \'' + jsStrForAttr(m.username) + '\', ' + !!m.is_banned + ', ' + !!m.is_admin + ', ' + !!(m.is_super_admin || false) + ', \'' + jsStrForAttr(m.role || 'member') + '\')">操作</button>';
+                var detailBtn = '<button class="btn btn-sm" onclick="showMemberDetail(\'' + jsStrForAttr(m.id) + '\')">详情</button>';
+                var actionBtn = detailBtn + '<button class="btn btn-sm" onclick="showMemberActions(\'' + jsStrForAttr(m.id) + '\', \'' + jsStrForAttr(m.username) + '\', ' + !!m.is_banned + ', ' + !!m.is_admin + ', ' + !!(m.is_super_admin || false) + ', \'' + jsStrForAttr(m.role || 'member') + '\')">操作</button>';
                 return '<tr>' +
                     '<td>' + escName + '</td>' +
                     '<td>' + escapeHtml(m.email) + '</td>' +
