@@ -1,0 +1,14 @@
+name: Keepalive (Neon 保活)
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+    - cron: '2-59/5 * * * *'
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping stcwork.top to keep Neon awake
+        run: |
+          curl -fsS --max-time 20 -o /dev/null -w "HTTP %{http_code}\n" https://stcwork.top/ || echo "ping failed"
