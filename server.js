@@ -7254,25 +7254,6 @@ app.post('/api/admin/site-unlock', requireAdmin, requireRateLimit('admin'), requ
 });
 
 // 网站状态API - 仅超级管理员
-// 一次性迁移：把 Neon Postgres 的数据导入 Upstash KV（切换存储后端前使用，用完建议删除）
-app.get('/api/admin/migrate-pg-to-kv', requireAdmin, async (req, res) => {
-    try {
-        if (!pgPool) return res.json({ success: false, message: 'Postgres 未启用，无需迁移' });
-        const { rows } = await pgPool.query('SELECT key, value FROM site_kv');
-        const data = {};
-        for (const r of rows) data[r.key] = r.value;
-        if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
-            return res.json({ success: false, message: '未配置 KV_REST_API_URL / KV_REST_API_TOKEN（Upstash 凭据）' });
-        }
-        const { Redis } = require('@upstash/redis');
-        const r2 = new Redis({ url: process.env.KV_REST_API_URL, token: process.env.KV_REST_API_TOKEN });
-        await r2.set(KV_KEY, dbEnc.serializeDb(data));
-        res.json({ success: true, message: '已将 ' + rows.length + ' 个集合迁移到 Upstash KV' });
-    } catch (e) {
-        res.json({ success: false, message: e.message });
-    }
-});
-
 app.get('/api/admin/site-status', requireAdmin, async (req, res) => {
     res.json({
         success: true,
