@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "regions": ["iad"],
+  "regions": ["cle1"],
   "buildCommand": "npm install",
   "outputDirectory": ".",
   "functions": {
