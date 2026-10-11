@@ -376,6 +376,8 @@ if (PG_ENABLED) {
             connectionString: connStr,
             ssl: useSsl ? { rejectUnauthorized: false } : false,
             max: 5,
+            connectionTimeoutMillis: 15000,
+            idleTimeoutMillis: 30000,
         });
         pgPool.on('error', (e) => console.warn('[PG] 连接池错误:', e.message));
         // 幂等建表（jsonb 列直接存对象，无需加密——连接受信任）
@@ -529,7 +531,21 @@ class SimpleJSONDB {
         if (!this._pgEnabled) return;
         if (this._pgLoaded) return;
         try {
-            const { rows } = await pgPool.query('SELECT key, value FROM site_kv');
+            let rows = null;
+            let lastErr = null;
+            // 冷启动偶发连接失败重试，避免一次性降级到本地文件
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    const res = await pgPool.query('SELECT key, value FROM site_kv');
+                    rows = res.rows;
+                    lastErr = null;
+                    break;
+                } catch (e2) {
+                    lastErr = e2;
+                    if (attempt < 2) await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+                }
+            }
+            if (lastErr) throw lastErr;
             if (rows.length === 0) {
                 // PG 为空：迁移期尝试从 KV（仍可读时）一次性导入种子数据
                 this._pgEmpty = true;
@@ -552,7 +568,8 @@ class SimpleJSONDB {
             console.log(`[PG] 数据已从 Postgres 加载（keys=${rows.length}）`);
         } catch (e) {
             console.warn('[PG] 从 Postgres 加载失败，回退到本地文件:', e.message);
-            this._pgEnabled = false; // 连接异常则降级，避免反复报错
+            this._pgEnabled = false;  // 连接异常则降级，避免反复报错
+            this._kvEnabled = false;  // 关键：KV 已废弃，降级时绝不回落到 KV（否则会报 KV 写入错误）
             this._pgLoaded = true;
         }
     }
